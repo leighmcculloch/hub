@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  A terminal must spawn arbitrary shells and run `git` against any directory
+	  the user navigates to, so the App Sandbox is disabled. Hardened Runtime
+	  stays on (see ENABLE_HARDENED_RUNTIME in project.yml).
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+</dict>
+</plist>

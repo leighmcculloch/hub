@@ -1,0 +1,17 @@
+# Xcode / build
+build/
+DerivedData/
+*.xcodeproj
+!project.yml
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+
+# Generated project (recreate with `xcodegen generate`)
+GhosttyWorkspace.xcodeproj/
+
+# Vendored binary framework (build it locally, see vendor/README.md)
+vendor/GhosttyKit.xcframework/
+
+# macOS
+.DS_Store
