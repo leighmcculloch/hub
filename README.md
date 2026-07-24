@@ -1,15 +1,48 @@
 # Terminal Workspace
 
 A native macOS app that embeds a terminal ([**SwiftTerm**](https://github.com/migueldeicaza/SwiftTerm))
-to give you a multi-session terminal with:
+and provisions a cloud VM per tab on [**exe.dev**](https://exe.dev):
 
-- **Vertical session tabs** down the left — one per terminal, click to switch,
+- **Vertical session tabs** down the left — one per session, click to switch,
   `⌘T` for a new one, `⌘W` to close.
-- **The active terminal** filling the middle. Each tab is a real shell running on
-  its own PTY, kept alive in the background so it survives tab switches.
-- **A worktree diff sidebar** on the right that automatically shows `git diff`
-  for whatever directory the focused terminal is currently in — it follows the
-  shell's working directory as you `cd` around. Toggle it with `⌥⌘D`.
+- **The active terminal** filling the middle. Each tab is a real terminal on its
+  own PTY, kept alive in the background so it survives tab switches.
+- **A worktree diff sidebar** on the right that shows `git diff` for the
+  directory a *local* terminal is in, following the shell's cwd. Toggle `⌥⌘D`.
+
+## exe.dev VM per tab
+
+Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
+
+1. A repo picker lists your accessible GitHub repos (or type `owner/repo`).
+2. For each chosen repo the app checks for an existing exe.dev GitHub
+   integration (`integrations list`) and, if missing, creates one that acts as
+   you, attached to a per-repo tag
+   (`integrations add github --act-as-user --attach tag:<slug>`).
+3. It creates a VM tagged for those integrations (`new --tag <slug> --json`), so
+   the integrations bind to the VM.
+4. The terminal SSHes into the VM and runs, as its first commands, your
+   configurable **setup script**, then `git clone` for each repo through the
+   exe.dev GitHub proxy (`https://github.int.exe.xyz/<owner>/<repo>.git`).
+
+`⌃⌘T` opens a plain local shell instead (no VM), useful offline.
+
+### Setup
+
+- **exe.dev token** — set it in Settings (`⌘,`) or the `EXE_DEV_TOKEN`
+  environment variable. It is stored in `~/Library/Application Support/TerminalWorkspace/config.json`,
+  never in this repo. The token needs these command permissions (`cmds`):
+  `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`.
+- **Setup script** — edited in Settings, persisted in the same config file.
+  Defaults to `echo insert setup script here`.
+- **GitHub repo listing** — uses a token discovered from `GITHUB_TOKEN`/`GH_TOKEN`
+  or the `gh` CLI (`gh auth token`). Without one, the picker still accepts a
+  manually typed `owner/repo`.
+- **SSH** — your machine needs an SSH key registered with exe.dev (the same one
+  `ssh <vm>.exe.xyz` uses).
+
+> The diff sidebar tracks *local* git repos only; for VM tabs the cwd is remote,
+> so it shows "Not a git repository".
 
 ## Architecture
 
@@ -28,10 +61,14 @@ PTY and renders it.
 
 | Area | Files |
 | --- | --- |
-| Terminal session | `Sources/Model/TerminalSession.swift` — wraps a SwiftTerm `LocalProcessTerminalView` |
-| App state | `Sources/Model/Workspace.swift` — the list of sessions |
-| Git | `Sources/Git/GitWorktree.swift` — shells out to `git`, no terminal coupling |
-| UI | `Sources/Views/` — sidebar, terminal host, diff sidebar, layout |
+| Terminal session | `Sources/Model/TerminalSession.swift` — wraps a SwiftTerm `LocalProcessTerminalView`; local shell or SSH-into-VM |
+| Provisioning | `Sources/Model/SessionProvisioner.swift` — repo pick → integration → VM → SSH bootstrap |
+| exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create) |
+| GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
+| Config | `Sources/Config/AppConfig.swift` — persisted token + setup script |
+| App state | `Sources/Model/Workspace.swift` — sessions + exe.dev service |
+| Git diff | `Sources/Git/GitWorktree.swift` — shells out to `git`, no terminal coupling |
+| UI | `Sources/Views/` — sidebar, terminal host, diff sidebar, new-session sheet, settings |
 | App entry | `Sources/App/` — `@main` SwiftUI `App` + `AppDelegate` |
 
 **How the diff follows the terminal:** the shell reports its working directory

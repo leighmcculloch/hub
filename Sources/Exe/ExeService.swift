@@ -1,0 +1,81 @@
+import Foundation
+
+/// One integration as returned by `integrations list --json`.
+struct ExeIntegration: Decodable {
+    let name: String
+    let type: String
+    let attachments: [String]?
+    let config: Config?
+
+    struct Config: Decodable {
+        let repositories: [String]?
+        let act_as_user: Bool?
+    }
+
+    /// The first `tag:<name>` this integration is attached to, if any.
+    var attachedTag: String? {
+        attachments?
+            .compactMap { $0.hasPrefix("tag:") ? String($0.dropFirst("tag:".count)) : nil }
+            .first
+    }
+}
+
+/// A VM as returned by `new --json` / `ls --json`. Fields are optional so we
+/// tolerate shape differences between commands.
+struct ExeVM: Decodable {
+    let vm_name: String?
+    let ssh_dest: String?
+    let https_url: String?
+    let status: String?
+    let region: String?
+}
+
+/// Higher-level exe.dev operations composed from CLI commands.
+final class ExeService {
+    let client: ExeClient
+
+    init(client: ExeClient) {
+        self.client = client
+    }
+
+    func listIntegrations() async throws -> [ExeIntegration] {
+        try await client.runJSON("integrations list --json", as: [ExeIntegration].self)
+    }
+
+    /// Ensure a GitHub integration exists for `repo` ("owner/name") and return
+    /// the tag that binds it to a VM, creating the integration (acting as the
+    /// user) if it doesn't already exist.
+    func ensureGithubIntegration(repo: String, existing: [ExeIntegration]) async throws -> String {
+        let slug = Self.slug(repo)
+
+        if let match = existing.first(where: {
+            $0.type == "github" && ($0.config?.repositories?.contains(repo) ?? false)
+        }) {
+            if let tag = match.attachedTag { return tag }
+            // Integration exists but isn't tag-attached; attach a tag we can bind.
+            try await client.run("integrations attach \(match.name) tag:\(slug)")
+            return slug
+        }
+
+        try await client.run(
+            "integrations add github --name \(slug) --repository \(repo) --act-as-user --attach tag:\(slug)"
+        )
+        return slug
+    }
+
+    /// Create a VM with the given tags (so tag-attached integrations bind to it).
+    func createVM(name: String, tags: [String]) async throws -> ExeVM {
+        var command = "new --name \(name) --json"
+        if !tags.isEmpty {
+            command += " --tag \(tags.joined(separator: ","))"
+        }
+        return try await client.runJSON(command, as: ExeVM.self)
+    }
+
+    /// Slug used for integration name and tag, e.g. "owner/Repo.Name" -> "owner-repo-name".
+    static func slug(_ repo: String) -> String {
+        let lowered = repo.lowercased().replacingOccurrences(of: "/", with: "-")
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        return String(lowered.map { allowed.contains($0) ? $0 : "-" })
+    }
+}

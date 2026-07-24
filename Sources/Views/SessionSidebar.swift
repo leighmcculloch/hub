@@ -23,7 +23,7 @@ struct SessionSidebar: View {
 
             Divider()
 
-            Button(action: { workspace.newSession() }) {
+            Button(action: { workspace.presentingNewSession = true }) {
                 Label("New Session", systemImage: "plus")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
