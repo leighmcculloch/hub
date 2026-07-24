@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct GhosttyWorkspaceApp: App {
+struct TerminalWorkspaceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var workspace = Workspace()
 

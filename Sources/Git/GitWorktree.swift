@@ -22,7 +22,7 @@ struct GitWorktreeState: Equatable {
 }
 
 /// Runs `git` against a directory to describe its worktree. Everything here is
-/// plain process invocation — independent of libghostty — so the diff sidebar
+/// plain process invocation — independent of the terminal engine — so the diff
 /// works for any directory a terminal navigates into.
 enum GitWorktree {
 

@@ -1,21 +1,13 @@
 import Foundation
 import SwiftUI
 
-/// Top-level app state: the shared libghostty app and the list of terminal
-/// sessions shown as vertical tabs.
+/// Top-level app state: the list of terminal sessions shown as vertical tabs.
 final class Workspace: ObservableObject {
     @Published var sessions: [TerminalSession] = []
     @Published var selectedSessionID: TerminalSession.ID?
     @Published var showDiffSidebar: Bool = true
 
-    let ghostty: GhosttyApp
-
     init() {
-        Ghostty.initializeOnce()
-        guard let app = GhosttyApp() else {
-            fatalError("Failed to initialize libghostty. Is GhosttyKit.xcframework present and compatible?")
-        }
-        ghostty = app
         newSession()
     }
 
@@ -25,7 +17,7 @@ final class Workspace: ObservableObject {
 
     @discardableResult
     func newSession() -> TerminalSession {
-        let session = TerminalSession(app: ghostty)
+        let session = TerminalSession()
         sessions.append(session)
         selectedSessionID = session.id
         return session

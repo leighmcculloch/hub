@@ -8,10 +8,11 @@ xcuserdata/
 *.xcuserstate
 
 # Generated project (recreate with `xcodegen generate`)
-GhosttyWorkspace.xcodeproj/
+TerminalWorkspace.xcodeproj/
 
-# Vendored binary framework (build it locally, see vendor/README.md)
-vendor/GhosttyKit.xcframework/
+# Swift Package Manager
+.swiftpm/
+Package.resolved
 
 # macOS
 .DS_Store
