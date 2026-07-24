@@ -47,8 +47,26 @@ the session's `@Published workingDirectory`; the diff sidebar then recomputes
 
 ## Building
 
-This project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-and pulls SwiftTerm via Swift Package Manager — no binary frameworks to vendor.
+SwiftTerm is pulled via Swift Package Manager — no binary frameworks to vendor.
+There are two ways to build.
+
+### Swift CLI (fastest for dev)
+
+```sh
+swift run          # builds and launches the app
+# or
+swift build        # just compile
+```
+
+This runs the app as a bare executable rather than a `.app` bundle, so
+`Info.plist`/entitlements aren't applied — that's fine here since the app needs
+no sandbox, and it makes itself a regular foreground app at launch. Requires the
+Xcode toolchain (`xcode-select --install`), macOS 13+.
+
+### Xcode project
+
+Generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen); produces a
+proper signed `.app` bundle.
 
 ```sh
 brew install xcodegen
@@ -62,6 +80,6 @@ or headless:
 xcodebuild -scheme TerminalWorkspace -configuration Debug build
 ```
 
-Requirements: macOS 13+, Xcode 15+. In Xcode, set the target's Signing team (or
-"Sign to Run Locally"). The app disables the App Sandbox so it can spawn shells
-and run `git` against any directory.
+In Xcode, set the target's Signing team (or "Sign to Run Locally"). The app
+disables the App Sandbox so it can spawn shells and run `git` against any
+directory.
