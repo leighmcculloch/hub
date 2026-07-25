@@ -30,7 +30,9 @@ final class SessionProvisioner: ObservableObject {
     private let exe: ExeService
     private let config: AppConfig
 
-    init(exe: ExeService, config: AppConfig) {
+    /// Nonisolated so it can be constructed from plain (non-main-actor) contexts
+    /// like `Workspace.makeProvisioner()`; it only assigns stored properties.
+    nonisolated init(exe: ExeService, config: AppConfig) {
         self.exe = exe
         self.config = config
     }

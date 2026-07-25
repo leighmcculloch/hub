@@ -39,7 +39,9 @@ private final class RemoteDiffModel: ObservableObject {
     @Published var loadingRepos = false
     @Published var loadingDiff = false
 
-    init(destination: String) {
+    /// Nonisolated so `RemoteDiffView.init` can construct it; only assigns a
+    /// stored property.
+    nonisolated init(destination: String) {
         self.destination = destination
     }
 

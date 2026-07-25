@@ -157,6 +157,7 @@ struct NewSessionSheet: View {
         .padding(14)
     }
 
+    @MainActor
     private func create() async {
         if let (launch, title) = await provisioner.provision() {
             workspace.addSession(title: title, launch: launch)
