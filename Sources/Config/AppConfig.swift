@@ -35,7 +35,9 @@ struct AppConfigData: Codable {
         "sessionUrl": true
       },
       "remoteControlAtStartup": true,
-      "hasCompletedOnboarding": true
+      "hasCompletedOnboarding": true,
+      "disableWorkflows": false,
+      "prefersReducedMotion": true
     }
     """
 
