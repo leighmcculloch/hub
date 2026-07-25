@@ -16,6 +16,9 @@ struct TerminalHost: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
         container.autoresizingMask = [.width, .height]
+        // Layer-backed so the padding around the terminal can be filled with the
+        // terminal's own background colour instead of showing the window behind.
+        container.wantsLayer = true
         return container
     }
 
@@ -45,6 +48,9 @@ struct TerminalHost: NSViewRepresentable {
             session.terminalView.isHidden = !isSelected
             if isSelected {
                 container.window?.makeFirstResponder(session.terminalView)
+                // Match the padding to the terminal so the inset is invisible.
+                container.layer?.backgroundColor = session.terminalView
+                    .nativeBackgroundColor.cgColor
             }
         }
     }
