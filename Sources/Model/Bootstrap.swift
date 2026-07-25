@@ -5,6 +5,15 @@ import Foundation
 /// Kept free of UI/Combine imports so they stay compilable — and testable — off
 /// macOS.
 enum Bootstrap {
+    /// Seeded to `~/.claude.json` on a fresh VM. Claude Code keeps onboarding
+    /// state here rather than in `settings.json`, so this is what actually
+    /// suppresses the first-run flow.
+    static let claudeState = """
+    {
+      "hasCompletedOnboarding": true
+    }
+    """
+
     /// Turn a user-supplied session name into a valid exe.dev VM name, falling
     /// back to a generated one when empty. VM names are lowercase alphanumeric
     /// with dashes.
@@ -66,10 +75,17 @@ enum Bootstrap {
         // customized on the VM.
         if !claudeSettings.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let encodedSettings = Data(claudeSettings.utf8).base64EncodedString()
+            // Onboarding state lives in ~/.claude.json (Claude Code's state
+            // file), not in settings.json, so seed it there as well or a fresh
+            // VM still shows the onboarding flow.
+            let encodedState = Data(Self.claudeState.utf8).base64EncodedString()
             script += """
             mkdir -p "$HOME/.claude"
             if [ ! -f "$HOME/.claude/settings.json" ]; then
               printf %s '\(encodedSettings)' | base64 -d > "$HOME/.claude/settings.json"
+            fi
+            if [ ! -f "$HOME/.claude.json" ]; then
+              printf %s '\(encodedState)' | base64 -d > "$HOME/.claude.json"
             fi
 
             """
