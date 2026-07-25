@@ -26,6 +26,12 @@ struct DiffSidebar: View {
 
 // MARK: - Remote (VM) diff
 
+/// Identifies the file whose diff is on screen.
+struct SelectedFile: Equatable {
+    let repo: String
+    let path: String
+}
+
 @MainActor
 private final class RemoteDiffModel: ObservableObject {
     let destination: String
@@ -34,10 +40,15 @@ private final class RemoteDiffModel: ObservableObject {
     /// nil == all repos.
     @Published var selectedRepo: String?
     @Published var changesByRepo: [String: [GitFileChange]] = [:]
-    @Published var selectedKey: String?
+    @Published var selection: SelectedFile?
     @Published var diffText: String = ""
     @Published var loadingRepos = false
     @Published var loadingDiff = false
+
+    /// How often the file list and open diff are refreshed from the VM.
+    private static let pollInterval: Duration = .seconds(3)
+    /// Guards against overlapping refreshes when SSH is slower than the poll.
+    private var isRefreshing = false
 
     /// Nonisolated so `RemoteDiffView.init` can construct it; only assigns a
     /// stored property.
@@ -50,23 +61,49 @@ private final class RemoteDiffModel: ObservableObject {
         return repos
     }
 
-    func key(repo: String, path: String) -> String { repo + "\u{1}" + path }
+    /// Load once with a spinner, then keep polling until the view goes away
+    /// (the enclosing `.task` cancels this).
+    func pollLoop() async {
+        await refresh(showSpinner: true)
+        while !Task.isCancelled {
+            try? await Task.sleep(for: Self.pollInterval)
+            if Task.isCancelled { break }
+            await refresh(showSpinner: false)
+        }
+    }
 
-    func reload() async {
-        loadingRepos = true
-        repos = await RemoteGit.listRepos(destination: destination)
-        if let selected = selectedRepo, !repos.contains(selected) { selectedRepo = nil }
+    /// Re-read repos, their changed files, and the open diff. Published values
+    /// are only reassigned when they actually differ, so unchanged polls don't
+    /// churn the view (and don't disturb scrolling or selection).
+    func refresh(showSpinner: Bool) async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        if showSpinner { loadingRepos = true }
+
+        let discovered = await RemoteGit.listRepos(destination: destination)
+        if discovered != repos { repos = discovered }
+        if let selected = selectedRepo, !discovered.contains(selected) { selectedRepo = nil }
 
         var map: [String: [GitFileChange]] = [:]
         for repo in visibleRepos {
             map[repo] = await RemoteGit.changes(destination: destination, repo: repo)
         }
-        changesByRepo = map
-        loadingRepos = false
+        if map != changesByRepo { changesByRepo = map }
+
+        // Keep the open diff live too.
+        if let selection {
+            let text = await RemoteGit.fileDiff(
+                destination: destination, repo: selection.repo, file: selection.path)
+            if text != diffText { diffText = text }
+        }
+
+        if showSpinner { loadingRepos = false }
     }
 
     func selectFile(repo: String, path: String) async {
-        selectedKey = key(repo: repo, path: path)
+        selection = SelectedFile(repo: repo, path: path)
         loadingDiff = true
         diffText = await RemoteGit.fileDiff(destination: destination, repo: repo, file: path)
         loadingDiff = false
@@ -92,9 +129,10 @@ private struct RemoteDiffView: View {
             Divider()
             diffPane
         }
-        .task { await model.reload() }
+        // Loads once, then auto-refreshes until the view goes away.
+        .task { await model.pollLoop() }
         .onChange(of: model.selectedRepo) { _ in
-            Task { await model.reload() }
+            Task { await model.refresh(showSpinner: true) }
         }
     }
 
@@ -105,7 +143,7 @@ private struct RemoteDiffView: View {
                 Text(model.destination).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
-            Button(action: { Task { await model.reload() } }) {
+            Button(action: { Task { await model.refresh(showSpinner: true) } }) {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.plain)
@@ -153,7 +191,7 @@ private struct RemoteDiffView: View {
                             ForEach(changes) { change in
                                 FileRow(
                                     change: change,
-                                    isSelected: model.selectedKey == model.key(repo: repo, path: change.path)
+                                    isSelected: model.selection == SelectedFile(repo: repo, path: change.path)
                                 )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
@@ -174,7 +212,7 @@ private struct RemoteDiffView: View {
     private var diffPane: some View {
         if model.loadingDiff {
             DiffPlaceholder(text: "Loading diff…")
-        } else if model.selectedKey == nil {
+        } else if model.selection == nil {
             DiffPlaceholder(text: "Select a file to see its diff")
         } else if model.diffText.isEmpty {
             DiffPlaceholder(text: "No line changes (new or binary file)")
@@ -254,8 +292,15 @@ private struct LocalDiffView: View {
                     : "Not a git repository")
             }
         }
+        // Reloads when the cwd changes or on manual refresh, then keeps polling
+        // so edits show up without interaction.
         .task(id: "\(session.workingDirectory?.path ?? "")#\(reloadToken)") {
-            await reload()
+            await reload(showSpinner: true)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if Task.isCancelled { break }
+                await reload(showSpinner: false)
+            }
         }
     }
 
@@ -293,17 +338,18 @@ private struct LocalDiffView: View {
         .frame(maxHeight: 150)
     }
 
-    private func reload() async {
+    private func reload(showSpinner: Bool) async {
         guard let directory = session.workingDirectory else {
             state = nil
             return
         }
-        isLoading = true
+        if showSpinner { isLoading = true }
         let computed = await Task.detached(priority: .userInitiated) {
             GitWorktree.state(for: directory)
         }.value
-        state = computed
-        isLoading = false
+        // Only reassign when changed, so quiet polls don't churn the view.
+        if computed != state { state = computed }
+        if showSpinner { isLoading = false }
     }
 }
 

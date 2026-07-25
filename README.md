@@ -10,7 +10,8 @@ and provisions a cloud VM per tab on [**exe.dev**](https://exe.dev):
 - **A worktree diff sidebar** on the right. For a VM tab it lists the git repos
   in the VM's home directory, lets you pick one (or view all), browse changed
   files, and see each file's diff — run over SSH. For a local shell it follows
-  the shell's cwd. Toggle `⌥⌘D`.
+  the shell's cwd. It auto-refreshes every 3s (including the open diff), so
+  edits appear without clicking anything. Toggle `⌥⌘D`.
 
 ## exe.dev VM per tab
 
