@@ -11,30 +11,76 @@ struct ResizeHandle: View {
     let direction: Double
 
     @State private var widthAtDragStart: Double?
+    @State private var isHovering = false
+    /// Tracks our own `NSCursor.push` so we never `pop` a cursor we didn't
+    /// push — an unbalanced pop would clobber another view's cursor.
+    @State private var didPushCursor = false
+
+    /// Hovered or mid-drag: the divider thickens and tints so the handle is
+    /// discoverable rather than looking like a plain separator.
+    private var isActive: Bool { isHovering || widthAtDragStart != nil }
+
+    /// How much a keyboard/VoiceOver adjustment moves the panel.
+    private static let adjustmentStep: Double = 20
 
     var body: some View {
         Rectangle()
             // Nearly transparent, but wide enough to be an easy drag target.
             .fill(Color.primary.opacity(0.001))
-            .frame(width: 6)
-            .overlay(Divider())
+            .frame(width: 8)
+            .overlay(
+                Rectangle()
+                    .fill(isActive ? Color.accentColor : Color(nsColor: .separatorColor))
+                    .frame(width: isActive ? 3 : 1)
+            )
             .contentShape(Rectangle())
+            .animation(.easeOut(duration: 0.12), value: isActive)
+            .help("Drag to resize")
             .onHover { inside in
-                if inside {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
-                }
+                isHovering = inside
+                updateCursor()
             }
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in
                         let base = widthAtDragStart ?? width
-                        if widthAtDragStart == nil { widthAtDragStart = width }
+                        if widthAtDragStart == nil {
+                            widthAtDragStart = width
+                            // Keep the resize cursor while dragging past the handle.
+                            updateCursor()
+                        }
                         let proposed = base + direction * Double(value.translation.width)
-                        width = min(max(proposed, range.lowerBound), range.upperBound)
+                        width = clamped(proposed)
                     }
-                    .onEnded { _ in widthAtDragStart = nil }
+                    .onEnded { _ in
+                        widthAtDragStart = nil
+                        updateCursor()
+                    }
             )
+            .accessibilityElement()
+            .accessibilityLabel("Resize panel")
+            .accessibilityValue(Text("\(Int(width)) points"))
+            .accessibilityAdjustableAction { adjustment in
+                switch adjustment {
+                case .increment: width = clamped(width + Self.adjustmentStep)
+                case .decrement: width = clamped(width - Self.adjustmentStep)
+                @unknown default: break
+                }
+            }
+    }
+
+    private func clamped(_ value: Double) -> Double {
+        min(max(value, range.lowerBound), range.upperBound)
+    }
+
+    private func updateCursor() {
+        let wanted = isActive
+        if wanted, !didPushCursor {
+            NSCursor.resizeLeftRight.push()
+            didPushCursor = true
+        } else if !wanted, didPushCursor {
+            NSCursor.pop()
+            didPushCursor = false
+        }
     }
 }
