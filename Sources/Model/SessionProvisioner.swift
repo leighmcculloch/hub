@@ -34,8 +34,12 @@ final class SessionProvisioner: ObservableObject {
     @Published var statusLines: [String] = []
     @Published var errorMessage: String?
 
-    private let exe: ExeService
-    private let config: AppConfig
+    // Assigned only by the nonisolated init below, before this object is shared,
+    // and read only from main-actor methods afterwards. Marked nonisolated so
+    // that init doesn't have to cross into the main actor to store them (an
+    // error under the Swift 6 language mode).
+    nonisolated(unsafe) private let exe: ExeService
+    nonisolated(unsafe) private let config: AppConfig
 
     /// Nonisolated so it can be constructed from plain (non-main-actor) contexts
     /// like `Workspace.makeProvisioner()`; it only assigns stored properties.

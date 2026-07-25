@@ -9,7 +9,7 @@ struct SettingsView: View {
 
     /// Monospaced faces installed on the system, for the font picker.
     private var monospacedFonts: [String] {
-        let names = NSFontManager.shared.availableFontNamesWithTraits(.fixedPitchFontMask) ?? []
+        let names = NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask) ?? []
         return Array(Set(names.filter { !$0.hasPrefix(".") })).sorted()
     }
 
