@@ -11,6 +11,11 @@ final class Workspace: ObservableObject {
     /// Whether the new-session (repo picker) sheet is presented.
     @Published var presentingNewSession: Bool = false
 
+    /// VMs that exist on the exe.dev account. Listed in the sidebar at launch so
+    /// a previous session can be reopened; none is connected until clicked.
+    @Published var availableVMs: [ExeVM] = []
+    @Published var loadingVMs = false
+
     let config = AppConfig.shared
     let exe: ExeService
 
@@ -21,6 +26,25 @@ final class Workspace: ObservableObject {
 
     var selectedSession: TerminalSession? {
         sessions.first { $0.id == selectedSessionID }
+    }
+
+    /// Known VMs that aren't already open as a tab.
+    var unopenedVMs: [ExeVM] {
+        let open = Set(sessions.compactMap(\.sshDestination))
+        return availableVMs.filter { vm in
+            guard let destination = vm.ssh_dest else { return true }
+            return !open.contains(destination)
+        }
+    }
+
+    /// Refresh the list of existing VMs. Deliberately does *not* connect to or
+    /// select any of them.
+    @MainActor
+    func loadAvailableVMs() async {
+        guard !config.effectiveToken.isEmpty else { return }
+        loadingVMs = true
+        availableVMs = (try? await exe.listVMs()) ?? []
+        loadingVMs = false
     }
 
     func makeProvisioner() -> SessionProvisioner {

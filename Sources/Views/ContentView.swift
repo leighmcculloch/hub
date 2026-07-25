@@ -37,11 +37,14 @@ struct ContentView: View {
         .sheet(isPresented: $workspace.presentingNewSession) {
             NewSessionSheet(workspace: workspace)
         }
+        // Populate the sidebar with existing VMs on open, without connecting.
+        .task { await workspace.loadAvailableVMs() }
         // Recover SSH tabs that dropped while the app was in the background.
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification)
         ) { _ in
             workspace.reconnectDisconnectedSessions()
+            Task { await workspace.loadAvailableVMs() }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -75,19 +78,10 @@ private struct EmptyWorkspaceView: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "server.rack")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text("No sessions")
-                .font(.headline)
-            Text("Create a session to provision an exe.dev VM, or reopen an existing one.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("New Session…") { workspace.presentingNewSession = true }
-                .keyboardShortcut("t", modifiers: .command)
-        }
-        .padding(40)
+        // Nothing is auto-selected at launch, so this is just the entry point to
+        // a new session; existing VMs are listed in the sidebar.
+        Button("New Session…") { workspace.presentingNewSession = true }
+            .keyboardShortcut("t", modifiers: .command)
+            .padding(40)
     }
 }

@@ -8,7 +8,7 @@ struct SessionSidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(workspace.sessions) { session in
                         SessionTab(
                             session: session,
@@ -16,6 +16,25 @@ struct SessionSidebar: View {
                             onSelect: { workspace.selectedSessionID = session.id },
                             onClose: { workspace.closeSession(session) }
                         )
+                    }
+
+                    // Existing VMs on the account that aren't open yet. Shown so
+                    // a previous session can be resumed; clicking connects.
+                    if !workspace.unopenedVMs.isEmpty {
+                        HStack(spacing: 4) {
+                            Text("EXISTING")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                            if workspace.loadingVMs {
+                                ProgressView().controlSize(.mini)
+                            }
+                        }
+                        .padding(.top, workspace.sessions.isEmpty ? 2 : 10)
+                        .padding(.horizontal, 8)
+
+                        ForEach(workspace.unopenedVMs) { vm in
+                            AvailableVMRow(vm: vm) { workspace.reopen(vm: vm) }
+                        }
                     }
                 }
                 .padding(6)
@@ -34,6 +53,48 @@ struct SessionSidebar: View {
         // Width is owned by ContentView so the divider can resize it.
         .frame(maxWidth: .infinity)
         .background(.thinMaterial)
+    }
+}
+
+/// A VM that exists on the account but has no tab open. Dimmed relative to live
+/// sessions, and connects on click.
+private struct AvailableVMRow: View {
+    let vm: ExeVM
+    let onOpen: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(vm.status == "running" ? Color.green.opacity(0.7) : Color.secondary.opacity(0.5))
+                .frame(width: 6, height: 6)
+                .padding(.leading, 3)
+
+            Text(vm.vm_name ?? vm.ssh_dest ?? "unknown")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            if isHovering {
+                Image(systemName: "arrow.right.circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovering ? Color.primary.opacity(0.06) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpen)
+        .onHover { isHovering = $0 }
+        .help("Connect to \(vm.vm_name ?? "this VM")")
     }
 }
 

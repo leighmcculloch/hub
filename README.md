@@ -4,7 +4,9 @@ A native macOS app that embeds a terminal ([**SwiftTerm**](https://github.com/mi
 and provisions a cloud VM per tab on [**exe.dev**](https://exe.dev):
 
 - **Vertical session tabs** down the left — one per session, click to switch,
-  `⌘T` for a new one, `⌘W` to close. Resizable, and hideable with `⌘S`.
+  `⌘T` for a new one, `⌘W` to close. Resizable, and hideable with `⌘S`. On
+  launch the sidebar also lists the VMs already on your exe.dev account under
+  **EXISTING**; nothing is connected until you click one.
 - **The active terminal** filling the middle. Each tab is a real terminal on its
   own PTY, kept alive in the background so it survives tab switches.
 - **A worktree diff sidebar** on the right. For a VM tab it lists the git repos

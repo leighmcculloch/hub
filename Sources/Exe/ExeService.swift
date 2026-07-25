@@ -30,7 +30,9 @@ struct ExeVM: Decodable, Identifiable {
     let region: String?
     let tags: [String]?
 
-    var id: String { vm_name ?? ssh_dest ?? UUID().uuidString }
+    // Must be stable across reads: a fresh UUID here would give SwiftUI a new
+    // identity on every render and churn the list.
+    var id: String { vm_name ?? ssh_dest ?? "unknown" }
 }
 
 /// `ls --json` wraps its results in a `vms` array.
