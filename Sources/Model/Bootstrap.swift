@@ -1,0 +1,62 @@
+import Foundation
+
+/// Pure helpers for turning app configuration into the command run on a VM.
+///
+/// Kept free of UI/Combine imports so they stay compilable — and testable — off
+/// macOS.
+enum Bootstrap {
+    /// Turn a user-supplied session name into a valid exe.dev VM name, falling
+    /// back to a generated one when empty. VM names are lowercase alphanumeric
+    /// with dashes.
+    static func vmName(from sessionName: String) -> String {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        let slug = String(sessionName.lowercased().map { allowed.contains($0) ? $0 : "-" })
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        guard !slug.isEmpty else {
+            return "tab-" + UUID().uuidString.prefix(8).lowercased()
+        }
+        return String(slug.prefix(40))
+    }
+
+    /// Build the remote command run over SSH: decode and execute a bootstrap
+    /// script (write `~/.claude/settings.json`, run the setup script, then a
+    /// `git clone` per repo through the exe.dev GitHub proxy), then drop into an
+    /// interactive login shell.
+    ///
+    /// The script is base64-encoded so arbitrary multi-line user content (setup
+    /// script, settings JSON) survives the trip through SSH argument and
+    /// remote-shell parsing.
+    static func command(setupScript: String, claudeSettings: String, repos: [String]) -> String {
+        let encoded = Data(script(setupScript: setupScript,
+                                  claudeSettings: claudeSettings,
+                                  repos: repos).utf8).base64EncodedString()
+        return "printf %s '\(encoded)' | base64 -d > /tmp/exe-bootstrap.sh"
+            + " && chmod +x /tmp/exe-bootstrap.sh && /tmp/exe-bootstrap.sh;"
+            + " exec ${SHELL:-bash} -l"
+    }
+
+    /// The script body that gets base64-encoded into `command`.
+    static func script(setupScript: String, claudeSettings: String, repos: [String]) -> String {
+        var script = "#!/usr/bin/env bash\n"
+
+        // Seed Claude Code's settings, but never clobber one the user already
+        // customized on the VM.
+        if !claudeSettings.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let encodedSettings = Data(claudeSettings.utf8).base64EncodedString()
+            script += """
+            mkdir -p "$HOME/.claude"
+            if [ ! -f "$HOME/.claude/settings.json" ]; then
+              printf %s '\(encodedSettings)' | base64 -d > "$HOME/.claude/settings.json"
+            fi
+
+            """
+        }
+
+        script += setupScript
+        script += "\n"
+        for repo in repos {
+            script += "git clone https://github.int.exe.xyz/\(repo).git || true\n"
+        }
+        return script
+    }
+}

@@ -1,4 +1,4 @@
-name: TerminalWorkspace
+name: ExeDesktopApp
 
 options:
   bundleIdPrefix: au.id.mcculloch
@@ -20,15 +20,15 @@ packages:
     from: 1.2.0
 
 targets:
-  TerminalWorkspace:
+  ExeDesktopApp:
     type: application
     platform: macOS
     sources:
       - Sources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: au.id.mcculloch.TerminalWorkspace
+        PRODUCT_BUNDLE_IDENTIFIER: au.id.mcculloch.ExeDesktopApp
         INFOPLIST_FILE: Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Resources/TerminalWorkspace.entitlements
+        CODE_SIGN_ENTITLEMENTS: Resources/ExeDesktopApp.entitlements
     dependencies:
       - package: SwiftTerm

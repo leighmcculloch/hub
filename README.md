@@ -1,39 +1,45 @@
-# Terminal Workspace
+# Exe Desktop App
 
 A native macOS app that embeds a terminal ([**SwiftTerm**](https://github.com/migueldeicaza/SwiftTerm))
 and provisions a cloud VM per tab on [**exe.dev**](https://exe.dev):
 
 - **Vertical session tabs** down the left — one per session, click to switch,
-  `⌘T` for a new one, `⌘W` to close.
+  `⌘T` for a new one, `⌘W` to close. Resizable, and hideable with `⌘S`.
 - **The active terminal** filling the middle. Each tab is a real terminal on its
   own PTY, kept alive in the background so it survives tab switches.
 - **A worktree diff sidebar** on the right. For a VM tab it lists the git repos
   in the VM's home directory, lets you pick one (or view all), browse changed
   files, and see each file's diff — run over SSH. For a local shell it follows
   the shell's cwd. It auto-refreshes every 3s (including the open diff), so
-  edits appear without clicking anything. Toggle `⌥⌘D`.
+  edits appear without clicking anything. Resizable, and hideable with `⌘R`.
 
 ## exe.dev VM per tab
 
 Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
 
-1. A repo picker lists your accessible GitHub repos (or type `owner/repo`).
+1. Name the session (the name becomes the VM name) and pick GitHub repos —
+   selected repos hoist to the top of the list. Existing VMs are listed too, so
+   a closed session can be reopened and continued.
 2. For each chosen repo the app checks for an existing exe.dev GitHub
    integration (`integrations list`) and, if missing, creates one that acts as
    you, attached to a per-repo tag
    (`integrations add github --act-as-user --attach tag:<slug>`).
 3. It creates a VM tagged for those integrations (`new --tag <slug> --json`), so
    the integrations bind to the VM.
-4. The terminal SSHes into the VM and runs, as its first commands, your
-   configurable **setup script**, then `git clone` for each repo through the
-   exe.dev GitHub proxy (`https://github.int.exe.xyz/<owner>/<repo>.git`).
+4. The terminal SSHes into the VM and runs, as its first commands: seed
+   `~/.claude/settings.json` (only if absent), your configurable **setup
+   script**, then `git clone` for each repo through the exe.dev GitHub proxy
+   (`https://github.int.exe.xyz/<owner>/<repo>.git`).
+
+If an SSH session drops while the app is in the background, it reconnects
+automatically when the app regains focus.
 
 `⌃⌘T` opens a plain local shell instead (no VM), useful offline.
 
 ### Setup
 
 - **exe.dev token** — set it in Settings (`⌘,`) or the `EXE_DEV_TOKEN`
-  environment variable. It is stored in `~/Library/Application Support/TerminalWorkspace/config.json`,
+  environment variable. It is stored in `~/Library/Application Support/ExeDesktopApp/config.json`,
   never in this repo. The token needs these command permissions (`cmds`):
   `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`.
 - **Setup script** — edited in Settings, persisted in the same config file.
@@ -42,6 +48,12 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
   `new --env` so they're set on the VM host itself and visible to every process
   on it, not just the terminal's shell. Values with spaces or quotes are shell-
   quoted for you.
+- **Terminal font** — family and size in Settings; `⌘+`/`⌘-` adjust size and
+  `⌘0` resets.
+- **Claude settings** — the `~/.claude/settings.json` seeded onto each VM
+  (dark theme, `permissions.defaultMode: auto`, commit attribution off, PR
+  attribution on, `remoteControlAtStartup: true`). Editable in Settings; an
+  existing file on the VM is never overwritten.
 - **GitHub repo listing** — uses a token discovered from `GITHUB_TOKEN`/`GH_TOKEN`
   or the `gh` CLI (`gh auth token`). Without one, the picker still accepts a
   manually typed `owner/repo`.
@@ -73,10 +85,11 @@ PTY and renders it.
 | Provisioning | `Sources/Model/SessionProvisioner.swift` — repo pick → integration → VM → SSH bootstrap |
 | exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create) |
 | GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
-| Config | `Sources/Config/AppConfig.swift` — persisted token + setup script |
+| Config | `Sources/Config/` — persisted token, font, env vars, scripts (`AppConfig`, `EnvVar`) |
+| Bootstrap | `Sources/Model/Bootstrap.swift` — VM naming + the remote bootstrap script |
 | App state | `Sources/Model/Workspace.swift` — sessions + exe.dev service |
 | Git diff | `Sources/Git/GitWorktree.swift` (local) and `Sources/Git/RemoteGit.swift` (git over SSH on the VM) |
-| UI | `Sources/Views/` — sidebar, terminal host, diff sidebar, new-session sheet, settings |
+| UI | `Sources/Views/` — sidebars, terminal host, resize handle, new-session sheet, settings |
 | App entry | `Sources/App/` — `@main` SwiftUI `App` + `AppDelegate` |
 
 **How the diff follows the terminal:** the shell reports its working directory
@@ -122,14 +135,14 @@ proper signed `.app` bundle.
 
 ```sh
 brew install xcodegen
-xcodegen generate                 # creates TerminalWorkspace.xcodeproj
-open TerminalWorkspace.xcodeproj  # then press ⌘R
+xcodegen generate                 # creates ExeDesktopApp.xcodeproj
+open ExeDesktopApp.xcodeproj  # then press ⌘R
 ```
 
 or headless:
 
 ```sh
-xcodebuild -scheme TerminalWorkspace -configuration Debug build
+xcodebuild -scheme ExeDesktopApp -configuration Debug build
 ```
 
 In Xcode, set the target's Signing team (or "Sign to Run Locally"). The app

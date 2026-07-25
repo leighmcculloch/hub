@@ -15,6 +15,28 @@ struct AppConfigData: Codable {
     /// they're present for every process on the VM, not just our shell.
     var environment: [EnvVar] = []
 
+    /// Terminal font.
+    var fontName: String = "Menlo"
+    var fontSize: Double = 13
+
+    /// Written to `~/.claude/settings.json` on each new VM during bootstrap.
+    /// Editable so the exact keys can be adjusted without a code change.
+    var claudeSettings: String = AppConfigData.defaultClaudeSettings
+
+    static let defaultClaudeSettings = """
+    {
+      "theme": "dark",
+      "permissions": {
+        "defaultMode": "auto"
+      },
+      "attribution": {
+        "commit": "",
+        "pr": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\\n\\n{{session_url}}"
+      },
+      "remoteControlAtStartup": true
+    }
+    """
+
     init() {}
 
     /// Decoded field-by-field with `decodeIfPresent` so a config file written by
@@ -26,6 +48,10 @@ struct AppConfigData: Codable {
         setupScript = try container.decodeIfPresent(String.self, forKey: .setupScript)
             ?? "echo insert setup script here"
         environment = try container.decodeIfPresent([EnvVar].self, forKey: .environment) ?? []
+        fontName = try container.decodeIfPresent(String.self, forKey: .fontName) ?? "Menlo"
+        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
+        claudeSettings = try container.decodeIfPresent(String.self, forKey: .claudeSettings)
+            ?? AppConfigData.defaultClaudeSettings
     }
 }
 
@@ -43,7 +69,7 @@ final class AppConfig: ObservableObject {
     private init() {
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("TerminalWorkspace", isDirectory: true)
+            .appendingPathComponent("ExeDesktopApp", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("config.json")
 
@@ -53,6 +79,11 @@ final class AppConfig: ObservableObject {
         } else {
             data = AppConfigData()
         }
+    }
+
+    /// Clamped so ⌘+/⌘- can't drive the terminal to an unusable size.
+    func adjustFontSize(by delta: Double) {
+        data.fontSize = min(max(data.fontSize + delta, 8), 32)
     }
 
     /// The token to use: the configured one, or the environment fallback.

@@ -15,6 +15,13 @@ final class SessionProvisioner: ObservableObject {
 
     @Published var phase: Phase = .pickingRepos
 
+    /// User-supplied name; also used as the VM name.
+    @Published var sessionName = ""
+
+    // Existing VMs that can be reopened.
+    @Published var existingVMs: [ExeVM] = []
+    @Published var loadingVMs = false
+
     // Repo picker state.
     @Published var repos: [GitHubRepo] = []
     @Published var reposError: String?
@@ -37,9 +44,15 @@ final class SessionProvisioner: ObservableObject {
         self.config = config
     }
 
+    /// Filtered by the search box, with selected repos hoisted to the top so the
+    /// current selection stays visible and grouped.
     var filteredRepos: [GitHubRepo] {
-        guard !search.isEmpty else { return repos }
-        return repos.filter { $0.fullName.localizedCaseInsensitiveContains(search) }
+        let matching = search.isEmpty
+            ? repos
+            : repos.filter { $0.fullName.localizedCaseInsensitiveContains(search) }
+        let chosen = matching.filter { selected.contains($0.fullName) }
+        let rest = matching.filter { !selected.contains($0.fullName) }
+        return chosen + rest
     }
 
     /// The repos to provision: checked ones plus a manually typed one.
@@ -57,6 +70,13 @@ final class SessionProvisioner: ObservableObject {
         repos = result.repos
         reposError = result.error
         loadingRepos = false
+    }
+
+    /// Existing VMs on the account, offered for reconnection.
+    func loadExistingVMs() async {
+        loadingVMs = true
+        existingVMs = (try? await exe.listVMs()) ?? []
+        loadingVMs = false
     }
 
     /// Run provisioning. On success returns the launch descriptor and a tab
@@ -82,7 +102,7 @@ final class SessionProvisioner: ObservableObject {
                 tags.append(try await exe.ensureGithubIntegration(repo: repo, existing: existing))
             }
 
-            let vmName = "tab-" + UUID().uuidString.prefix(8).lowercased()
+            let vmName = Bootstrap.vmName(from: sessionName)
             let environment = config.data.environment.filter { !$0.key.isEmpty }
             var creating = "Creating VM \(vmName) (tags: \(tags.joined(separator: ", "))"
             if !environment.isEmpty {
@@ -93,12 +113,15 @@ final class SessionProvisioner: ObservableObject {
             let destination = vm.ssh_dest ?? "\(vmName).exe.xyz"
 
             log("VM ready at \(destination). Opening SSH session…")
-            let bootstrap = Self.bootstrap(setupScript: config.data.setupScript, repos: chosen)
+            let bootstrap = Bootstrap.command(
+                setupScript: config.data.setupScript,
+                claudeSettings: config.data.claudeSettings,
+                repos: chosen
+            )
             phase = .done
 
-            let title = chosen.count == 1
-                ? (chosen[0].split(separator: "/").last.map(String.init) ?? vmName)
-                : "\(chosen.count) repos"
+            let trimmedName = sessionName.trimmingCharacters(in: .whitespaces)
+            let title = !trimmedName.isEmpty ? trimmedName : vmName
             return (.ssh(destination: destination, bootstrap: bootstrap), title)
         } catch {
             errorMessage = error.localizedDescription
@@ -111,22 +134,4 @@ final class SessionProvisioner: ObservableObject {
         statusLines.append(line)
     }
 
-    /// Build the remote command run over SSH: decode and execute a bootstrap
-    /// script (setup script, then a `git clone` per repo through the exe.dev
-    /// GitHub proxy), then drop into an interactive login shell.
-    ///
-    /// The script is base64-encoded so an arbitrary multi-line user setup script
-    /// survives the trip through SSH argument and remote-shell parsing.
-    static func bootstrap(setupScript: String, repos: [String]) -> String {
-        var script = "#!/usr/bin/env bash\n"
-        script += setupScript
-        script += "\n"
-        for repo in repos {
-            script += "git clone https://github.int.exe.xyz/\(repo).git || true\n"
-        }
-        let encoded = Data(script.utf8).base64EncodedString()
-        return "printf %s '\(encoded)' | base64 -d > /tmp/exe-bootstrap.sh"
-            + " && chmod +x /tmp/exe-bootstrap.sh && /tmp/exe-bootstrap.sh;"
-            + " exec ${SHELL:-bash} -l"
-    }
 }

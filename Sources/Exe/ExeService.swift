@@ -22,12 +22,20 @@ struct ExeIntegration: Decodable {
 
 /// A VM as returned by `new --json` / `ls --json`. Fields are optional so we
 /// tolerate shape differences between commands.
-struct ExeVM: Decodable {
+struct ExeVM: Decodable, Identifiable {
     let vm_name: String?
     let ssh_dest: String?
     let https_url: String?
     let status: String?
     let region: String?
+    let tags: [String]?
+
+    var id: String { vm_name ?? ssh_dest ?? UUID().uuidString }
+}
+
+/// `ls --json` wraps its results in a `vms` array.
+struct ExeVMList: Decodable {
+    let vms: [ExeVM]
 }
 
 /// Higher-level exe.dev operations composed from CLI commands.
@@ -40,6 +48,11 @@ final class ExeService {
 
     func listIntegrations() async throws -> [ExeIntegration] {
         try await client.runJSON("integrations list --json", as: [ExeIntegration].self)
+    }
+
+    /// Existing VMs on the account, so a closed session can be reopened.
+    func listVMs() async throws -> [ExeVM] {
+        try await client.runJSON("ls --json", as: ExeVMList.self).vms
     }
 
     /// Ensure a GitHub integration exists for `repo` ("owner/name") and return

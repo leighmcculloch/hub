@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import SwiftTerm
@@ -20,6 +21,8 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// The shell's current working directory, updated from OSC 7. For SSH tabs
     /// this reflects the remote path.
     @Published var workingDirectory: URL?
+    /// True once the underlying process has exited (SSH dropped or shell quit).
+    @Published private(set) var isDisconnected = false
 
     let terminalView: LocalProcessTerminalView
 
@@ -27,8 +30,12 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// sidebar uses this to run git over SSH against the VM.
     let sshDestination: String?
 
+    private let launch: Launch
+    private var fontObserver: AnyCancellable?
+
     init(title: String = "Terminal", launch: Launch = .localShell) {
         self.title = title
+        self.launch = launch
         if case let .ssh(destination, _) = launch {
             sshDestination = destination
         } else {
@@ -36,10 +43,27 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
         terminalView = LocalProcessTerminalView(frame: .zero)
         terminalView.processDelegate = self
-        start(launch)
+
+        applyFont()
+        // Track font changes made in Settings or with ⌘+/⌘-.
+        fontObserver = AppConfig.shared.$data
+            .map { ($0.fontName, $0.fontSize) }
+            .removeDuplicates { $0 == $1 }
+            .sink { [weak self] _ in self?.applyFont() }
+
+        start()
     }
 
-    private func start(_ launch: Launch) {
+    private func applyFont() {
+        let data = AppConfig.shared.data
+        let size = CGFloat(data.fontSize)
+        let font = NSFont(name: data.fontName, size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        terminalView.font = font
+    }
+
+    private func start() {
+        isDisconnected = false
         switch launch {
         case .localShell:
             let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
@@ -66,6 +90,13 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
     }
 
+    /// Re-run the launch command in this same view. Used to recover a dropped
+    /// SSH session without losing the tab.
+    func reconnect() {
+        guard isDisconnected else { return }
+        start()
+    }
+
     /// A short label for the tab strip.
     var displayName: String {
         if !title.isEmpty { return title }
@@ -76,7 +107,7 @@ final class TerminalSession: ObservableObject, Identifiable {
 
 extension TerminalSession: LocalProcessTerminalViewDelegate {
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        // Prefer an explicit tab title (e.g. the repo name); fall back to the
+        // Prefer an explicit tab title (e.g. the session name); fall back to the
         // terminal-reported title only when we don't have one.
         if self.title.isEmpty {
             self.title = title
@@ -94,5 +125,7 @@ extension TerminalSession: LocalProcessTerminalViewDelegate {
 
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
-    func processTerminated(source: TerminalView, exitCode: Int32?) {}
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
+        isDisconnected = true
+    }
 }

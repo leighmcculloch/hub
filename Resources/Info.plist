@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>TerminalWorkspace</string>
+	<string>ExeDesktopApp</string>
 	<key>CFBundleDisplayName</key>
-	<string>Terminal Workspace</string>
+	<string>Exe Desktop App</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleExecutable</key>

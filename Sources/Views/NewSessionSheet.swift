@@ -29,8 +29,11 @@ struct NewSessionSheet: View {
             Divider()
             footer
         }
-        .frame(width: 520, height: 560)
-        .task { await provisioner.loadRepos() }
+        .frame(width: 560, height: 640)
+        .task {
+            await provisioner.loadRepos()
+            await provisioner.loadExistingVMs()
+        }
     }
 
     private var header: some View {
@@ -48,6 +51,17 @@ struct NewSessionSheet: View {
 
     private var repoPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Name").font(.caption).foregroundStyle(.secondary)
+                TextField("session name (used as the VM name)", text: $provisioner.sessionName)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(.horizontal, 14)
+
+            if !provisioner.existingVMs.isEmpty {
+                existingSessions
+            }
+
             if workspace.config.effectiveToken.isEmpty {
                 Label("No exe.dev token configured — set one in Settings (⌘,) or via EXE_DEV_TOKEN.",
                       systemImage: "exclamationmark.triangle")
@@ -103,6 +117,40 @@ struct NewSessionSheet: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
         }
+    }
+
+    /// Existing VMs on the account — reopen one to continue where you left off.
+    private var existingSessions: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Reopen an existing session")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(provisioner.existingVMs) { vm in
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(vm.status == "running" ? Color.green : Color.secondary)
+                                .frame(width: 6, height: 6)
+                            Text(vm.vm_name ?? vm.ssh_dest ?? "unknown")
+                                .font(.system(size: 11))
+                            if let region = vm.region, !region.isEmpty {
+                                Text(region).font(.system(size: 10)).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Button("Open") {
+                                workspace.reopen(vm: vm)
+                                dismiss()
+                            }
+                            .font(.caption)
+                        }
+                        .padding(.vertical, 1)
+                    }
+                }
+            }
+            .frame(maxHeight: 96)
+        }
+        .padding(.horizontal, 14)
     }
 
     // MARK: - Progress / failure

@@ -10,6 +10,9 @@ import SwiftUI
 struct TerminalHost: NSViewRepresentable {
     @ObservedObject var workspace: Workspace
 
+    /// Breathing room so terminal text doesn't sit hard against the pane edges.
+    private static let padding: CGFloat = 8
+
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
         container.autoresizingMask = [.width, .height]
@@ -17,12 +20,14 @@ struct TerminalHost: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
-        // Mount any surfaces that aren't in the container yet.
+        // Mount any surfaces that aren't in the container yet, inset so the text
+        // has padding inside the pane.
+        let pad = Self.padding
         for session in workspace.sessions {
             let view = session.terminalView
             if view.superview !== container {
                 view.removeFromSuperview()
-                view.frame = container.bounds
+                view.frame = container.bounds.insetBy(dx: pad, dy: pad)
                 view.autoresizingMask = [.width, .height]
                 container.addSubview(view)
             }

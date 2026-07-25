@@ -31,7 +31,8 @@ struct SessionSidebar: View {
             .padding(10)
             .keyboardShortcut("t", modifiers: .command)
         }
-        .frame(width: 220)
+        // Width is owned by ContentView so the divider can resize it.
+        .frame(maxWidth: .infinity)
         .background(.thinMaterial)
     }
 }

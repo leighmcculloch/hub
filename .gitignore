@@ -9,7 +9,7 @@ xcuserdata/
 *.xcuserstate
 
 # Generated project (recreate with `xcodegen generate`)
-TerminalWorkspace.xcodeproj/
+ExeDesktopApp.xcodeproj/
 
 # Swift Package Manager
 .swiftpm/

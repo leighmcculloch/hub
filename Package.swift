@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "TerminalWorkspace",
+    name: "ExeDesktopApp",
     platforms: [
         .macOS(.v13)
     ],
@@ -11,7 +11,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "TerminalWorkspace",
+            name: "ExeDesktopApp",
             dependencies: ["SwiftTerm"],
             path: "Sources"
         )

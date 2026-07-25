@@ -16,6 +16,7 @@ cd "$(dirname "$0")/.."
 
 PORTABLE=(
   Sources/Config/EnvVar.swift
+  Sources/Model/Bootstrap.swift
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift
   Sources/Git/GitWorktree.swift

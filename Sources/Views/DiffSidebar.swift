@@ -19,7 +19,8 @@ struct DiffSidebar: View {
                 DiffPlaceholder(text: "No terminal selected")
             }
         }
-        .frame(width: 380)
+        // Width is owned by ContentView so the divider can resize it.
+        .frame(maxWidth: .infinity)
         .background(.thinMaterial)
     }
 }

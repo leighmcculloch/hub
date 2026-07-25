@@ -6,6 +6,7 @@ import SwiftUI
 final class Workspace: ObservableObject {
     @Published var sessions: [TerminalSession] = []
     @Published var selectedSessionID: TerminalSession.ID?
+    @Published var showSessionSidebar: Bool = true
     @Published var showDiffSidebar: Bool = true
     /// Whether the new-session (repo picker) sheet is presented.
     @Published var presentingNewSession: Bool = false
@@ -33,6 +34,24 @@ final class Workspace: ObservableObject {
         selectedSessionID = session.id
     }
 
+    /// Reconnect to an existing exe.dev VM, running the same bootstrap so the
+    /// setup script and clones are re-applied idempotently.
+    func reopen(vm: ExeVM) {
+        let destination = vm.ssh_dest ?? "\(vm.vm_name ?? "").exe.xyz"
+        guard !destination.isEmpty else { return }
+        // If this VM already has a tab, just focus it.
+        if let existing = sessions.first(where: { $0.sshDestination == destination }) {
+            selectedSessionID = existing.id
+            return
+        }
+        let bootstrap = Bootstrap.command(
+            setupScript: config.data.setupScript,
+            claudeSettings: config.data.claudeSettings,
+            repos: []
+        )
+        addSession(title: vm.vm_name ?? destination, launch: .ssh(destination: destination, bootstrap: bootstrap))
+    }
+
     /// A plain local shell tab (no VM) — handy when offline or without a token.
     func newLocalSession() {
         addSession(title: "Local", launch: .localShell)
@@ -49,6 +68,13 @@ final class Workspace: ObservableObject {
     func closeSelectedSession() {
         if let selected = selectedSession {
             closeSession(selected)
+        }
+    }
+
+    /// Re-establish any dropped SSH sessions. Called when the app regains focus.
+    func reconnectDisconnectedSessions() {
+        for session in sessions where session.isDisconnected && session.sshDestination != nil {
+            session.reconnect()
         }
     }
 }
