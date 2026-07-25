@@ -63,13 +63,23 @@ final class ExeService {
         return slug
     }
 
-    /// Create a VM with the given tags (so tag-attached integrations bind to it).
-    func createVM(name: String, tags: [String]) async throws -> ExeVM {
+    /// Create a VM with the given tags (so tag-attached integrations bind to it)
+    /// and environment variables set on the host.
+    func createVM(name: String, tags: [String], environment: [EnvVar] = []) async throws -> ExeVM {
         var command = "new --name \(name) --json"
         if !tags.isEmpty {
             command += " --tag \(tags.joined(separator: ","))"
         }
+        for variable in environment where !variable.key.isEmpty {
+            command += " --env \(Self.quote("\(variable.key)=\(variable.value)"))"
+        }
         return try await client.runJSON(command, as: ExeVM.self)
+    }
+
+    /// Single-quote an argument for the exe.dev command parser, so values with
+    /// spaces or shell metacharacters survive intact.
+    static func quote(_ argument: String) -> String {
+        "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Slug used for integration name and tag, e.g. "owner/Repo.Name" -> "owner-repo-name".

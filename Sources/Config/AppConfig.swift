@@ -10,6 +10,23 @@ struct AppConfigData: Codable {
     /// Script run as the first command over SSH on each new VM tab, before the
     /// repos are cloned. User-editable in Settings.
     var setupScript: String = "echo insert setup script here"
+
+    /// Environment variables set on each new VM host (passed to `new --env`), so
+    /// they're present for every process on the VM, not just our shell.
+    var environment: [EnvVar] = []
+
+    init() {}
+
+    /// Decoded field-by-field with `decodeIfPresent` so a config file written by
+    /// an older build (missing newer keys) still loads. The synthesized
+    /// initializer would throw on a missing key and discard the whole file.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        exeToken = try container.decodeIfPresent(String.self, forKey: .exeToken) ?? ""
+        setupScript = try container.decodeIfPresent(String.self, forKey: .setupScript)
+            ?? "echo insert setup script here"
+        environment = try container.decodeIfPresent([EnvVar].self, forKey: .environment) ?? []
+    }
 }
 
 /// Loads and persists `AppConfigData`. A single shared instance is observed by

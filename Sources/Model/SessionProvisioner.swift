@@ -83,8 +83,13 @@ final class SessionProvisioner: ObservableObject {
             }
 
             let vmName = "tab-" + UUID().uuidString.prefix(8).lowercased()
-            log("Creating VM \(vmName) (tags: \(tags.joined(separator: ", ")))…")
-            let vm = try await exe.createVM(name: vmName, tags: tags)
+            let environment = config.data.environment.filter { !$0.key.isEmpty }
+            var creating = "Creating VM \(vmName) (tags: \(tags.joined(separator: ", "))"
+            if !environment.isEmpty {
+                creating += "; env: \(environment.map(\.key).joined(separator: ", "))"
+            }
+            log(creating + ")…")
+            let vm = try await exe.createVM(name: vmName, tags: tags, environment: environment)
             let destination = vm.ssh_dest ?? "\(vmName).exe.xyz"
 
             log("VM ready at \(destination). Opening SSH session…")

@@ -38,6 +38,10 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
   `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`.
 - **Setup script** — edited in Settings, persisted in the same config file.
   Defaults to `echo insert setup script here`.
+- **Environment variables** — a `KEY=VALUE` list in Settings, passed to
+  `new --env` so they're set on the VM host itself and visible to every process
+  on it, not just the terminal's shell. Values with spaces or quotes are shell-
+  quoted for you.
 - **GitHub repo listing** — uses a token discovered from `GITHUB_TOKEN`/`GH_TOKEN`
   or the `gh` CLI (`gh auth token`). Without one, the picker still accepts a
   manually typed `owner/repo`.
