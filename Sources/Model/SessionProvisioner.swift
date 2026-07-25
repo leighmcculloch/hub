@@ -85,7 +85,7 @@ final class SessionProvisioner: ObservableObject {
 
     /// Run provisioning. On success returns the launch descriptor and a tab
     /// title; on failure sets `errorMessage` and returns nil.
-    func provision() async -> (launch: TerminalSession.Launch, title: String)? {
+    func provision() async -> (launch: TerminalSession.Launch, title: String, vmName: String)? {
         let chosen = chosenRepos
         guard !chosen.isEmpty else {
             errorMessage = "Select at least one repository (or type owner/repo)."
@@ -120,13 +120,14 @@ final class SessionProvisioner: ObservableObject {
             let bootstrap = Bootstrap.command(
                 setupScript: config.data.setupScript,
                 claudeSettings: config.data.claudeSettings,
-                repos: chosen
+                repos: chosen,
+                startCommand: config.data.startCommand
             )
             phase = .done
 
             let trimmedName = sessionName.trimmingCharacters(in: .whitespaces)
             let title = !trimmedName.isEmpty ? trimmedName : vmName
-            return (.ssh(destination: destination, bootstrap: bootstrap), title)
+            return (.ssh(destination: destination, bootstrap: bootstrap), title, vmName)
         } catch {
             errorMessage = error.localizedDescription
             phase = .failed

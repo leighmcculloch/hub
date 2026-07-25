@@ -52,8 +52,8 @@ final class Workspace: ObservableObject {
     }
 
     /// Open a new tab from a provisioned launch descriptor.
-    func addSession(title: String, launch: TerminalSession.Launch) {
-        let session = TerminalSession(title: title, launch: launch)
+    func addSession(title: String, launch: TerminalSession.Launch, vmName: String? = nil) {
+        let session = TerminalSession(title: title, launch: launch, vmName: vmName)
         sessions.append(session)
         selectedSessionID = session.id
     }
@@ -71,9 +71,14 @@ final class Workspace: ObservableObject {
         let bootstrap = Bootstrap.command(
             setupScript: config.data.setupScript,
             claudeSettings: config.data.claudeSettings,
-            repos: []
+            repos: [],
+            startCommand: config.data.startCommand
         )
-        addSession(title: vm.vm_name ?? destination, launch: .ssh(destination: destination, bootstrap: bootstrap))
+        addSession(
+            title: vm.vm_name ?? destination,
+            launch: .ssh(destination: destination, bootstrap: bootstrap),
+            vmName: vm.vm_name
+        )
     }
 
     /// A plain local shell tab (no VM) — handy when offline or without a token.
@@ -86,6 +91,18 @@ final class Workspace: ObservableObject {
         sessions.remove(at: index)
         if selectedSessionID == session.id {
             selectedSessionID = sessions[safe: index]?.id ?? sessions.last?.id
+        }
+    }
+
+    /// Close the tab *and* destroy the backing VM. Irreversible — the VM's disk
+    /// and anything uncommitted on it are lost.
+    @MainActor
+    func deleteSession(_ session: TerminalSession) async {
+        let name = session.vmName
+        closeSession(session)
+        if let name {
+            try? await exe.deleteVM(name: name)
+            await loadAvailableVMs()
         }
     }
 

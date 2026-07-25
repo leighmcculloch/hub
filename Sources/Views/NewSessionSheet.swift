@@ -207,8 +207,8 @@ struct NewSessionSheet: View {
 
     @MainActor
     private func create() async {
-        if let (launch, title) = await provisioner.provision() {
-            workspace.addSession(title: title, launch: launch)
+        if let (launch, title, vmName) = await provisioner.provision() {
+            workspace.addSession(title: title, launch: launch, vmName: vmName)
             dismiss()
         }
     }

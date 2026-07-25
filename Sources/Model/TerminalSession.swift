@@ -30,12 +30,16 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// sidebar uses this to run git over SSH against the VM.
     let sshDestination: String?
 
+    /// The exe.dev VM backing this tab, if any. Needed to delete it.
+    let vmName: String?
+
     private let launch: Launch
     private var fontObserver: AnyCancellable?
 
-    init(title: String = "Terminal", launch: Launch = .localShell) {
+    init(title: String = "Terminal", launch: Launch = .localShell, vmName: String? = nil) {
         self.title = title
         self.launch = launch
+        self.vmName = vmName
         if case let .ssh(destination, _) = launch {
             sshDestination = destination
         } else {

@@ -5,6 +5,10 @@ import SwiftUI
 struct SessionSidebar: View {
     @ObservedObject var workspace: Workspace
 
+    /// Set when the user clicks a tab's ✕; deleting a VM is irreversible so it
+    /// is confirmed first.
+    @State private var sessionPendingDeletion: TerminalSession?
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -14,7 +18,14 @@ struct SessionSidebar: View {
                             session: session,
                             isSelected: session.id == workspace.selectedSessionID,
                             onSelect: { workspace.selectedSessionID = session.id },
-                            onClose: { workspace.closeSession(session) }
+                            onClose: {
+                                if session.vmName != nil {
+                                    sessionPendingDeletion = session
+                                } else {
+                                    // Local shell: nothing to destroy.
+                                    workspace.closeSession(session)
+                                }
+                            }
                         )
                     }
 
@@ -53,6 +64,24 @@ struct SessionSidebar: View {
         // Width is owned by ContentView so the divider can resize it.
         .frame(maxWidth: .infinity)
         .background(.thinMaterial)
+        .confirmationDialog(
+            "Delete VM \(sessionPendingDeletion?.vmName ?? "")?",
+            isPresented: Binding(
+                get: { sessionPendingDeletion != nil },
+                set: { if !$0 { sessionPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete VM", role: .destructive) {
+                if let session = sessionPendingDeletion {
+                    sessionPendingDeletion = nil
+                    Task { await workspace.deleteSession(session) }
+                }
+            }
+            Button("Cancel", role: .cancel) { sessionPendingDeletion = nil }
+        } message: {
+            Text("This destroys the VM and its disk. Anything not pushed is lost.")
+        }
     }
 }
 

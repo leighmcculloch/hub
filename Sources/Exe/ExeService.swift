@@ -57,6 +57,11 @@ final class ExeService {
         try await client.runJSON("ls --json", as: ExeVMList.self).vms
     }
 
+    /// Destroy a VM and its disk. Irreversible.
+    func deleteVM(name: String) async throws {
+        try await client.run("rm \(name)")
+    }
+
     /// Ensure a GitHub integration exists for `repo` ("owner/name") and return
     /// the tag that binds it to a VM, creating the integration (acting as the
     /// user) if it doesn't already exist.
