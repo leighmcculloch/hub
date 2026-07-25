@@ -18,13 +18,22 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     @Published var title: String
     /// The shell's current working directory, updated from OSC 7. For SSH tabs
-    /// this reflects the remote path (the diff sidebar only tracks local repos).
+    /// this reflects the remote path.
     @Published var workingDirectory: URL?
 
     let terminalView: LocalProcessTerminalView
 
+    /// The SSH destination for VM-backed tabs (nil for local shells). The diff
+    /// sidebar uses this to run git over SSH against the VM.
+    let sshDestination: String?
+
     init(title: String = "Terminal", launch: Launch = .localShell) {
         self.title = title
+        if case let .ssh(destination, _) = launch {
+            sshDestination = destination
+        } else {
+            sshDestination = nil
+        }
         terminalView = LocalProcessTerminalView(frame: .zero)
         terminalView.processDelegate = self
         start(launch)
@@ -40,20 +49,20 @@ final class TerminalSession: ObservableObject, Identifiable {
 
         case let .ssh(destination, bootstrap):
             // `-t` forces a remote PTY; accept-new avoids an interactive
-            // host-key prompt on first connect. `bootstrap` is passed as the
-            // single remote command argument.
-            terminalView.startProcess(
-                executable: "/usr/bin/ssh",
-                args: [
-                    "-t",
-                    "-o", "StrictHostKeyChecking=accept-new",
-                    "-o", "ConnectTimeout=15",
-                    "-o", "ConnectionAttempts=10", // retry while the VM finishes booting
-                    "-o", "ServerAliveInterval=30",
-                    destination,
-                    bootstrap,
-                ]
-            )
+            // host-key prompt on first connect. The ControlMaster options (shared
+            // with RemoteGit) make this the multiplex master, so the diff
+            // sidebar's git-over-SSH calls reuse this one connection. `bootstrap`
+            // is passed as the single remote command argument.
+            var args = RemoteGit.sshControlArgs(for: destination)
+            args += [
+                "-t",
+                "-o", "ConnectTimeout=15",
+                "-o", "ConnectionAttempts=10", // retry while the VM finishes booting
+                "-o", "ServerAliveInterval=30",
+                destination,
+                bootstrap,
+            ]
+            terminalView.startProcess(executable: "/usr/bin/ssh", args: args)
         }
     }
 

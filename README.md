@@ -7,8 +7,10 @@ and provisions a cloud VM per tab on [**exe.dev**](https://exe.dev):
   `⌘T` for a new one, `⌘W` to close.
 - **The active terminal** filling the middle. Each tab is a real terminal on its
   own PTY, kept alive in the background so it survives tab switches.
-- **A worktree diff sidebar** on the right that shows `git diff` for the
-  directory a *local* terminal is in, following the shell's cwd. Toggle `⌥⌘D`.
+- **A worktree diff sidebar** on the right. For a VM tab it lists the git repos
+  in the VM's home directory, lets you pick one (or view all), browse changed
+  files, and see each file's diff — run over SSH. For a local shell it follows
+  the shell's cwd. Toggle `⌥⌘D`.
 
 ## exe.dev VM per tab
 
@@ -41,8 +43,9 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
 - **SSH** — your machine needs an SSH key registered with exe.dev (the same one
   `ssh <vm>.exe.xyz` uses).
 
-> The diff sidebar tracks *local* git repos only; for VM tabs the cwd is remote,
-> so it shows "Not a git repository".
+> The diff sidebar reaches VM repos by running `git` over SSH, reusing the
+> terminal's multiplexed connection (ControlMaster), so it's cheap once the tab
+> has connected.
 
 ## Architecture
 
@@ -67,7 +70,7 @@ PTY and renders it.
 | GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
 | Config | `Sources/Config/AppConfig.swift` — persisted token + setup script |
 | App state | `Sources/Model/Workspace.swift` — sessions + exe.dev service |
-| Git diff | `Sources/Git/GitWorktree.swift` — shells out to `git`, no terminal coupling |
+| Git diff | `Sources/Git/GitWorktree.swift` (local) and `Sources/Git/RemoteGit.swift` (git over SSH on the VM) |
 | UI | `Sources/Views/` — sidebar, terminal host, diff sidebar, new-session sheet, settings |
 | App entry | `Sources/App/` — `@main` SwiftUI `App` + `AppDelegate` |
 
