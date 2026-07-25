@@ -28,7 +28,7 @@ struct ContentView: View {
 
             if workspace.showDiffSidebar {
                 ResizeHandle(width: $diffSidebarWidth, range: 260...760, direction: -1)
-                DiffSidebar(workspace: workspace)
+                RightSidebar(workspace: workspace)
                     .frame(width: diffSidebarWidth)
             }
         }
