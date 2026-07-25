@@ -34,7 +34,8 @@ struct AppConfigData: Codable {
         "pr": "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
         "sessionUrl": true
       },
-      "remoteControlAtStartup": true
+      "remoteControlAtStartup": true,
+      "hasCompletedOnboarding": true
     }
     """
 
