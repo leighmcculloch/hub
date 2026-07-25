@@ -98,6 +98,13 @@ swift run          # builds and launches the app
 swift build        # just compile
 ```
 
+Every push is built on a macOS runner by `.github/workflows/build.yml`.
+
+On a non-Mac (Linux CI, agent sandboxes) a full build is impossible — AppKit and
+SwiftUI don't exist there. `scripts/check-linux.sh` does what can be done
+without them: syntax-parse every file, and type-check the platform-independent
+sources (exe.dev client, git, GitHub).
+
 This runs the app as a bare executable rather than a `.app` bundle, so
 `Info.plist`/entitlements aren't applied — that's fine here since the app needs
 no sandbox, and it makes itself a regular foreground app at launch. Requires the
