@@ -71,6 +71,13 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
             }
 
+            Section("Start command") {
+                TextField("start command", text: $config.data.startCommand, prompt: Text("e.g. claude"))
+                Text("Run in the login shell after connecting. Leave empty to go straight to the shell. When the command exits you're returned to a shell rather than losing the session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Setup script") {
                 Text("Runs over SSH as the first command on each new VM, before the repos are cloned.")
                     .font(.caption)

@@ -19,6 +19,11 @@ struct AppConfigData: Codable {
     var fontName: String = "Menlo"
     var fontSize: Double = 13
 
+    /// Command run in the login shell after connecting, e.g. `claude`. Empty
+    /// means just drop into the shell. When it exits you're left at a shell
+    /// rather than losing the session.
+    var startCommand: String = ""
+
     /// Written to `~/.claude/settings.json` on each new VM during bootstrap.
     /// Editable so the exact keys can be adjusted without a code change.
     var claudeSettings: String = AppConfigData.defaultClaudeSettings
@@ -54,6 +59,7 @@ struct AppConfigData: Codable {
         environment = try container.decodeIfPresent([EnvVar].self, forKey: .environment) ?? []
         fontName = try container.decodeIfPresent(String.self, forKey: .fontName) ?? "Menlo"
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
+        startCommand = try container.decodeIfPresent(String.self, forKey: .startCommand) ?? ""
         claudeSettings = try container.decodeIfPresent(String.self, forKey: .claudeSettings)
             ?? AppConfigData.defaultClaudeSettings
     }
