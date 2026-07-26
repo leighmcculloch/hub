@@ -32,7 +32,10 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
    `~/.claude/settings.json` (only if absent), your configurable **setup
    script**, then `git clone` for each repo through the exe.dev GitHub proxy
    (`https://github.int.exe.xyz/<owner>/<repo>.git`).
-5. It then attaches to a tmux session named `exe` on the VM, creating it if
+5. Every directory in the VM's home dir is marked trusted in `~/.claude.json`
+   (merged, never clobbering existing state), so Claude Code doesn't prompt
+   per folder.
+6. It then attaches to a tmux session named `exe` on the VM, creating it if
    needed. Everything runs inside tmux, so a dropped connection reattaches with
    work intact.
 

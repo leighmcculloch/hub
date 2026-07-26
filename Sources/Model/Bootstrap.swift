@@ -118,6 +118,47 @@ enum Bootstrap {
         for repo in repos {
             script += "git clone https://github.int.exe.xyz/\(repo).git || true\n"
         }
+
+        // Mark every directory in the home dir as trusted, so Claude Code
+        // doesn't prompt per folder. Runs after the clones so the freshly
+        // cloned repos are included, and merges into any existing
+        // ~/.claude.json rather than replacing real state.
+        script += trustHomeDirectories
         return script
     }
+
+    /// Merges `hasTrustDialogAccepted` for `$HOME` and each visible directory
+    /// under it into `~/.claude.json`. Tolerates a missing or malformed file,
+    /// and is a no-op if python3 isn't present.
+    static let trustHomeDirectories = """
+
+    python3 - <<'PYEOF' || true
+    import json, os
+    home = os.path.expanduser("~")
+    path = os.path.join(home, ".claude.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("hasCompletedOnboarding", True)
+    projects = data.setdefault("projects", {})
+    if not isinstance(projects, dict):
+        projects = data["projects"] = {}
+    targets = [home]
+    for name in sorted(os.listdir(home)):
+        full = os.path.join(home, name)
+        if not name.startswith(".") and os.path.isdir(full):
+            targets.append(full)
+    for target in targets:
+        entry = projects.setdefault(target, {})
+        if isinstance(entry, dict):
+            entry["hasTrustDialogAccepted"] = True
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    PYEOF
+
+    """
 }
