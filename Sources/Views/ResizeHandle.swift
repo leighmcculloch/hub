@@ -9,6 +9,9 @@ struct ResizeHandle: View {
     @Binding var width: Double
     let range: ClosedRange<Double>
     let direction: Double
+    /// Called once when the drag ends, so the caller can persist the width
+    /// rather than writing storage on every frame of the drag.
+    var onCommit: () -> Void = {}
 
     @State private var widthAtDragStart: Double?
     @State private var isHovering = false
@@ -49,12 +52,15 @@ struct ResizeHandle: View {
                             // Keep the resize cursor while dragging past the handle.
                             updateCursor()
                         }
-                        let proposed = base + direction * Double(value.translation.width)
-                        width = clamped(proposed)
+                        // Rounded to whole points: sub-pixel widths make the
+                        // divider shimmer as the layout re-rounds each frame.
+                        let proposed = (base + direction * Double(value.translation.width)).rounded()
+                        if proposed != width { width = clamped(proposed) }
                     }
                     .onEnded { _ in
                         widthAtDragStart = nil
                         updateCursor()
+                        onCommit()
                     }
             )
             .accessibilityElement()

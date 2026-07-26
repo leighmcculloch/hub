@@ -6,16 +6,21 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var workspace: Workspace
 
-    // Sidebar widths persist across launches; UserDefaults keeps dragging cheap.
-    @AppStorage("sessionSidebarWidth") private var sessionSidebarWidth: Double = 220
-    @AppStorage("diffSidebarWidth") private var diffSidebarWidth: Double = 380
+    // Persisted widths. Dragging updates the @State copies only; writing
+    // UserDefaults on every drag frame re-rendered the whole window (terminal
+    // included) and made the divider stutter, so storage is written on release.
+    @AppStorage("sessionSidebarWidth") private var storedSessionSidebarWidth: Double = 220
+    @AppStorage("diffSidebarWidth") private var storedDiffSidebarWidth: Double = 380
+    @State private var sessionSidebarWidth: Double = 220
+    @State private var diffSidebarWidth: Double = 380
 
     var body: some View {
         HStack(spacing: 0) {
             if workspace.showSessionSidebar {
                 SessionSidebar(workspace: workspace)
                     .frame(width: sessionSidebarWidth)
-                ResizeHandle(width: $sessionSidebarWidth, range: 160...460, direction: 1)
+                ResizeHandle(width: $sessionSidebarWidth, range: 160...460, direction: 1,
+                             onCommit: { storedSessionSidebarWidth = sessionSidebarWidth })
             }
 
             ZStack {
@@ -27,7 +32,8 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if workspace.showDiffSidebar {
-                ResizeHandle(width: $diffSidebarWidth, range: 260...760, direction: -1)
+                ResizeHandle(width: $diffSidebarWidth, range: 260...760, direction: -1,
+                             onCommit: { storedDiffSidebarWidth = diffSidebarWidth })
                 RightSidebar(workspace: workspace)
                     .frame(width: diffSidebarWidth)
             }
@@ -39,6 +45,10 @@ struct ContentView: View {
         }
         // Populate the sidebar with existing VMs on open, without connecting.
         .task { await workspace.loadAvailableVMs() }
+        .onAppear {
+            sessionSidebarWidth = storedSessionSidebarWidth
+            diffSidebarWidth = storedDiffSidebarWidth
+        }
         // Recover SSH tabs that dropped while the app was in the background.
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification)

@@ -13,8 +13,8 @@ struct TerminalHost: NSViewRepresentable {
     /// Breathing room so terminal text doesn't sit hard against the pane edges.
     private static let padding: CGFloat = 8
 
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+    func makeNSView(context: Context) -> ContainerView {
+        let container = ContainerView()
         container.autoresizingMask = [.width, .height]
         // Layer-backed so the padding around the terminal can be filled with the
         // terminal's own background colour instead of showing the window behind.
@@ -22,7 +22,22 @@ struct TerminalHost: NSViewRepresentable {
         return container
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
+    /// Take exactly the space offered. Without this SwiftUI consults the hosted
+    /// terminal, whose size quantises to whole character cells, and the layout
+    /// fights the sidebar dividers while they're being dragged.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ContainerView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    /// Reports no intrinsic size, so the terminal inside can't push the
+    /// surrounding layout around either.
+    final class ContainerView: NSView {
+        override var intrinsicContentSize: NSSize {
+            NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+        }
+    }
+
+    func updateNSView(_ container: ContainerView, context: Context) {
         // Mount any surfaces that aren't in the container yet, inset so the text
         // has padding inside the pane.
         let pad = Self.padding
