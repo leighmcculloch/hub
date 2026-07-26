@@ -25,8 +25,15 @@ enum RemoteGit {
 
     /// Home-relative directories under `$HOME` (depth ≤ 2) that are git repos.
     static func listRepos(destination: String) async -> [String] {
-        let command = "cd \"$HOME\" && find . -maxdepth 2 -name .git 2>/dev/null"
-            + " | sed 's|/\\.git$||;s|^\\./||' | grep -v '^\\.$' | sort"
+        // Two passes: repos checked out directly in the home dir, plus every
+        // worktree under a repo's `.claude/worktrees`. The second is targeted
+        // rather than a deeper `-maxdepth`, which would also drag in incidental
+        // repos under things like node_modules. `.git` is matched without a type
+        // filter because in a worktree it is a file, not a directory.
+        let command = "cd \"$HOME\" && {"
+            + " find . -maxdepth 2 -name .git 2>/dev/null;"
+            + " find . -maxdepth 5 -path './*/.claude/worktrees/*/.git' 2>/dev/null;"
+            + " } | sed 's|/\\.git$||;s|^\\./||' | grep -v '^\\.$' | sort -u"
         guard let out = await run(destination: destination, remoteCommand: command) else { return [] }
         return out.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
