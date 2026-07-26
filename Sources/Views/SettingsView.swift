@@ -104,10 +104,11 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 8)
                 } else {
-                    // Column headings, so the two same-looking fields are
-                    // identifiable without guessing from the placeholders.
+                    // Column headings label the two same-looking fields. The
+                    // fields deliberately carry no placeholder, which would
+                    // repeat these labels.
                     HStack(spacing: 6) {
-                        Text("Name").frame(width: 140, alignment: .leading)
+                        Text("Key").frame(width: 140, alignment: .leading)
                         Text("Value").frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .font(.caption)
@@ -116,13 +117,15 @@ struct SettingsView: View {
 
                     ForEach($config.data.environment) { $variable in
                         HStack(spacing: 6) {
-                            TextField("KEY", text: $variable.key)
+                            TextField("", text: $variable.key)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: 12, design: .monospaced))
                                 .frame(width: 140)
-                            TextField("value", text: $variable.value)
+                                .accessibilityLabel("Key")
+                            TextField("", text: $variable.value)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: 12, design: .monospaced))
+                                .accessibilityLabel("Value")
                             Button {
                                 config.data.environment.removeAll { $0.id == variable.id }
                             } label: {
