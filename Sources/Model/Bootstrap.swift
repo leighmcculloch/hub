@@ -15,16 +15,39 @@ enum Bootstrap {
     """
 
     /// Turn a user-supplied session name into a valid exe.dev VM name, falling
-    /// back to a generated one when empty. VM names are lowercase alphanumeric
-    /// with dashes.
+    /// back to a generated one when empty.
+    ///
+    /// exe.dev rejects anything that isn't "5-52 characters: start with a
+    /// lowercase letter, then lowercase letters or digits, with optional single
+    /// hyphen separators" — so this must also collapse hyphen runs, strip
+    /// leading/trailing hyphens, prefix a name starting with a digit, and pad a
+    /// name that is too short.
     static func vmName(from sessionName: String) -> String {
-        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
-        let slug = String(sessionName.lowercased().map { allowed.contains($0) ? $0 : "-" })
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        guard !slug.isEmpty else {
-            return "tab-" + UUID().uuidString.prefix(8).lowercased()
+        var name = String(sessionName.lowercased().map {
+            ("a"..."z").contains($0) || ("0"..."9").contains($0) ? $0 : "-"
+        })
+        while name.contains("--") {
+            name = name.replacingOccurrences(of: "--", with: "-")
         }
-        return String(slug.prefix(40))
+        name = name.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+
+        // Must begin with a lowercase letter.
+        if name.first.map({ ("a"..."z").contains($0) }) != true {
+            name = name.isEmpty ? "" : "vm-" + name
+        }
+
+        // Long names are truncated; truncation can expose a trailing hyphen.
+        if name.count > 52 {
+            name = String(name.prefix(52))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        }
+
+        // Minimum length is 5; pad (or generate) with a random suffix.
+        if name.count < 5 {
+            let suffix = UUID().uuidString.prefix(6).lowercased()
+            name = name.isEmpty ? "vm-\(suffix)" : "\(name)-\(suffix)"
+        }
+        return name
     }
 
     /// Build the remote command run over SSH: decode and execute a bootstrap

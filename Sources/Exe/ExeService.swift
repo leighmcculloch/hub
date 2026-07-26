@@ -102,10 +102,22 @@ final class ExeService {
         "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Slug used for integration name and tag, e.g. "owner/Repo.Name" -> "owner-repo-name".
+    /// Slug used for integration name and tag, e.g. "owner/Repo.Name" ->
+    /// "owner-repo-name".
+    ///
+    /// exe.dev requires tag names to match `^[a-z][a-z0-9_-]*$`, so a repo whose
+    /// owner starts with a digit (e.g. `4d63/x`) must be prefixed rather than
+    /// passed through.
     static func slug(_ repo: String) -> String {
-        let lowered = repo.lowercased().replacingOccurrences(of: "/", with: "-")
-        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
-        return String(lowered.map { allowed.contains($0) ? $0 : "-" })
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-_")
+        var slug = String(repo.lowercased().map { allowed.contains($0) ? $0 : "-" })
+        if slug.first.map(Self.isLowercaseLetter) != true {
+            slug = "r-" + slug
+        }
+        return slug
+    }
+
+    private static func isLowercaseLetter(_ character: Character) -> Bool {
+        ("a"..."z").contains(character)
     }
 }
