@@ -133,6 +133,18 @@ final class Workspace: ObservableObject {
         }
     }
 
+    /// Destroy a VM that has no tab open, without connecting to it first.
+    /// Irreversible — the VM's disk and anything uncommitted on it are lost.
+    @MainActor
+    func deleteVM(_ vm: ExeVM) async {
+        guard let name = vm.vm_name else { return }
+        // Drop it from the sidebar immediately; the refresh below is the
+        // authority if the delete actually failed.
+        availableVMs.removeAll { $0.vm_name == name }
+        try? await exe.deleteVM(name: name)
+        await loadAvailableVMs()
+    }
+
     /// Close the tab *and* destroy the backing VM. Irreversible — the VM's disk
     /// and anything uncommitted on it are lost.
     @MainActor

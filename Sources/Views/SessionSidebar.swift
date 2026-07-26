@@ -8,6 +8,8 @@ struct SessionSidebar: View {
     /// Set when the user clicks a tab's ✕; deleting a VM is irreversible so it
     /// is confirmed first.
     @State private var sessionPendingDeletion: TerminalSession?
+    /// Same, for a VM in the EXISTING list that has no tab open.
+    @State private var vmPendingDeletion: ExeVM?
     @State private var isHoveringNewSession = false
 
     /// Nothing to show at all. Distinct from "still loading": during the first
@@ -50,6 +52,24 @@ struct SessionSidebar: View {
         } message: {
             Text("This destroys the VM and its disk. Anything not pushed is lost.")
         }
+        .confirmationDialog(
+            "Delete VM \(vmPendingDeletion?.vm_name ?? "")?",
+            isPresented: Binding(
+                get: { vmPendingDeletion != nil },
+                set: { if !$0 { vmPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete VM", role: .destructive) {
+                if let vm = vmPendingDeletion {
+                    vmPendingDeletion = nil
+                    Task { await workspace.deleteVM(vm) }
+                }
+            }
+            Button("Cancel", role: .cancel) { vmPendingDeletion = nil }
+        } message: {
+            Text("This destroys the VM and its disk. Anything not pushed is lost.")
+        }
     }
 
     private var list: some View {
@@ -82,7 +102,11 @@ struct SessionSidebar: View {
                     .padding(.top, workspace.sessions.isEmpty ? 0 : 10)
 
                 ForEach(workspace.unopenedVMs) { vm in
-                    AvailableVMRow(vm: vm) { workspace.reopen(vm: vm) }
+                    AvailableVMRow(
+                        vm: vm,
+                        onOpen: { workspace.reopen(vm: vm) },
+                        onDelete: { vmPendingDeletion = vm }
+                    )
                 }
             }
         }
@@ -162,6 +186,8 @@ private struct SectionHeader: View {
 private struct AvailableVMRow: View {
     let vm: ExeVM
     let onOpen: () -> Void
+    /// Destroy the VM without connecting to it first.
+    let onDelete: () -> Void
 
     @State private var isHovering = false
 
@@ -169,50 +195,66 @@ private struct AvailableVMRow: View {
     private var isRunning: Bool { vm.status == "running" }
 
     var body: some View {
-        Button(action: onOpen) {
-            HStack(spacing: 8) {
-                // Same leading width as SessionTab's icon so both lists' labels
-                // line up down the sidebar.
-                Circle()
-                    .fill(isRunning ? Color.green.opacity(0.7) : Color.secondary.opacity(0.5))
-                    .frame(width: 6, height: 6)
-                    .frame(width: 14)
+        // Same shape as SessionTab: the row is a Button, with trailing controls
+        // beside it rather than nested inside, so both take clicks reliably.
+        HStack(spacing: 4) {
+            Button(action: onOpen) {
+                HStack(spacing: 8) {
+                    // Same leading width as SessionTab's icon so both lists'
+                    // labels line up down the sidebar.
+                    Circle()
+                        .fill(isRunning ? Color.green.opacity(0.7) : Color.secondary.opacity(0.5))
+                        .frame(width: 6, height: 6)
+                        .frame(width: 14)
 
-                Text(name)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer(minLength: 0)
-
-                if !isRunning, let status = vm.status {
-                    Text(status)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+                    Text(name)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
-                }
+                        .truncationMode(.middle)
 
-                Image(systemName: "arrow.right.circle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    // Kept in the layout so the name doesn't shift on hover.
-                    .opacity(isHovering ? 1 : 0)
+                    Spacer(minLength: 0)
+
+                    if !isRunning, let status = vm.status {
+                        Text(status)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+
+                    Image(systemName: "arrow.right.circle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        // Kept in the layout so the name doesn't shift on hover.
+                        .opacity(isHovering ? 1 : 0)
+                }
+                .padding(.leading, 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help("Connect to \(name)")
+            .accessibilityLabel(Text("\(name), \(vm.status ?? "unknown status"), not open"))
+            .accessibilityHint(Text("Connects to this VM in a new tab"))
+
+            // Delete without connecting first.
+            Button(action: onDelete) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .opacity(isHovering ? 1 : 0)
+            .padding(.trailing, 8)
+            .help("Delete VM \(name)…")
+            .accessibilityLabel("Delete VM \(name)")
         }
-        .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isHovering ? Color.primary.opacity(0.06) : Color.clear)
         )
         .onHover { isHovering = $0 }
-        .help("Connect to \(name)")
-        .accessibilityLabel(Text("\(name), \(vm.status ?? "unknown status"), not open"))
-        .accessibilityHint(Text("Connects to this VM in a new tab"))
     }
 }
 
