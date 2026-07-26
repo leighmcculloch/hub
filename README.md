@@ -32,9 +32,13 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
    `~/.claude/settings.json` (only if absent), your configurable **setup
    script**, then `git clone` for each repo through the exe.dev GitHub proxy
    (`https://github.int.exe.xyz/<owner>/<repo>.git`).
+5. It then attaches to a tmux session named `exe` on the VM, creating it if
+   needed. Everything runs inside tmux, so a dropped connection reattaches with
+   work intact.
 
 If an SSH session drops while the app is in the background, it reconnects
-automatically when the app regains focus.
+automatically when the app regains focus — and because the shell lives in tmux,
+it reattaches to the running session rather than starting over.
 
 `⌃⌘T` opens a plain local shell instead (no VM), useful offline.
 
@@ -46,6 +50,11 @@ automatically when the app regains focus.
   `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`.
 - **Setup script** — edited in Settings, persisted in the same config file.
   Defaults to `echo insert setup script here`.
+- **Start command** — what runs *inside* tmux, and only when the tmux session is
+  first created (e.g. `claude`). Reconnecting attaches instead of starting a
+  second copy. Empty means a plain shell. tmux itself is not configurable; the
+  bootstrap installs it if the VM lacks it, and falls back to a login shell if
+  that fails.
 - **Environment variables** — a `KEY=VALUE` list in Settings, passed to
   `new --env` so they're set on the VM host itself and visible to every process
   on it, not just the terminal's shell. Values with spaces or quotes are shell-

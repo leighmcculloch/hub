@@ -49,17 +49,30 @@ enum Bootstrap {
             + " \(loginShellCommand(startCommand: startCommand))"
     }
 
+    /// tmux session every VM session attaches to.
+    static let tmuxSession = "exe"
+
     /// The final command that hands the TTY to the user.
     ///
-    /// With no start command this is just a login shell. With one, the login
-    /// shell runs it (so the user's profile — and therefore `PATH` — is loaded
-    /// first) and then execs another login shell, so quitting the command leaves
-    /// you at a prompt instead of closing the session. `${SHELL}` stays inside
-    /// single quotes so it is expanded remotely, not here.
+    /// Always goes through tmux: `-A` attaches to the existing session or
+    /// creates one, so a dropped SSH connection reattaches with work intact
+    /// rather than losing it. The trailing command runs *only* when the session
+    /// is created, never on attach, so reconnecting never stacks a second copy.
+    ///
+    /// It runs under a login shell so the user's profile — and therefore `PATH`
+    /// — is loaded first, and is followed by another login shell so detaching
+    /// (or tmux being unavailable) leaves you at a prompt instead of closing the
+    /// session. `${SHELL}` stays inside single quotes so it is expanded
+    /// remotely, not here.
     static func loginShellCommand(startCommand: String) -> String {
         let trimmed = startCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "exec ${SHELL:-bash} -l" }
-        return "exec ${SHELL:-bash} -l -c " + shellQuote("\(trimmed); exec ${SHELL:-bash} -l")
+        var tmux = "tmux new-session -A -s \(tmuxSession)"
+        if !trimmed.isEmpty {
+            // Quoted as one argument so multi-word commands aren't parsed as
+            // tmux's own flags.
+            tmux += " " + shellQuote(trimmed)
+        }
+        return "exec ${SHELL:-bash} -l -c " + shellQuote("\(tmux); exec ${SHELL:-bash} -l")
     }
 
     /// Single-quote for a POSIX shell, escaping embedded single quotes.
@@ -90,6 +103,15 @@ enum Bootstrap {
 
             """
         }
+
+        // Every session runs inside tmux, so make sure it's there. Failure is
+        // tolerated: the login-shell fallback still gives a usable terminal.
+        script += """
+        if ! command -v tmux >/dev/null 2>&1; then
+          sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq tmux >/dev/null 2>&1 || true
+        fi
+
+        """
 
         script += setupScript
         script += "\n"

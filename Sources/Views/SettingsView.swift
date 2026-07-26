@@ -54,7 +54,7 @@ struct SettingsView: View {
 
             Section("Start command") {
                 TextField("Start command", text: $config.data.startCommand, prompt: Text("e.g. claude"))
-                caption("Run in the login shell after connecting. Leave empty to go straight to the shell. When the command exits you're returned to a shell rather than losing the session.")
+                caption("Every session runs inside a tmux session named \"\(Bootstrap.tmuxSession)\", so a dropped connection reattaches with your work intact. This command runs inside it, and only when the session is first created — reconnecting attaches instead of starting a second copy. Leave empty for a plain shell.")
             }
         }
         .formStyle(.grouped)
