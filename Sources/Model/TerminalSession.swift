@@ -33,6 +33,43 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// The exe.dev VM backing this tab, if any. Needed to delete it.
     let vmName: String?
 
+    /// Right-sidebar sub-tabs belonging to *this* session, so switching
+    /// sessions swaps the whole sidebar. The diff tab is permanent.
+    @Published var sidebarTabs: [SidebarTab] = [SidebarTab(kind: .diff, title: "Diff")]
+    @Published var selectedSidebarTabID: SidebarTab.ID?
+
+    /// The VM's public HTTPS endpoint — its SSH host over https. The landing
+    /// page for a new browser tab in this session.
+    var webURL: String? {
+        sshDestination.map { "https://\($0)" }
+    }
+
+    var selectedSidebarTab: SidebarTab? {
+        sidebarTabs.first { $0.id == selectedSidebarTabID } ?? sidebarTabs.first
+    }
+
+    /// Open a browser sub-tab pointed at this session's instance by default.
+    func newBrowserTab() {
+        let address = webURL ?? "https://exe.dev"
+        let browser = BrowserModel(initialAddress: address)
+        let host = BrowserModel.url(from: address)?.host ?? "Browser"
+        let tab = SidebarTab(kind: .browser, title: host, browser: browser)
+        sidebarTabs.append(tab)
+        selectedSidebarTabID = tab.id
+    }
+
+    func closeSidebarTab(_ tab: SidebarTab) {
+        // The diff tab is permanent; there'd be no way to get it back.
+        guard tab.kind != .diff else { return }
+        guard let index = sidebarTabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        sidebarTabs.remove(at: index)
+        if selectedSidebarTabID == tab.id {
+            // Prefer the tab that took its place, else the last one.
+            let next = index < sidebarTabs.count ? sidebarTabs[index] : sidebarTabs.last
+            selectedSidebarTabID = next?.id
+        }
+    }
+
     private let launch: Launch
     private var fontObserver: AnyCancellable?
 

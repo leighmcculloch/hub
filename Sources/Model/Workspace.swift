@@ -16,51 +16,23 @@ final class Workspace: ObservableObject {
     @Published var availableVMs: [ExeVM] = []
     @Published var loadingVMs = false
 
-    /// Sub-tabs of the right sidebar. The diff tab always exists; browser tabs
-    /// are added by the user.
-    @Published var sidebarTabs: [SidebarTab] = [SidebarTab(kind: .diff, title: "Diff")]
-    @Published var selectedSidebarTabID: SidebarTab.ID?
-
     let config = AppConfig.shared
     let exe: ExeService
 
     init() {
         exe = ExeService(client: ExeClient(tokenProvider: { AppConfig.shared.effectiveToken }))
-        selectedSidebarTabID = sidebarTabs.first?.id
         // Start empty: a new tab provisions a VM, which needs the repo picker.
     }
 
-    var selectedSidebarTab: SidebarTab? {
-        sidebarTabs.first { $0.id == selectedSidebarTabID } ?? sidebarTabs.first
-    }
+    /// The VM's public HTTPS endpoint for the selected session.
+    var selectedSessionWebURL: String? { selectedSession?.webURL }
 
-    /// The VM's public HTTPS endpoint, which is its SSH host over https. Used as
-    /// the landing page for a new browser tab.
-    var selectedSessionWebURL: String? {
-        selectedSession?.sshDestination.map { "https://\($0)" }
-    }
-
-    /// Open a browser sub-tab in the right sidebar, pointed at the current
-    /// session's instance by default.
+    /// Open a browser sub-tab in the selected session's sidebar.
     func newBrowserTab() {
-        let address = selectedSessionWebURL ?? "https://exe.dev"
-        let browser = BrowserModel(initialAddress: address)
-        let host = BrowserModel.url(from: address)?.host ?? "Browser"
-        let tab = SidebarTab(kind: .browser, title: host, browser: browser)
-        sidebarTabs.append(tab)
-        selectedSidebarTabID = tab.id
+        guard let session = selectedSession else { return }
+        session.newBrowserTab()
         // A browser tab is useless behind a hidden sidebar.
         showDiffSidebar = true
-    }
-
-    func closeSidebarTab(_ tab: SidebarTab) {
-        // The diff tab is permanent; there'd be no way to get it back.
-        guard tab.kind != .diff else { return }
-        guard let index = sidebarTabs.firstIndex(where: { $0.id == tab.id }) else { return }
-        sidebarTabs.remove(at: index)
-        if selectedSidebarTabID == tab.id {
-            selectedSidebarTabID = sidebarTabs[safe: index]?.id ?? sidebarTabs.last?.id
-        }
     }
 
     var selectedSession: TerminalSession? {

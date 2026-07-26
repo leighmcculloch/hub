@@ -1,11 +1,29 @@
 import SwiftUI
 import WebKit
 
-/// The right sidebar: a strip of sub-tabs over a content pane. The diff tab is
-/// permanent; browser tabs are added with the + button and default to the
-/// current session's instance URL.
+/// The right sidebar. Its sub-tabs belong to the selected session, so switching
+/// sessions swaps the whole sidebar. The diff tab is permanent; browser tabs are
+/// added with the + button and default to that session's instance URL.
 struct RightSidebar: View {
     @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        Group {
+            if let session = workspace.selectedSession {
+                SessionSidebarTabs(workspace: workspace, session: session)
+            } else {
+                DiffSidebar(workspace: workspace)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.thinMaterial)
+    }
+}
+
+/// The tab strip and content pane for one session's sidebar.
+private struct SessionSidebarTabs: View {
+    @ObservedObject var workspace: Workspace
+    @ObservedObject var session: TerminalSession
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,26 +31,24 @@ struct RightSidebar: View {
             Divider()
             content
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.thinMaterial)
     }
 
     private var tabStrip: some View {
         HStack(spacing: 2) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach(workspace.sidebarTabs) { tab in
+                    ForEach(session.sidebarTabs) { tab in
                         SidebarTabChip(
                             tab: tab,
-                            isSelected: tab.id == workspace.selectedSidebarTab?.id,
-                            onSelect: { workspace.selectedSidebarTabID = tab.id },
-                            onClose: { workspace.closeSidebarTab(tab) }
+                            isSelected: tab.id == session.selectedSidebarTab?.id,
+                            onSelect: { session.selectedSidebarTabID = tab.id },
+                            onClose: { session.closeSidebarTab(tab) }
                         )
                     }
                 }
             }
 
-            Button(action: { workspace.newBrowserTab() }) {
+            Button(action: { session.newBrowserTab() }) {
                 Image(systemName: "plus")
                     .font(.system(size: 10, weight: .medium))
                     .padding(.horizontal, 6)
@@ -40,7 +56,7 @@ struct RightSidebar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("New browser tab" + (workspace.selectedSessionWebURL.map { " (\($0))" } ?? ""))
+            .help("New browser tab" + (session.webURL.map { " (\($0))" } ?? ""))
             .accessibilityLabel("New browser tab")
         }
         .padding(.horizontal, 6)
@@ -49,10 +65,12 @@ struct RightSidebar: View {
 
     @ViewBuilder
     private var content: some View {
-        // Every tab is kept mounted so a browser tab doesn't reload and the diff
-        // tab doesn't lose its poll loop when you switch away.
+        // Within a session every tab stays mounted, so a browser tab doesn't
+        // reload and the diff tab keeps its poll loop when you switch tabs.
+        // Across sessions the subtree is rebuilt, but each browser's WKWebView
+        // is owned by its model, so pages survive that too.
         ZStack {
-            ForEach(workspace.sidebarTabs) { tab in
+            ForEach(session.sidebarTabs) { tab in
                 Group {
                     switch tab.kind {
                     case .diff:
@@ -63,8 +81,8 @@ struct RightSidebar: View {
                         }
                     }
                 }
-                .opacity(tab.id == workspace.selectedSidebarTab?.id ? 1 : 0)
-                .allowsHitTesting(tab.id == workspace.selectedSidebarTab?.id)
+                .opacity(tab.id == session.selectedSidebarTab?.id ? 1 : 0)
+                .allowsHitTesting(tab.id == session.selectedSidebarTab?.id)
             }
         }
     }
