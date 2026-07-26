@@ -424,20 +424,19 @@ struct NewSessionSheet: View {
                     Task { await create() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(provisioner.phase == .working || provisioner.chosenRepos.isEmpty)
+                .disabled(provisioner.phase == .working)
             }
         }
         .padding(14)
     }
 
-    private var disabledReason: String? {
-        guard provisioner.phase != .working, provisioner.chosenRepos.isEmpty else { return nil }
-        return "Select at least one repository"
-    }
+    /// Repos are optional — a session with none is just a bare VM — so there is
+    /// nothing to block on.
+    private var disabledReason: String? { nil }
 
     @MainActor
     private func create() async {
-        if let (launch, title, vmName) = await provisioner.provision() {
+        if let (launch, title, vmName) = await provisioner.provision(gitIdentity: workspace.gitIdentity) {
             workspace.addSession(title: title, launch: launch, vmName: vmName)
             dismiss()
         }

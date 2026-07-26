@@ -62,11 +62,13 @@ enum Bootstrap {
         setupScript: String,
         claudeSettings: String,
         repos: [String],
-        startCommand: String = ""
+        startCommand: String = "",
+        gitIdentity: (name: String, email: String)? = nil
     ) -> String {
         let encoded = Data(script(setupScript: setupScript,
                                   claudeSettings: claudeSettings,
-                                  repos: repos).utf8).base64EncodedString()
+                                  repos: repos,
+                                  gitIdentity: gitIdentity).utf8).base64EncodedString()
         return "printf %s '\(encoded)' | base64 -d > /tmp/exe-bootstrap.sh"
             + " && chmod +x /tmp/exe-bootstrap.sh && /tmp/exe-bootstrap.sh;"
             + " \(loginShellCommand(startCommand: startCommand))"
@@ -104,8 +106,26 @@ enum Bootstrap {
     }
 
     /// The script body that gets base64-encoded into `command`.
-    static func script(setupScript: String, claudeSettings: String, repos: [String]) -> String {
+    static func script(
+        setupScript: String,
+        claudeSettings: String,
+        repos: [String],
+        gitIdentity: (name: String, email: String)? = nil
+    ) -> String {
         var script = "#!/usr/bin/env bash\n"
+
+        // Seed the commit identity from the GitHub account, so commits made on
+        // the VM are attributed without any manual setup. Only when unset, so a
+        // deliberate change on the VM survives reconnects.
+        if let gitIdentity {
+            script += """
+            git config --global user.name >/dev/null 2>&1 || \
+            git config --global user.name \(shellQuote(gitIdentity.name))
+            git config --global user.email >/dev/null 2>&1 || \
+            git config --global user.email \(shellQuote(gitIdentity.email))
+
+            """
+        }
 
         // Seed Claude Code's settings, but never clobber one the user already
         // customized on the VM.

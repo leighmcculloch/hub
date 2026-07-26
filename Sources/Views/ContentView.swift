@@ -44,7 +44,10 @@ struct ContentView: View {
             NewSessionSheet(workspace: workspace)
         }
         // Populate the sidebar with existing VMs on open, without connecting.
-        .task { await workspace.loadAvailableVMs() }
+        .task {
+            await workspace.loadGitHubUser()
+            await workspace.loadAvailableVMs()
+        }
         .onAppear {
             sessionSidebarWidth = storedSessionSidebarWidth
             diffSidebarWidth = storedDiffSidebarWidth

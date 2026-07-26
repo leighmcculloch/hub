@@ -16,6 +16,9 @@ final class Workspace: ObservableObject {
     @Published var availableVMs: [ExeVM] = []
     @Published var loadingVMs = false
 
+    /// The signed-in GitHub account, used to seed git config on new VMs.
+    @Published var githubUser: GitHubUser?
+
     let config = AppConfig.shared
     let exe: ExeService
 
@@ -46,6 +49,17 @@ final class Workspace: ObservableObject {
             guard let destination = vm.ssh_dest else { return true }
             return !open.contains(destination)
         }
+    }
+
+    /// Look up the GitHub account once, for the VM's commit identity.
+    @MainActor
+    func loadGitHubUser() async {
+        githubUser = await GitHubRepos.currentUser()
+    }
+
+    /// The commit identity to seed on a VM, if the GitHub user is known.
+    var gitIdentity: (name: String, email: String)? {
+        githubUser.map { ($0.displayName, $0.noreplyEmail) }
     }
 
     /// Refresh the list of existing VMs. Deliberately does *not* connect to or
@@ -83,7 +97,8 @@ final class Workspace: ObservableObject {
             setupScript: config.data.setupScript,
             claudeSettings: config.data.claudeSettings,
             repos: [],
-            startCommand: config.data.startCommand
+            startCommand: config.data.startCommand,
+            gitIdentity: gitIdentity
         )
         addSession(
             title: vm.vm_name ?? destination,

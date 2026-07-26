@@ -85,12 +85,12 @@ final class SessionProvisioner: ObservableObject {
 
     /// Run provisioning. On success returns the launch descriptor and a tab
     /// title; on failure sets `errorMessage` and returns nil.
-    func provision() async -> (launch: TerminalSession.Launch, title: String, vmName: String)? {
+    /// `gitIdentity` seeds the VM's commit identity. Repos are optional — a
+    /// session with none is just a bare VM.
+    func provision(gitIdentity: (name: String, email: String)? = nil) async
+        -> (launch: TerminalSession.Launch, title: String, vmName: String)?
+    {
         let chosen = chosenRepos
-        guard !chosen.isEmpty else {
-            errorMessage = "Select at least one repository (or type owner/repo)."
-            return nil
-        }
 
         phase = .working
         statusLines = []
@@ -121,7 +121,8 @@ final class SessionProvisioner: ObservableObject {
                 setupScript: config.data.setupScript,
                 claudeSettings: config.data.claudeSettings,
                 repos: chosen,
-                startCommand: config.data.startCommand
+                startCommand: config.data.startCommand,
+                gitIdentity: gitIdentity
             )
             phase = .done
 
