@@ -32,6 +32,7 @@ PORTABLE=(
   Sources/Git/GitWorktree.swift
   Sources/Git/RemoteGit.swift
   Sources/GitHub/GitHubRepos.swift
+  Sources/GitHub/RepoReference.swift
 )
 
 # A source file that imports none of the Apple-only frameworks below could be

@@ -228,14 +228,20 @@ struct NewSessionSheet: View {
     private var manualEntry: some View {
         VStack(alignment: .leading, spacing: 4) {
             sectionLabel("Not listed? Add by name")
-            TextField("owner/repo", text: $provisioner.manualRepo)
+            TextField("owner/repo or a GitHub URL", text: $provisioner.manualRepo)
                 .textFieldStyle(.roundedBorder)
-            // Anything without a slash is ignored by `chosenRepos`, so say so
-            // rather than silently dropping it.
-            if !manualRepoTrimmed.isEmpty && !manualRepoTrimmed.contains("/") {
+            // Text that can't be read as a repo is ignored by `chosenRepos`, so
+            // say so rather than silently dropping it.
+            if !provisioner.manualRepoIsUsable {
                 Label("Use the owner/repo form, e.g. apple/swift.", systemImage: "info.circle")
                     .font(.caption)
                     .foregroundStyle(.orange)
+            } else if let normalized = RepoReference.normalize(provisioner.manualRepo),
+                      normalized != manualRepoTrimmed {
+                // A pasted URL is silently rewritten; show what will be cloned.
+                Label("Will use \(normalized)", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

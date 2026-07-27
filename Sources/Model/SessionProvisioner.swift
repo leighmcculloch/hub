@@ -62,9 +62,14 @@ final class SessionProvisioner: ObservableObject {
     /// The repos to provision: checked ones plus a manually typed one.
     var chosenRepos: [String] {
         var set = selected
-        let manual = manualRepo.trimmingCharacters(in: .whitespaces)
-        if manual.contains("/") { set.insert(manual) }
+        if let manual = RepoReference.normalize(manualRepo) { set.insert(manual) }
         return set.sorted()
+    }
+
+    /// Whether the typed text will be used, for the hint under the field.
+    var manualRepoIsUsable: Bool {
+        manualRepo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || RepoReference.normalize(manualRepo) != nil
     }
 
     func loadRepos() async {
