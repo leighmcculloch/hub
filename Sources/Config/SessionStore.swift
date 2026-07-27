@@ -7,6 +7,14 @@ struct PersistedSession: Codable, Equatable {
     var vmName: String?
 }
 
+/// The workspace as written to disk: which tabs were open, and which was
+/// active.
+struct PersistedWorkspace: Codable, Equatable {
+    var sessions: [PersistedSession] = []
+    /// SSH destination of the tab that was in front, if any.
+    var selected: String?
+}
+
 /// Records which VM tabs were open so quitting doesn't lose the workspace.
 ///
 /// Kept separate from `AppConfig`: this is session state the app manages, not
@@ -29,18 +37,24 @@ final class SessionStore {
         self.fileURL = dir.appendingPathComponent("sessions.json")
     }
 
-    /// Previously open tabs. A missing or unreadable file just means none.
-    func load() -> [PersistedSession] {
-        guard let bytes = try? Data(contentsOf: fileURL),
-              let sessions = try? JSONDecoder().decode([PersistedSession].self, from: bytes)
-        else { return [] }
-        return sessions
+    /// The previously open tabs. A missing or unreadable file just means none.
+    func load() -> PersistedWorkspace {
+        guard let bytes = try? Data(contentsOf: fileURL) else { return PersistedWorkspace() }
+        if let workspace = try? JSONDecoder().decode(PersistedWorkspace.self, from: bytes) {
+            return workspace
+        }
+        // Files written before the selection was recorded hold a bare array.
+        // Reading them is what stops an upgrade from emptying the workspace.
+        if let sessions = try? JSONDecoder().decode([PersistedSession].self, from: bytes) {
+            return PersistedWorkspace(sessions: sessions)
+        }
+        return PersistedWorkspace()
     }
 
-    func save(_ sessions: [PersistedSession]) {
+    func save(_ workspace: PersistedWorkspace) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let bytes = try? encoder.encode(sessions) else { return }
+        guard let bytes = try? encoder.encode(workspace) else { return }
         try? bytes.write(to: fileURL, options: [.atomic])
     }
 
@@ -56,5 +70,20 @@ final class SessionStore {
     ) -> [PersistedSession] {
         guard !knownDestinations.isEmpty else { return persisted }
         return persisted.filter { knownDestinations.contains($0.destination) }
+    }
+
+    /// Which tab to put in front on restore.
+    ///
+    /// The one that was active, when it came back — landing on the first tab
+    /// after a restart loses your place for no reason. Falls back to the first
+    /// when the active tab's VM is gone, or when the file predates this being
+    /// recorded at all.
+    static func restorableSelection(
+        _ selected: String?,
+        in sessions: [PersistedSession]
+    ) -> String? {
+        guard let selected, sessions.contains(where: { $0.destination == selected })
+        else { return sessions.first?.destination }
+        return selected
     }
 }

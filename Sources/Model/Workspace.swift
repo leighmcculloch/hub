@@ -5,7 +5,15 @@ import SwiftUI
 /// exe.dev service used to provision VM-backed tabs.
 final class Workspace: ObservableObject {
     @Published var sessions: [TerminalSession] = []
-    @Published var selectedSessionID: TerminalSession.ID?
+    /// Persisted on change, so reopening the app lands on the tab you left.
+    /// A `didSet` rather than a call at each assignment: the sidebar sets this
+    /// directly, so any scheme relying on call sites would miss that one.
+    @Published var selectedSessionID: TerminalSession.ID? {
+        didSet {
+            guard selectedSessionID != oldValue else { return }
+            persistSessions()
+        }
+    }
     @Published var showSessionSidebar: Bool = true
     @Published var showDiffSidebar: Bool = true
     /// Whether the new-session (repo picker) sheet is presented.
@@ -108,9 +116,10 @@ final class Workspace: ObservableObject {
     @MainActor
     func restoreSessions() {
         guard sessions.isEmpty else { return }
+        let stored = sessionStore.load()
         let known = Set(availableVMs.compactMap(\.ssh_dest))
         let restorable = SessionStore.restorable(
-            persisted: sessionStore.load(), knownDestinations: known)
+            persisted: stored.sessions, knownDestinations: known)
         guard !restorable.isEmpty else { return }
 
         for entry in restorable {
@@ -121,18 +130,22 @@ final class Workspace: ObservableObject {
                 persist: false
             )
         }
-        selectedSessionID = sessions.first?.id
+        let selected = SessionStore.restorableSelection(stored.selected, in: restorable)
+        selectedSessionID = sessions.first { $0.sshDestination == selected }?.id
+            ?? sessions.first?.id
         persistSessions()
     }
 
     /// Write the open VM tabs out. Local shells aren't restorable, so they're
     /// left out rather than reopening as something they weren't.
     private func persistSessions() {
-        sessionStore.save(sessions.compactMap { session in
-            guard let destination = session.sshDestination else { return nil }
-            return PersistedSession(
-                destination: destination, title: session.title, vmName: session.vmName)
-        })
+        sessionStore.save(PersistedWorkspace(
+            sessions: sessions.compactMap { session in
+                guard let destination = session.sshDestination else { return nil }
+                return PersistedSession(
+                    destination: destination, title: session.title, vmName: session.vmName)
+            },
+            selected: selectedSession?.sshDestination))
     }
 
     /// Reconnect to an existing exe.dev VM, running the same bootstrap so the
