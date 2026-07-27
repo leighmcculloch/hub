@@ -23,6 +23,7 @@ PORTABLE=(
   Sources/Config/SessionStore.swift
   Sources/Model/Bootstrap.swift
   Sources/Model/PollBackoff.swift
+  Sources/Model/RepoLabel.swift
   Sources/Model/TabNavigation.swift
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift

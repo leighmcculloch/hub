@@ -214,7 +214,7 @@ private struct RemoteDiffView: View {
             Picker("Repository", selection: $model.selectedRepo) {
                 Text("All repos").tag(String?.none)
                 ForEach(model.repos, id: \.self) { repo in
-                    Text(repo).tag(String?.some(repo))
+                    Text(RepoLabel.short(repo)).tag(String?.some(repo))
                 }
             }
             .labelsHidden()
@@ -260,8 +260,10 @@ private struct RemoteDiffView: View {
 
     private func repoHeader(repo: String, count: Int) -> some View {
         HStack(spacing: 5) {
-            Image(systemName: "folder.fill").font(.system(size: 8)).foregroundStyle(.tertiary)
-            Text(repo)
+            Image(systemName: RepoLabel.isWorktree(repo) ? "arrow.triangle.branch" : "folder.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
+            Text(RepoLabel.short(repo))
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -273,7 +275,8 @@ private struct RemoteDiffView: View {
         .padding(.top, 8)
         .padding(.bottom, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(repo), \(count) changed")
+        .accessibilityLabel("\(RepoLabel.spoken(repo)), \(count) changed")
+        .help(repo)
     }
 
     @ViewBuilder
