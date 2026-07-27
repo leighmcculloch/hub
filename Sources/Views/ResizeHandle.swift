@@ -28,15 +28,27 @@ struct ResizeHandle: View {
 
     var body: some View {
         Rectangle()
-            // Nearly transparent, but wide enough to be an easy drag target.
-            .fill(Color.primary.opacity(0.001))
-            .frame(width: 8)
-            .overlay(
-                Rectangle()
-                    .fill(isActive ? Color.accentColor : Color(nsColor: .separatorColor))
-                    .frame(width: isActive ? 3 : 1)
-            )
-            .contentShape(Rectangle())
+            .fill(Color(nsColor: .separatorColor))
+            // A hairline is all the width the divider takes in the layout, so
+            // the panels meet at one line instead of either side of a band of
+            // window background.
+            .frame(width: 1)
+            .overlay {
+                // Overlays aren't clipped to that hairline, so both of these
+                // can be wider than it without moving the panels — widening
+                // the frame instead would reflow the terminal on every hover.
+                ZStack {
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(width: 3)
+                        .opacity(isActive ? 1 : 0)
+                    // Nearly transparent, but wide enough to be an easy drag
+                    // target.
+                    Color.primary.opacity(0.001)
+                        .frame(width: 8)
+                        .contentShape(Rectangle())
+                }
+            }
             .animation(.easeOut(duration: 0.12), value: isActive)
             .help("Drag to resize")
             .onHover { inside in
