@@ -37,18 +37,54 @@ final class ExeClient {
         guard let http = response as? HTTPURLResponse else {
             throw ExeError(message: "No HTTP response from exe.dev")
         }
-
-        // Error responses are `{"error":"..."}` regardless of status code.
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let error = object["error"] as? String {
-            throw ExeError(message: "exe.dev (HTTP \(http.statusCode)): \(error)")
-        }
-
-        guard (200..<300).contains(http.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw ExeError(message: "exe.dev HTTP \(http.statusCode): \(body)")
+        if let failure = Self.failure(status: http.statusCode, body: data) {
+            throw failure
         }
         return data
+    }
+
+    /// The error a response represents, or nil if it succeeded.
+    ///
+    /// Separate from the request so the message-building — the part a user
+    /// actually reads when something breaks — can be exercised directly.
+    static func failure(status: Int, body: Data) -> ExeError? {
+        // Error responses are `{"error":"..."}` regardless of status code, so
+        // this is checked before the status.
+        if let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+           let error = object["error"] as? String {
+            return ExeError(message: "exe.dev (HTTP \(status)): \(condense(error))\(hint(for: status))")
+        }
+        guard !(200..<300).contains(status) else { return nil }
+        return ExeError(
+            message: "exe.dev HTTP \(status): \(condense(text(of: body)))\(hint(for: status))")
+    }
+
+    /// Names the one thing the user can do about it. An expired token otherwise
+    /// surfaces as a bare API string with no indication of where to fix it.
+    private static func hint(for status: Int) -> String {
+        (status == 401 || status == 403)
+            ? " — check your API token in Settings (⌘,) or EXE_DEV_TOKEN."
+            : ""
+    }
+
+    /// Longest body kept in a message. A failing proxy answers with an HTML
+    /// error page, and the whole thing in an alert is unreadable.
+    private static let maxBodyLength = 200
+
+    static func condense(_ body: String) -> String {
+        let collapsed = body
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
+        guard !collapsed.isEmpty else { return "(empty response)" }
+        return collapsed.count > maxBodyLength
+            ? String(collapsed.prefix(maxBodyLength)) + "…"
+            : collapsed
+    }
+
+    /// Bodies are usually UTF-8 JSON, but a failing intermediary can return
+    /// anything; a lossy decode still says more than nothing.
+    private static func text(of body: Data) -> String {
+        String(data: body, encoding: .utf8) ?? String(decoding: body, as: UTF8.self)
     }
 
     /// Run a command and decode its JSON output.
@@ -57,8 +93,8 @@ final class ExeClient {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw ExeError(message: "Unexpected exe.dev response for `\(command)`: \(body)")
+            throw ExeError(
+                message: "Unexpected exe.dev response for `\(command)`: \(Self.condense(Self.text(of: data)))")
         }
     }
 }
