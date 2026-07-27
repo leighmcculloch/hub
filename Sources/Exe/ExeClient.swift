@@ -56,35 +56,15 @@ final class ExeClient {
         }
         guard !(200..<300).contains(status) else { return nil }
         return ExeError(
-            message: "exe.dev HTTP \(status): \(condense(text(of: body)))\(hint(for: status))")
+            message: "exe.dev HTTP \(status): \(MessageText.condense(body))\(hint(for: status))")
     }
 
-    /// Names the one thing the user can do about it. An expired token otherwise
-    /// surfaces as a bare API string with no indication of where to fix it.
     private static func hint(for status: Int) -> String {
-        (status == 401 || status == 403)
-            ? " — check your API token in Settings (⌘,) or EXE_DEV_TOKEN."
-            : ""
+        MessageText.tokenHint(for: status, setting: "your API token in Settings (⌘,) or EXE_DEV_TOKEN")
     }
-
-    /// Longest body kept in a message. A failing proxy answers with an HTML
-    /// error page, and the whole thing in an alert is unreadable.
-    private static let maxBodyLength = 200
 
     static func condense(_ body: String) -> String {
-        let collapsed = body
-            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
-            .joined(separator: " ")
-        guard !collapsed.isEmpty else { return "(empty response)" }
-        return collapsed.count > maxBodyLength
-            ? String(collapsed.prefix(maxBodyLength)) + "…"
-            : collapsed
-    }
-
-    /// Bodies are usually UTF-8 JSON, but a failing intermediary can return
-    /// anything; a lossy decode still says more than nothing.
-    private static func text(of body: Data) -> String {
-        String(data: body, encoding: .utf8) ?? String(decoding: body, as: UTF8.self)
+        MessageText.condense(body)
     }
 
     /// Run a command and decode its JSON output.
@@ -94,7 +74,7 @@ final class ExeClient {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw ExeError(
-                message: "Unexpected exe.dev response for `\(command)`: \(Self.condense(Self.text(of: data)))")
+                message: "Unexpected exe.dev response for `\(command)`: \(MessageText.condense(data))")
         }
     }
 }

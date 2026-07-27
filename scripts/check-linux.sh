@@ -22,6 +22,7 @@ PORTABLE=(
   Sources/Config/EnvVar.swift
   Sources/Config/SessionStore.swift
   Sources/Model/Bootstrap.swift
+  Sources/Model/MessageText.swift
   Sources/Model/PollBackoff.swift
   Sources/Model/RepoLabel.swift
   Sources/Model/TabNavigation.swift

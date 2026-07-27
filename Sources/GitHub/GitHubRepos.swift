@@ -14,9 +14,13 @@ struct GitHubUser: Equatable {
     let name: String?
 
     /// Commit author name: the profile name when set, else the login.
+    ///
+    /// Trimmed, because this is written straight into `git config user.name` on
+    /// the VM — a profile name that is blank or only spaces would otherwise
+    /// author every commit as nothing.
     var displayName: String {
-        if let name, !name.isEmpty { return name }
-        return login
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? login : trimmed
     }
 
     /// GitHub's private commit address for this account, which keeps the real
@@ -60,8 +64,8 @@ enum GitHubRepos {
 
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                    let body = String(data: data, encoding: .utf8) ?? ""
-                    return Result(repos: collected, error: "GitHub API error: \(body)")
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    return Result(repos: sorted(collected), error: apiError(status: status, body: data))
                 }
 
                 let batch = try JSONDecoder().decode([RepoDTO].self, from: data)
@@ -69,10 +73,30 @@ enum GitHubRepos {
                 if batch.count < 100 { break }
                 page += 1
             }
-            return Result(repos: collected.sorted { $0.fullName < $1.fullName }, error: nil)
+            return Result(repos: sorted(collected), error: nil)
         } catch {
             return Result(repos: [], error: "Failed to list repos: \(error.localizedDescription)")
         }
+    }
+
+    /// Ordered the way the picker is read, not the way bytes compare.
+    ///
+    /// A plain `<` puts every capitalised name ahead of every lowercase one, so
+    /// `ZZZ/a` landed above `aaa/b` and the list looked arbitrary to scan.
+    /// Ties are broken by the exact name so the order is still total.
+    static func sorted(_ repos: [GitHubRepo]) -> [GitHubRepo] {
+        repos.sorted { left, right in
+            let comparison = left.fullName.localizedCaseInsensitiveCompare(right.fullName)
+            if comparison != .orderedSame { return comparison == .orderedAscending }
+            return left.fullName < right.fullName
+        }
+    }
+
+    /// One readable line. GitHub answers with JSON normally but an HTML page
+    /// from an intermediary when things go wrong, and this lands in a label.
+    static func apiError(status: Int, body: Data) -> String {
+        "GitHub API error (HTTP \(status)): \(MessageText.condense(body))"
+            + MessageText.tokenHint(for: status, setting: "GITHUB_TOKEN, or run `gh auth login`")
     }
 
     /// The authenticated user, or nil when no token is available.
