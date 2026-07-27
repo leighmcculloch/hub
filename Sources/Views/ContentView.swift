@@ -46,7 +46,9 @@ struct ContentView: View {
         // Populate the sidebar with existing VMs on open, without connecting.
         .task {
             await workspace.loadGitHubUser()
+            // Restore after the VM list so tabs whose VM is gone are dropped.
             await workspace.loadAvailableVMs()
+            workspace.restoreSessions()
         }
         .onAppear {
             sessionSidebarWidth = storedSessionSidebarWidth

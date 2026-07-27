@@ -21,8 +21,10 @@ final class Workspace: ObservableObject {
 
     let config = AppConfig.shared
     let exe: ExeService
+    private let sessionStore: SessionStore
 
-    init() {
+    init(sessionStore: SessionStore = .shared) {
+        self.sessionStore = sessionStore
         exe = ExeService(client: ExeClient(tokenProvider: { AppConfig.shared.effectiveToken }))
         // Start empty: a new tab provisions a VM, which needs the repo picker.
     }
@@ -77,10 +79,60 @@ final class Workspace: ObservableObject {
     }
 
     /// Open a new tab from a provisioned launch descriptor.
-    func addSession(title: String, launch: TerminalSession.Launch, vmName: String? = nil) {
+    func addSession(
+        title: String,
+        launch: TerminalSession.Launch,
+        vmName: String? = nil,
+        persist: Bool = true
+    ) {
         let session = TerminalSession(title: title, launch: launch, vmName: vmName)
         sessions.append(session)
         selectedSessionID = session.id
+        if persist { persistSessions() }
+    }
+
+    /// The bootstrap run when connecting to an already-provisioned VM. Repos
+    /// are already cloned, so it only re-applies the idempotent setup steps.
+    private func reconnectBootstrap() -> String {
+        Bootstrap.command(
+            setupScript: config.data.setupScript,
+            claudeSettings: config.data.claudeSettings,
+            repos: [],
+            startCommand: config.data.startCommand,
+            gitIdentity: gitIdentity
+        )
+    }
+
+    /// Restore the tabs that were open when the app last quit. VMs that no
+    /// longer exist are dropped; see `SessionStore.restorable`.
+    @MainActor
+    func restoreSessions() {
+        guard sessions.isEmpty else { return }
+        let known = Set(availableVMs.compactMap(\.ssh_dest))
+        let restorable = SessionStore.restorable(
+            persisted: sessionStore.load(), knownDestinations: known)
+        guard !restorable.isEmpty else { return }
+
+        for entry in restorable {
+            addSession(
+                title: entry.title,
+                launch: .ssh(destination: entry.destination, bootstrap: reconnectBootstrap()),
+                vmName: entry.vmName,
+                persist: false
+            )
+        }
+        selectedSessionID = sessions.first?.id
+        persistSessions()
+    }
+
+    /// Write the open VM tabs out. Local shells aren't restorable, so they're
+    /// left out rather than reopening as something they weren't.
+    private func persistSessions() {
+        sessionStore.save(sessions.compactMap { session in
+            guard let destination = session.sshDestination else { return nil }
+            return PersistedSession(
+                destination: destination, title: session.title, vmName: session.vmName)
+        })
     }
 
     /// Reconnect to an existing exe.dev VM, running the same bootstrap so the
@@ -93,16 +145,9 @@ final class Workspace: ObservableObject {
             selectedSessionID = existing.id
             return
         }
-        let bootstrap = Bootstrap.command(
-            setupScript: config.data.setupScript,
-            claudeSettings: config.data.claudeSettings,
-            repos: [],
-            startCommand: config.data.startCommand,
-            gitIdentity: gitIdentity
-        )
         addSession(
             title: vm.vm_name ?? destination,
-            launch: .ssh(destination: destination, bootstrap: bootstrap),
+            launch: .ssh(destination: destination, bootstrap: reconnectBootstrap()),
             vmName: vm.vm_name
         )
     }
@@ -118,6 +163,7 @@ final class Workspace: ObservableObject {
         if selectedSessionID == session.id {
             selectedSessionID = sessions[safe: index]?.id ?? sessions.last?.id
         }
+        persistSessions()
     }
 
     /// Destroy a VM that has no tab open, without connecting to it first.
