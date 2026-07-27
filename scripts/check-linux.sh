@@ -27,6 +27,7 @@ PORTABLE=(
   Sources/Model/TabNavigation.swift
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift
+  Sources/Git/DiffParse.swift
   Sources/Git/GitWorktree.swift
   Sources/Git/RemoteGit.swift
   Sources/GitHub/GitHubRepos.swift
