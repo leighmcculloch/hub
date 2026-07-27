@@ -106,7 +106,11 @@ final class SessionProvisioner: ObservableObject {
                 tags.append(try await exe.ensureGithubIntegration(repo: repo, existing: existing))
             }
 
-            let vmName = Bootstrap.vmName(from: sessionName)
+            // Re-read the VM list rather than trusting `existingVMs`, which is
+            // only populated while the reconnect list is on screen. A failed
+            // lookup just means no names to avoid.
+            let taken = Set((try? await exe.listVMs())?.compactMap(\.vm_name) ?? [])
+            let vmName = Bootstrap.uniqueVMName(from: sessionName, existing: taken)
             let environment = config.data.environment.filter { !$0.key.isEmpty }
             var creating = "Creating VM \(vmName) (tags: \(tags.joined(separator: ", "))"
             if !environment.isEmpty {

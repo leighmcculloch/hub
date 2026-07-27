@@ -37,8 +37,8 @@ enum Bootstrap {
         }
 
         // Long names are truncated; truncation can expose a trailing hyphen.
-        if name.count > 52 {
-            name = String(name.prefix(52))
+        if name.count > maxVMNameLength {
+            name = String(name.prefix(maxVMNameLength))
                 .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         }
 
@@ -48,6 +48,34 @@ enum Bootstrap {
             name = name.isEmpty ? "vm-\(suffix)" : "\(name)-\(suffix)"
         }
         return name
+    }
+
+    static let maxVMNameLength = 52
+
+    /// A VM name derived from `sessionName` that isn't one of `existing`.
+    ///
+    /// exe.dev rejects a duplicate name outright, so a second session called
+    /// "review" would otherwise fail with a raw API error after the integrations
+    /// had already been set up. Numbering the name keeps that invisible.
+    static func uniqueVMName(from sessionName: String, existing: Set<String>) -> String {
+        let base = vmName(from: sessionName)
+        guard existing.contains(base) else { return base }
+
+        for counter in 2...99 {
+            let candidate = appending("\(counter)", to: base)
+            if !existing.contains(candidate) { return candidate }
+        }
+        // Ninety-eight VMs sharing one name isn't worth counting past.
+        return appending(UUID().uuidString.prefix(6).lowercased(), to: base)
+    }
+
+    /// Join `suffix` onto `base` with a hyphen, shortening `base` so the result
+    /// stays inside the length limit and doesn't end up with a doubled hyphen.
+    private static func appending(_ suffix: some StringProtocol, to base: String) -> String {
+        let room = maxVMNameLength - suffix.count - 1
+        let trimmed = String(base.prefix(room))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return "\(trimmed)-\(suffix)"
     }
 
     /// Build the remote command run over SSH: decode and execute a bootstrap

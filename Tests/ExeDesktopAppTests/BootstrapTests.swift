@@ -56,6 +56,80 @@ final class BootstrapTests: XCTestCase {
         XCTAssertNotEqual(Bootstrap.vmName(from: ""), Bootstrap.vmName(from: ""))
     }
 
+    // MARK: - Avoiding names already taken
+
+    /// The common case: nothing to dodge, so the name is untouched.
+    func testUniqueNameIsTheSlugWhenFree() {
+        XCTAssertEqual(Bootstrap.uniqueVMName(from: "My Session", existing: []), "my-session")
+        XCTAssertEqual(
+            Bootstrap.uniqueVMName(from: "My Session", existing: ["something-else"]),
+            "my-session")
+    }
+
+    func testUniqueNameNumbersPastACollision() {
+        XCTAssertEqual(
+            Bootstrap.uniqueVMName(from: "review", existing: ["review"]),
+            "review-2")
+        XCTAssertEqual(
+            Bootstrap.uniqueVMName(from: "review", existing: ["review", "review-2"]),
+            "review-3")
+    }
+
+    /// Gaps are filled rather than counting past them: deleting "review-2"
+    /// should let the next session take that name back.
+    func testUniqueNameTakesTheLowestFreeNumber() {
+        XCTAssertEqual(
+            Bootstrap.uniqueVMName(from: "review", existing: ["review", "review-3"]),
+            "review-2")
+    }
+
+    /// A name at the limit can't just have "-2" appended — the result would be
+    /// rejected for length.
+    func testUniqueNameStaysInsideTheLengthLimit() {
+        let long = String(repeating: "x", count: 52)
+        let taken = Bootstrap.vmName(from: long)
+        XCTAssertEqual(taken.count, 52)
+        assertValidVMName(Bootstrap.uniqueVMName(from: long, existing: [taken]))
+    }
+
+    /// Shortening to make room must not leave the hyphen that was there.
+    func testUniqueNameDoesNotProduceADoubledHyphen() {
+        // Hyphens on every odd index, so shortening to 50 characters to make
+        // room for "-2" cuts exactly on one.
+        let base = String(repeating: "a-", count: 26)
+        let slug = Bootstrap.vmName(from: base)
+        XCTAssertEqual(slug.count, 51)
+        XCTAssertEqual(Array(slug)[49], "-", "the truncation point must be a hyphen")
+
+        let result = Bootstrap.uniqueVMName(from: base, existing: [slug])
+        XCTAssertFalse(result.contains("--"), result)
+        assertValidVMName(result)
+    }
+
+    /// Whatever the collision, the result still has to satisfy exe.dev.
+    func testUniqueNameIsAlwaysValid() {
+        for input in ["", "ab", "9", "trailing-", String(repeating: "q", count: 200)] {
+            let slug = Bootstrap.vmName(from: input)
+            var taken: Set<String> = [slug]
+            for _ in 0..<5 {
+                let next = Bootstrap.uniqueVMName(from: input, existing: taken)
+                assertValidVMName(next)
+                XCTAssertFalse(taken.contains(next), "\(next) collides for input \(input.prefix(20))")
+                taken.insert(next)
+            }
+        }
+    }
+
+    /// Past the numbered range it falls back to a random suffix rather than
+    /// looping forever or handing back a name that is already taken.
+    func testUniqueNameSurvivesExhaustingTheNumbers() {
+        var taken: Set<String> = ["review"]
+        for counter in 2...99 { taken.insert("review-\(counter)") }
+        let result = Bootstrap.uniqueVMName(from: "review", existing: taken)
+        XCTAssertFalse(taken.contains(result))
+        assertValidVMName(result)
+    }
+
     // MARK: - Shell quoting
 
     func testShellQuoteWrapsAndEscapes() {
