@@ -182,6 +182,30 @@ final class FileDiffCommandTests: XCTestCase {
         XCTAssertEqual(status.stats["spaced name.txt"]?.added, 1)
     }
 
+    /// With rename detection on, status writes `old -> new` while `--numstat`
+    /// writes `{old => new}/file`. Neither is a path, and the two never match
+    /// each other, so the row is unopenable *and* its line counts go missing.
+    func testARenameYieldsRealPathsWithAttachedStats() throws {
+        try run("git add . && git commit -qm base")
+        try run("git mv tracked.txt renamed.txt")
+        try write("renamed.txt", "original\nmodified\nand more\n")
+
+        let status = GitRepoStatus.parse(try shell(RemoteGit.statusCommand(repo: repo)).output)
+        let paths = status.changes.map(\.path)
+
+        XCTAssertTrue(paths.contains("renamed.txt"), "\(paths)")
+        XCTAssertFalse(paths.contains { $0.contains("->") || $0.contains("=>") }, "\(paths)")
+        XCTAssertNotNil(status.stats["renamed.txt"], "line counts did not attach: \(status.stats)")
+    }
+
+    /// The rename target is tracked, so its diff must come from HEAD rather than
+    /// the untracked `/dev/null` path.
+    func testARenamedFileProducesADiff() throws {
+        try run("git add . && git commit -qm base")
+        try run("git mv tracked.txt renamed.txt")
+        XCTAssertFalse(try diff(of: "renamed.txt").isEmpty)
+    }
+
     func testStatusSeesEveryKindOfChange() throws {
         let status = GitRepoStatus.parse(try shell(RemoteGit.statusCommand(repo: repo)).output)
         let byPath = Dictionary(uniqueKeysWithValues: status.changes.map { ($0.path, $0) })

@@ -52,8 +52,20 @@ enum RemoteGit {
     /// `--untracked-files=all` because the default collapses a whole new
     /// directory into a single `?? dir/` entry — one unopenable row standing in
     /// for every file in it.
+    ///
+    /// Rename detection is turned off on both halves. With it on, a rename is
+    /// reported as `R old.txt -> new.txt`, and everything downstream treats that
+    /// whole string as a filename: the row is unreadable and its diff is empty.
+    /// The two halves don't even agree on the spelling — `status` writes
+    /// `old -> new` while `--numstat` writes `{old => new}/file` — so line counts
+    /// never attach either. Off, git reports the plain delete and add, and every
+    /// path is one that exists.
+    ///
+    /// Set as config rather than `--no-renames` so a git too old to know the
+    /// option ignores it instead of failing the whole command.
     static func statusCommand(repo: String) -> String {
-        let git = "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo)) -c core.quotePath=false"
+        let git = "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo))"
+            + " -c core.quotePath=false -c status.renames=false -c diff.renames=false"
         return "\(git) status --porcelain=v1 --untracked-files=all 2>/dev/null;"
             + " echo '\(GitRepoStatus.separator)';"
             + " \(git) diff --numstat HEAD 2>/dev/null"

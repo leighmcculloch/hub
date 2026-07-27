@@ -143,6 +143,57 @@ final class GitWorktreeStateTests: XCTestCase {
         XCTAssertEqual(state.repoRoot.lastPathComponent, repo.lastPathComponent)
     }
 
+    // MARK: - Renames
+
+    /// A rename is reported as `R old.txt -> new.txt`, and that whole string
+    /// would become the row's "path" — unreadable, and matching no diff.
+    func testARenameIsListedAsRealPaths() throws {
+        try git("git mv tracked.txt renamed.txt")
+        let paths = try XCTUnwrap(GitWorktree.state(for: repo)).changes.map(\.path)
+
+        XCTAssertTrue(paths.contains("renamed.txt"), "\(paths)")
+        XCTAssertTrue(paths.contains("tracked.txt"), "the old path should show as removed: \(paths)")
+        XCTAssertFalse(paths.contains { $0.contains("->") }, "arrow left in a path: \(paths)")
+    }
+
+    /// The file list and the diff have to spell the path the same way, or
+    /// selecting the row scrolls to nothing.
+    func testARenameProducesMatchingDiffSections() throws {
+        try git("git mv tracked.txt renamed.txt")
+        let state = try XCTUnwrap(GitWorktree.state(for: repo))
+
+        XCTAssertTrue(state.diff.contains("b/renamed.txt"), state.diff)
+        for path in state.changes.map(\.path) {
+            XCTAssertTrue(state.diff.contains(path), "no diff section for \(path)")
+        }
+    }
+
+    /// A rename with no edits is where detection actually bites: git collapses
+    /// it to a single "similarity index 100%" section with no content lines, so
+    /// both rows in the file list would show an empty pane.
+    func testAPureRenameStillShowsTheFileContents() throws {
+        try git("git add . && git commit -qm base")
+        try git("git mv tracked.txt renamed.txt")
+        let state = try XCTUnwrap(GitWorktree.state(for: repo))
+
+        XCTAssertFalse(state.diff.contains("similarity index"),
+                       "rename collapsed into one contentless section:\n\(state.diff)")
+        XCTAssertTrue(state.diff.contains("+original"), "new path shows no content:\n\(state.diff)")
+        XCTAssertTrue(state.diff.contains("-original"), "old path shows no content:\n\(state.diff)")
+    }
+
+    /// git compresses a rename across directories to `{src => dst}/f.txt`,
+    /// which is neither of the two real paths.
+    func testARenameAcrossDirectoriesIsListedAsRealPaths() throws {
+        try FileManager.default.createDirectory(
+            at: repo.appendingPathComponent("dst"), withIntermediateDirectories: true)
+        try git("git mv tracked.txt dst/moved.txt")
+
+        let paths = try XCTUnwrap(GitWorktree.state(for: repo)).changes.map(\.path)
+        XCTAssertTrue(paths.contains("dst/moved.txt"), "\(paths)")
+        XCTAssertFalse(paths.contains { $0.contains("=>") || $0.contains("{") }, "\(paths)")
+    }
+
     // MARK: - Harness
 
     private static let git: String? = ["/usr/bin/git", "/opt/homebrew/bin/git", "/bin/git"]

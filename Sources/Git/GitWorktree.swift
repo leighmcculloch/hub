@@ -110,8 +110,13 @@ enum GitWorktree {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // `--untracked-files=all` so a new directory lists its files instead of
         // collapsing to one `?? dir/` row that nothing can be shown for.
+        // Rename detection off: it reports `R old.txt -> new.txt`, which becomes
+        // one unreadable row whose diff is empty, because that string is not a
+        // path. Off, git reports the plain delete and add instead. Set as config
+        // so a git too old to know the option ignores it rather than failing.
         let status = run(
-            ["-c", "core.quotePath=false", "status", "--porcelain=v1", "--untracked-files=all"],
+            ["-c", "core.quotePath=false", "-c", "status.renames=false",
+             "status", "--porcelain=v1", "--untracked-files=all"],
             in: repoRoot) ?? ""
         // Parsed by the same routine as the remote sidebar rather than a second
         // copy: the duplicate that used to live here had drifted, and was
@@ -121,8 +126,14 @@ enum GitWorktree {
         // `git diff HEAD` covers both staged and unstaged changes to tracked
         // files — the full delta of the worktree against the last commit. On a
         // repo with no commits yet, fall back to the index diff.
-        let tracked = run(["diff", "HEAD"], in: repoRoot)
-            ?? run(["diff"], in: repoRoot)
+        // Renames off here too, to stay consistent with the file list above.
+        // With detection on, a rename is one section covering both paths, and an
+        // otherwise-unchanged file has no content lines at all — so two rows in
+        // the list share one section and neither shows anything. Off, each path
+        // gets its own section with its own content.
+        let noRenames = ["-c", "diff.renames=false"]
+        let tracked = run(noRenames + ["diff", "HEAD"], in: repoRoot)
+            ?? run(noRenames + ["diff"], in: repoRoot)
             ?? ""
 
         return GitWorktreeState(
