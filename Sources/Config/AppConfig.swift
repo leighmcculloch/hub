@@ -29,7 +29,8 @@ final class AppConfig: ObservableObject {
 
     /// Clamped so ⌘+/⌘- can't drive the terminal to an unusable size.
     func adjustFontSize(by delta: Double) {
-        data.fontSize = min(max(data.fontSize + delta, 8), 32)
+        let range = AppConfigData.fontSizeRange
+        data.fontSize = min(max(data.fontSize + delta, range.lowerBound), range.upperBound)
     }
 
     /// The token to use: the configured one, or the environment fallback.

@@ -45,21 +45,40 @@ struct AppConfigData: Codable {
     }
     """
 
+    /// Sizes the terminal font is allowed to take, shared with ⌘+/⌘- so the two
+    /// can't disagree about what is usable.
+    static let fontSizeRange = 8.0...32.0
+
     init() {}
 
-    /// Decoded field-by-field with `decodeIfPresent` so a config file written by
-    /// an older build (missing newer keys) still loads. The synthesized
-    /// initializer would throw on a missing key and discard the whole file.
+    /// Decoded field by field so a config file written by an older build — or
+    /// hand-edited, which the format invites — still loads. The synthesized
+    /// initializer throws on the first missing key and discards the whole file.
+    ///
+    /// Each field also falls back independently when its value is present but
+    /// the wrong type. One bad entry should cost that entry, not the token and
+    /// setup script alongside it.
+    ///
+    /// Fallbacks come from a default-constructed instance rather than repeating
+    /// the literals: written out twice, the two copies drift.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        exeToken = try container.decodeIfPresent(String.self, forKey: .exeToken) ?? ""
-        setupScript = try container.decodeIfPresent(String.self, forKey: .setupScript)
-            ?? "echo insert setup script here"
-        environment = try container.decodeIfPresent([EnvVar].self, forKey: .environment) ?? []
-        fontName = try container.decodeIfPresent(String.self, forKey: .fontName) ?? "Menlo"
-        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
-        startCommand = try container.decodeIfPresent(String.self, forKey: .startCommand) ?? ""
-        claudeSettings = try container.decodeIfPresent(String.self, forKey: .claudeSettings)
-            ?? AppConfigData.defaultClaudeSettings
+        let defaults = AppConfigData()
+
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? container.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+
+        exeToken = value(.exeToken, defaults.exeToken)
+        setupScript = value(.setupScript, defaults.setupScript)
+        environment = value(.environment, defaults.environment)
+        fontName = value(.fontName, defaults.fontName)
+        startCommand = value(.startCommand, defaults.startCommand)
+        claudeSettings = value(.claudeSettings, defaults.claudeSettings)
+
+        // Clamped, not just defaulted: a hand-edited 0 or 400 would otherwise
+        // give a terminal that can't be read.
+        let size = value(.fontSize, defaults.fontSize)
+        fontSize = min(max(size, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
     }
 }
