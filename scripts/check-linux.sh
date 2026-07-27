@@ -22,6 +22,7 @@ PORTABLE=(
   Sources/Config/EnvVar.swift
   Sources/Config/SessionStore.swift
   Sources/Model/Bootstrap.swift
+  Sources/Model/PollBackoff.swift
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift
   Sources/Git/GitWorktree.swift

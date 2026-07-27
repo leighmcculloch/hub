@@ -55,8 +55,8 @@ private final class RemoteDiffModel: ObservableObject {
     /// what is really a connection failure.
     @Published var connectionError: String?
 
-    /// How often the file list and open diff are refreshed from the VM.
-    private static let pollInterval: Duration = .seconds(3)
+    /// How long to wait between polls; widens while the VM is unreachable.
+    private var backoff = PollBackoff()
     /// Guards against overlapping refreshes when SSH is slower than the poll.
     private var isRefreshing = false
 
@@ -76,7 +76,7 @@ private final class RemoteDiffModel: ObservableObject {
     func pollLoop() async {
         await refresh(showSpinner: true)
         while !Task.isCancelled {
-            try? await Task.sleep(for: Self.pollInterval)
+            try? await Task.sleep(for: backoff.delay)
             if Task.isCancelled { break }
             await refresh(showSpinner: false)
         }
@@ -95,10 +95,12 @@ private final class RemoteDiffModel: ObservableObject {
         let discovered: [String]
         do {
             discovered = try await RemoteGit.listRepos(destination: destination)
+            backoff.recordSuccess()
             if connectionError != nil { connectionError = nil }
         } catch {
             // Keep the last known repos on screen rather than blanking the
             // sidebar on a transient blip; the banner explains the staleness.
+            backoff.recordFailure()
             let message = (error as? RemoteGitError)?.message ?? error.localizedDescription
             if connectionError != message { connectionError = message }
             if showSpinner { loadingRepos = false }
