@@ -174,8 +174,11 @@ final class BootstrapTests: XCTestCase {
     func testScriptClonesEachRepoThroughTheProxy() {
         let script = Bootstrap.script(setupScript: "", claudeSettings: "",
                                       repos: ["owner/one", "owner/two"])
-        XCTAssertTrue(script.contains("git clone https://github.int.exe.xyz/owner/one.git"))
-        XCTAssertTrue(script.contains("git clone https://github.int.exe.xyz/owner/two.git"))
+        // Quoted, since repo names can come from the free-text owner/repo field.
+        XCTAssertTrue(script.contains(
+            "git clone " + Bootstrap.shellQuote("https://github.int.exe.xyz/owner/one.git")))
+        XCTAssertTrue(script.contains(
+            "git clone " + Bootstrap.shellQuote("https://github.int.exe.xyz/owner/two.git")))
     }
 
     /// Trust is applied after cloning, or the freshly cloned directories
@@ -231,5 +234,90 @@ final class BootstrapTests: XCTestCase {
               let text = String(data: decoded, encoding: .utf8)
         else { return XCTFail("no base64 payload in the generated command") }
         XCTAssertTrue(text.contains(setup))
+    }
+
+    // MARK: - Cloning repositories
+
+    /// A failed clone used to be swallowed by `|| true`, so the user landed in
+    /// a shell with no repo and git's error scrolled away.
+    func testAFailedCloneIsReported() throws {
+        // Asserted by running the generated script with a `git` that always
+        // fails, rather than by looking for "|| true" in the text: the tmux
+        // install line uses that deliberately, so a string check matches the
+        // wrong thing. Restoring the old behaviour makes this test print
+        // nothing, which is exactly what it checks for.
+        let script = Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: ["owner/repo"])
+        let output = try runScript(script, gitExitCode: 1)
+        XCTAssertTrue(output.contains("did not clone"), output)
+        XCTAssertTrue(output.contains("owner/repo"), output)
+    }
+
+    /// The reverse: a working clone must not produce a scary message.
+    func testASuccessfulCloneReportsNothing() throws {
+        let script = Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: ["owner/repo"])
+        XCTAssertFalse(try runScript(script, gitExitCode: 0).contains("did not clone"))
+    }
+
+    /// One bad repo must not stop the others being attempted, nor abort the
+    /// rest of the bootstrap.
+    func testEveryRepoIsAttemptedAndAllFailuresListed() throws {
+        let script = Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: ["a/one", "b/two", "c/three"])
+        let output = try runScript(script, gitExitCode: 1)
+
+        for repo in ["a/one", "b/two", "c/three"] {
+            XCTAssertTrue(output.contains(repo), "\(repo) missing from: \(output)")
+        }
+    }
+
+    /// Repo names reach the script from a free-text field that is only checked
+    /// for a slash, so they must not be able to run anything.
+    func testARepoNameCannotInjectAShellCommand() throws {
+        let marker = NSTemporaryDirectory() + "bootstrap-pwned-" + UUID().uuidString
+        let script = Bootstrap.script(
+            setupScript: "", claudeSettings: "",
+            repos: ["a/b; touch \(marker) #", "c/d$(touch \(marker))"])
+        _ = try runScript(script, gitExitCode: 1)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker),
+                       "a repo name escaped its quoting and ran a command")
+    }
+
+    func testNoCloneMachineryWhenThereAreNoRepos() {
+        let script = Bootstrap.script(setupScript: "echo hi", claudeSettings: "", repos: [])
+        XCTAssertFalse(script.contains("exe_failed_clones"))
+        XCTAssertFalse(script.contains("git clone"))
+    }
+
+    /// Runs the generated script with a stub `git` on PATH, so the reporting
+    /// logic is exercised without touching the network.
+    private func runScript(_ script: String, gitExitCode: Int32) throws -> String {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let stub = directory.appendingPathComponent("git")
+        try Data("#!/bin/sh\nexit \(gitExitCode)\n".utf8).write(to: stub)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = directory.path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+        environment["HOME"] = directory.path
+        process.environment = environment
+        process.currentDirectoryURL = directory
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
     }
 }

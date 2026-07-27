@@ -186,8 +186,33 @@ enum Bootstrap {
 
         script += setupScript
         script += "\n"
-        for repo in repos {
-            script += "git clone https://github.int.exe.xyz/\(repo).git || true\n"
+
+        // A failed clone used to be swallowed by `|| true`, leaving the user in
+        // a shell with no repo and git's error scrolled off under the setup
+        // script's output. One bad repo still must not abort the rest of the
+        // bootstrap, so failures are collected and reported together at the end.
+        //
+        // The URL is quoted: repo names reach here from the picker but also from
+        // the free-text "owner/repo" field, which is only checked for a slash.
+        if !repos.isEmpty {
+            script += "exe_failed_clones=''\n"
+            for repo in repos {
+                let url = shellQuote("https://github.int.exe.xyz/\(repo).git")
+                script += """
+                if ! git clone \(url); then
+                  exe_failed_clones="$exe_failed_clones "\(shellQuote(repo))
+                fi
+
+                """
+            }
+            script += """
+            if [ -n "$exe_failed_clones" ]; then
+              echo "" >&2
+              echo "exe: these repositories did not clone:$exe_failed_clones" >&2
+              echo "exe: check their GitHub integration on exe.dev, then clone again." >&2
+            fi
+
+            """
         }
 
         // Mark every directory in the home dir as trusted, so Claude Code
