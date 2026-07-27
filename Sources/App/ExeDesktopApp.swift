@@ -30,6 +30,22 @@ struct ExeDesktopAppMain: App {
                     .keyboardShortcut("r", modifiers: .command)
             }
 
+            // Tab switching. ⌘0 is deliberately absent: it resets the font size
+            // below, matching how terminals bind it.
+            CommandGroup(after: .windowList) {
+                Button("Next Session") { workspace.selectAdjacentSession(offset: 1) }
+                    .keyboardShortcut("]", modifiers: [.command, .shift])
+                Button("Previous Session") { workspace.selectAdjacentSession(offset: -1) }
+                    .keyboardShortcut("[", modifiers: [.command, .shift])
+                Divider()
+                ForEach(1...9, id: \.self) { number in
+                    Button(number == 9 ? "Last Session" : "Session \(number)") {
+                        workspace.selectSession(shortcut: number)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
+                }
+            }
+
             // Terminal zoom. Both ⌘+ and ⌘= increase, since ⌘+ needs shift on
             // most layouts.
             CommandGroup(after: .toolbar) {

@@ -190,6 +190,22 @@ final class Workspace: ObservableObject {
         }
     }
 
+    /// Select the tab bound to ⌘1…⌘9.
+    func selectSession(shortcut number: Int) {
+        guard let index = TabNavigation.index(forShortcut: number, count: sessions.count)
+        else { return }
+        selectedSessionID = sessions[index].id
+    }
+
+    /// Move the selection forwards or backwards through the tabs, wrapping.
+    func selectAdjacentSession(offset: Int) {
+        let current = sessions.firstIndex { $0.id == selectedSessionID }
+        guard let index = TabNavigation.index(
+            from: current, offset: offset, count: sessions.count)
+        else { return }
+        selectedSessionID = sessions[index].id
+    }
+
     func closeSelectedSession() {
         if let selected = selectedSession {
             closeSession(selected)
