@@ -26,6 +26,7 @@ PORTABLE=(
   Sources/Model/PollBackoff.swift
   Sources/Model/RepoLabel.swift
   Sources/Model/TabNavigation.swift
+  Sources/Model/TerminalOSC.swift
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift
   Sources/Git/DiffParse.swift
@@ -40,7 +41,7 @@ PORTABLE=(
 # Foundation-only file and forgetting to list it means its logic silently never
 # runs on this path — the tests would still pass, having simply not covered it.
 echo "==> checking the portable list is complete"
-apple_only='^import (AppKit|SwiftUI|WebKit|SwiftTerm|Combine)'
+apple_only='^import (AppKit|SwiftUI|WebKit|Termini|Combine)'
 missing=$(comm -23 \
   <(find Sources -name '*.swift' | while read -r f; do
       grep -qE "$apple_only" "$f" || echo "$f"

@@ -2,7 +2,9 @@ import Foundation
 import SwiftUI
 
 /// Top-level app state: the terminal sessions shown as vertical tabs, plus the
-/// exe.dev service used to provision VM-backed tabs.
+/// exe.dev service used to provision VM-backed tabs. Main-actor isolated, like
+/// the sessions it owns.
+@MainActor
 final class Workspace: ObservableObject {
     @Published var sessions: [TerminalSession] = []
     /// Persisted on change, so reopening the app lands on the tab you left.
@@ -28,10 +30,14 @@ final class Workspace: ObservableObject {
     @Published var githubUser: GitHubUser?
 
     let config = AppConfig.shared
-    let exe: ExeService
-    private let sessionStore: SessionStore
+    // Assigned only by the nonisolated init below, as `SessionProvisioner` does,
+    // so init doesn't have to cross into the main actor to store them.
+    nonisolated(unsafe) let exe: ExeService
+    nonisolated(unsafe) private let sessionStore: SessionStore
 
-    init(sessionStore: SessionStore = .shared) {
+    /// Nonisolated so the token closure below isn't inferred main-actor
+    /// isolated: `ExeClient` calls it from its request path, off the main actor.
+    nonisolated init(sessionStore: SessionStore = .shared) {
         self.sessionStore = sessionStore
         exe = ExeService(client: ExeClient(tokenProvider: { AppConfig.shared.effectiveToken }))
         // Start empty: a new tab provisions a VM, which needs the repo picker.
@@ -62,7 +68,6 @@ final class Workspace: ObservableObject {
     }
 
     /// Look up the GitHub account once, for the VM's commit identity.
-    @MainActor
     func loadGitHubUser() async {
         githubUser = await GitHubRepos.currentUser()
     }
@@ -74,7 +79,6 @@ final class Workspace: ObservableObject {
 
     /// Refresh the list of existing VMs. Deliberately does *not* connect to or
     /// select any of them.
-    @MainActor
     func loadAvailableVMs() async {
         guard !config.effectiveToken.isEmpty else { return }
         loadingVMs = true
@@ -113,7 +117,6 @@ final class Workspace: ObservableObject {
 
     /// Restore the tabs that were open when the app last quit. VMs that no
     /// longer exist are dropped; see `SessionStore.restorable`.
-    @MainActor
     func restoreSessions() {
         guard sessions.isEmpty else { return }
         let stored = sessionStore.load()
@@ -181,7 +184,6 @@ final class Workspace: ObservableObject {
 
     /// Destroy a VM that has no tab open, without connecting to it first.
     /// Irreversible — the VM's disk and anything uncommitted on it are lost.
-    @MainActor
     func deleteVM(_ vm: ExeVM) async {
         guard let name = vm.vm_name else { return }
         // Drop it from the sidebar immediately; the refresh below is the
@@ -193,7 +195,6 @@ final class Workspace: ObservableObject {
 
     /// Close the tab *and* destroy the backing VM. Irreversible — the VM's disk
     /// and anything uncommitted on it are lost.
-    @MainActor
     func deleteSession(_ session: TerminalSession) async {
         let name = session.vmName
         closeSession(session)

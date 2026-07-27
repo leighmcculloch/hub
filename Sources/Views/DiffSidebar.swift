@@ -174,7 +174,7 @@ private struct RemoteDiffView: View {
         }
         // Loads once, then auto-refreshes until the view goes away.
         .task { await model.pollLoop() }
-        .onChange(of: model.selectedRepo) { _ in
+        .onChange(of: model.selectedRepo) {
             Task { await model.refresh(showSpinner: true) }
         }
     }
@@ -706,7 +706,7 @@ private struct DiffTextView: View {
                     }
                     .padding(.bottom, 8)
                 }
-                .onChange(of: scrollTarget) { target in
+                .onChange(of: scrollTarget) { _, target in
                     guard let target,
                           let row = parsed.rows.first(where: { $0.kind == .file && $0.text == target })
                     else { return }
@@ -717,7 +717,7 @@ private struct DiffTextView: View {
         // Re-parse only when the text really changes: a poll that returns the
         // same diff must not disturb the rendered rows or the scroll position.
         .onAppear { reparse() }
-        .onChange(of: diff) { _ in reparse() }
+        .onChange(of: diff) { reparse() }
     }
 
     private var paneHeader: some View {

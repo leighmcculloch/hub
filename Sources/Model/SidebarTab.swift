@@ -4,8 +4,8 @@ import WebKit
 
 /// Owns a `WKWebView` for a browser tab in the right sidebar.
 ///
-/// The web view lives in the model (like `TerminalSession`'s terminal view) so
-/// the page survives switching between sidebar tabs instead of reloading.
+/// The web view lives in the model (like `TerminalSession`'s terminal surface)
+/// so the page survives switching between sidebar tabs instead of reloading.
 final class BrowserModel: NSObject, ObservableObject {
     let webView = WKWebView()
 

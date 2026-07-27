@@ -4,7 +4,7 @@ options:
   bundleIdPrefix: au.id.mcculloch
   createIntermediateGroups: true
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "14.0"
 
 settings:
   base:
@@ -15,9 +15,9 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
 
 packages:
-  SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm
-    from: 1.2.0
+  Termini:
+    url: https://github.com/arach/Termini.git
+    revision: 5fe5375dc7742fc436a5c03583e17c9a64afb6e2
 
 targets:
   ExeDesktopApp:
@@ -31,4 +31,4 @@ targets:
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/ExeDesktopApp.entitlements
     dependencies:
-      - package: SwiftTerm
+      - package: Termini

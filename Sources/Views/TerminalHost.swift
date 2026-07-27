@@ -1,72 +1,85 @@
 import AppKit
 import SwiftUI
+import Termini
 
-/// Hosts the terminal views. All sessions' terminal views are kept mounted so
-/// their terminal state survives tab switches; only the selected one is shown.
-///
-/// This is deliberately an `NSViewRepresentable` over a container view rather
-/// than swapping SwiftUI views, because recreating a terminal view would tear
-/// down and respawn the underlying shell.
-struct TerminalHost: NSViewRepresentable {
+/// Hosts the terminal surfaces. Every session that has been shown keeps its
+/// surface mounted so the terminal state survives tab switches; only the
+/// selected one is drawn and takes input.
+struct TerminalHost: View {
     @ObservedObject var workspace: Workspace
+    @ObservedObject private var config = AppConfig.shared
 
-    /// Breathing room so terminal text doesn't sit hard against the pane edges.
-    private static let padding: CGFloat = 8
+    /// Sessions whose surface has been created. A surface takes first responder
+    /// as it comes up, so one is mounted only once its tab has been selected —
+    /// otherwise restoring several tabs at launch would leave the keyboard on
+    /// whichever surface happened to finish last.
+    @State private var mounted: Set<TerminalSession.ID> = []
 
-    func makeNSView(context: Context) -> ContainerView {
-        let container = ContainerView()
-        container.autoresizingMask = [.width, .height]
-        // Layer-backed so the padding around the terminal can be filled with the
-        // terminal's own background colour instead of showing the window behind.
-        container.wantsLayer = true
-        return container
-    }
-
-    /// Take exactly the space offered. Without this SwiftUI consults the hosted
-    /// terminal, whose size quantises to whole character cells, and the layout
-    /// fights the sidebar dividers while they're being dragged.
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ContainerView, context: Context) -> CGSize? {
-        proposal.replacingUnspecifiedDimensions()
-    }
-
-    /// Reports no intrinsic size, so the terminal inside can't push the
-    /// surrounding layout around either.
-    final class ContainerView: NSView {
-        override var intrinsicContentSize: NSSize {
-            NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
-        }
-    }
-
-    func updateNSView(_ container: ContainerView, context: Context) {
-        // Mount any surfaces that aren't in the container yet, inset so the text
-        // has padding inside the pane.
-        let pad = Self.padding
-        for session in workspace.sessions {
-            let view = session.terminalView
-            if view.superview !== container {
-                view.removeFromSuperview()
-                view.frame = container.bounds.insetBy(dx: pad, dy: pad)
-                view.autoresizingMask = [.width, .height]
-                container.addSubview(view)
+    var body: some View {
+        ZStack {
+            ForEach(workspace.sessions) { session in
+                if mounted.contains(session.id) {
+                    let isSelected = session.id == workspace.selectedSessionID
+                    TerminiTerminalView(
+                        controller: session.controller,
+                        appearance: appearance,
+                        isRenderVisible: isSelected
+                    )
+                    .opacity(isSelected ? 1 : 0)
+                    .allowsHitTesting(isSelected)
+                }
             }
         }
-
-        // Unmount surfaces whose session was closed.
-        let liveViews = Set(workspace.sessions.map { ObjectIdentifier($0.terminalView) })
-        for subview in container.subviews where !liveViews.contains(ObjectIdentifier(subview)) {
-            subview.removeFromSuperview()
-        }
-
-        // Show only the selected surface and give it focus.
-        for session in workspace.sessions {
-            let isSelected = session.id == workspace.selectedSessionID
-            session.terminalView.isHidden = !isSelected
-            if isSelected {
-                container.window?.makeFirstResponder(session.terminalView)
-                // Match the padding to the terminal so the inset is invisible.
-                container.layer?.backgroundColor = session.terminalView
-                    .nativeBackgroundColor.cgColor
-            }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { mountSelected() }
+        .onChange(of: workspace.selectedSessionID) {
+            mountSelected()
+            // A surface that is already mounted won't focus itself.
+            workspace.selectedSession?.controller.focus()
         }
     }
+
+    private func mountSelected() {
+        guard let id = workspace.selectedSessionID else { return }
+        mounted.insert(id)
+    }
+
+    /// Only the font is set here: it's in Settings and on ⌘+/⌘-. Colours and
+    /// anything else come from ghostty's own config, which it loads itself.
+    private var appearance: TerminiTerminalAppearance {
+        TerminiTerminalAppearance(
+            fontSize: config.data.fontSize,
+            fontFamily: TerminiTerminalFontFamily(
+                name: Self.familyName(of: config.data.fontName)),
+            extraConfigFilePaths: [GhosttyPadding.path].compactMap { $0 })
+    }
+
+    /// The font picker lists font names ("SFMono-Regular"), and ghostty matches
+    /// on the family ("SF Mono").
+    private static func familyName(of fontName: String) -> String {
+        NSFont(name: fontName, size: 12)?.familyName ?? fontName
+    }
+}
+
+/// Breathing room so terminal text doesn't sit hard against the pane edges.
+///
+/// Padding has to be ghostty's rather than a SwiftUI inset around the surface:
+/// only ghostty knows the terminal's background colour, so an inset added out
+/// here would be a band of the wrong colour. libghostty has no C setter for it,
+/// so it goes in as a config file the surface loads.
+private enum GhosttyPadding {
+    static let path: String? = {
+        let contents = "window-padding-x = 8\nwindow-padding-y = 8\n"
+        let dir = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ExeDesktopApp", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("ghostty-padding.conf")
+        do {
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            return nil
+        }
+        return url.path
+    }()
 }

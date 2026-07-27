@@ -1,7 +1,8 @@
 # Exe Desktop App
 
-A native macOS app that embeds a terminal ([**SwiftTerm**](https://github.com/migueldeicaza/SwiftTerm))
-and provisions a cloud VM per tab on [**exe.dev**](https://exe.dev):
+A native macOS app that embeds a terminal (**libghostty**, via
+[**Termini**](https://github.com/arach/Termini)) and provisions a cloud VM per
+tab on [**exe.dev**](https://exe.dev):
 
 - **Vertical session tabs** down the left — one per session, click to switch,
   `⌘T` for a new one, `⌘W` to close. Resizable, and hideable with `⌘S`. On
@@ -84,19 +85,22 @@ it reattaches to the running session rather than starting over.
 ```
 ┌───────────┬──────────────────────────┬─────────────────┐
 │ Session   │                          │  Worktree Diff  │
-│ tabs      │   Active terminal         │  (git diff of   │
-│ (⌘T/⌘W)   │   (SwiftTerm)             │   the terminal's│
+│ tabs      │   Active terminal        │  (git diff of   │
+│ (⌘T/⌘W)   │   (libghostty)           │   the terminal's│
 │           │                          │   cwd)          │
 └───────────┴──────────────────────────┴─────────────────┘
 ```
 
-SwiftUI provides the window chrome and both sidebars; the terminal itself is
-SwiftTerm's `LocalProcessTerminalView`, an AppKit view that spawns a shell over a
-PTY and renders it.
+SwiftUI provides the window chrome and both sidebars; the terminal itself is a
+libghostty surface — Ghostty's terminal engine, rendered on the GPU — wrapped as
+a SwiftUI view by Termini. Each session owns a `TerminiTerminalController`, which
+is the surface's transport end: the app spawns the shell (or `ssh`) on a PTY
+under it and pumps the bytes both ways.
 
 | Area | Files |
 | --- | --- |
-| Terminal session | `Sources/Model/TerminalSession.swift` — wraps a SwiftTerm `LocalProcessTerminalView`; local shell or SSH-into-VM |
+| Terminal session | `Sources/Model/TerminalSession.swift` — a libghostty surface fed by a PTY; local shell or SSH-into-VM |
+| Terminal output | `Sources/Model/TerminalOSC.swift` — reads the title and cwd out of the terminal's byte stream |
 | Provisioning | `Sources/Model/SessionProvisioner.swift` — repo pick → integration → VM → SSH bootstrap |
 | exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create) |
 | GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
@@ -108,10 +112,11 @@ PTY and renders it.
 | App entry | `Sources/App/` — `@main` SwiftUI `App` + `AppDelegate` |
 
 **How the diff follows the terminal:** the shell reports its working directory
-via OSC 7. SwiftTerm surfaces that through its
-`hostCurrentDirectoryUpdate(source:directory:)` delegate callback, which updates
-the session's `@Published workingDirectory`; the diff sidebar then recomputes
-`git diff HEAD` for that directory whenever it changes.
+via OSC 7. libghostty renders that sequence but doesn't report it back to the
+embedding app, so `TerminalOSCScanner` reads it (and the title, OSC 0/2) off the
+PTY stream on its way to the surface and updates the session's
+`@Published workingDirectory`; the diff sidebar then recomputes `git diff HEAD`
+for that directory whenever it changes.
 
 > OSC 7 reporting requires shell integration that emits it. macOS zsh and bash
 > set up under Terminal.app already do; if the sidebar isn't tracking `cd`,
@@ -120,8 +125,9 @@ the session's `@Published workingDirectory`; the diff sidebar then recomputes
 
 ## Building
 
-SwiftTerm is pulled via Swift Package Manager — no binary frameworks to vendor.
-There are two ways to build.
+Termini is pulled via Swift Package Manager, and it fetches the prebuilt
+`GhosttyKit.xcframework` for you — nothing to vendor or build by hand. There are
+two ways to build.
 
 ### Swift CLI (fastest for dev)
 
@@ -153,7 +159,7 @@ split is why the suite runs in seconds off a Mac.
 This runs the app as a bare executable rather than a `.app` bundle, so
 `Info.plist`/entitlements aren't applied — that's fine here since the app needs
 no sandbox, and it makes itself a regular foreground app at launch. Requires the
-Xcode toolchain (`xcode-select --install`), macOS 13+.
+Xcode toolchain (`xcode-select --install`), macOS 14+.
 
 ### Xcode project
 
