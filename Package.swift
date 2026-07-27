@@ -14,6 +14,13 @@ let package = Package(
             name: "ExeDesktopApp",
             dependencies: ["SwiftTerm"],
             path: "Sources"
+        ),
+        // Covers the pure logic — names, quoting, the bootstrap script, config
+        // decoding. Needs macOS: the app target imports AppKit/SwiftUI.
+        .testTarget(
+            name: "ExeDesktopAppTests",
+            dependencies: ["ExeDesktopApp"],
+            path: "Tests/ExeDesktopAppTests"
         )
     ]
 )
