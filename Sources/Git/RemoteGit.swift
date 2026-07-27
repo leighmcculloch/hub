@@ -42,25 +42,54 @@ enum RemoteGit {
     /// numstat are concatenated with a separator rather than run as two SSH
     /// commands, so adding the counts didn't double the per-poll cost.
     static func status(destination: String, repo: String) async -> GitRepoStatus {
-        let git = "git -C \"$HOME/\(repo)\" -c core.quotePath=false"
-        let command = "\(git) status --porcelain=v1 2>/dev/null;"
-            + " echo '\(GitRepoStatus.separator)';"
-            + " \(git) diff --numstat HEAD 2>/dev/null"
-        guard let out = await run(destination: destination, remoteCommand: command) else {
+        guard let out = await run(destination: destination,
+                                  remoteCommand: statusCommand(repo: repo)) else {
             return GitRepoStatus()
         }
         return GitRepoStatus.parse(out)
     }
 
-    /// Unified diff for a single file within a repo (vs. HEAD).
+    /// `--untracked-files=all` because the default collapses a whole new
+    /// directory into a single `?? dir/` entry — one unopenable row standing in
+    /// for every file in it.
+    static func statusCommand(repo: String) -> String {
+        let git = "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo)) -c core.quotePath=false"
+        return "\(git) status --porcelain=v1 --untracked-files=all 2>/dev/null;"
+            + " echo '\(GitRepoStatus.separator)';"
+            + " \(git) diff --numstat HEAD 2>/dev/null"
+    }
+
+    /// Unified diff for a single file within a repo.
     static func fileDiff(destination: String, repo: String, file: String) async -> String {
-        let command = "git -C \"$HOME/\(repo)\" diff HEAD -- \"\(file)\" 2>/dev/null"
-        return await run(destination: destination, remoteCommand: command) ?? ""
+        await run(destination: destination,
+                  remoteCommand: fileDiffCommand(repo: repo, file: file)) ?? ""
+    }
+
+    /// An untracked file has no blob in HEAD, so `git diff HEAD` says nothing
+    /// about it — the sidebar listed the file and then showed an empty pane.
+    /// `--no-index` renders it as an addition against `/dev/null` instead.
+    ///
+    /// The choice between the two has to be "is this file untracked", which is
+    /// what `ls-files --others` answers. Asking whether it is *in the index*
+    /// instead gets deletions wrong: `git rm` takes the file out of the index,
+    /// so a staged deletion would be sent down the untracked path and diffed
+    /// against a file that is no longer on disk, producing nothing.
+    ///
+    /// The trailing `exit 0` is load-bearing: `--no-index` exits 1 whenever the
+    /// inputs differ, which is every time it produces output, and a non-zero
+    /// exit makes `run` discard it.
+    static func fileDiffCommand(repo: String, file: String) -> String {
+        let path = Bootstrap.shellQuote(file)
+        return "cd \"$HOME\" && cd \(Bootstrap.shellQuote(repo)) 2>/dev/null || exit 0;"
+            + " if [ -n \"$(git ls-files --others --exclude-standard -- \(path) 2>/dev/null)\" ];"
+            + " then git diff --no-index -- /dev/null \(path) 2>/dev/null;"
+            + " else git diff HEAD -- \(path) 2>/dev/null; fi;"
+            + " exit 0"
     }
 
     /// Full worktree diff for a repo (vs. HEAD).
     static func repoDiff(destination: String, repo: String) async -> String {
-        let command = "git -C \"$HOME/\(repo)\" diff HEAD 2>/dev/null"
+        let command = "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo)) diff HEAD 2>/dev/null"
         return await run(destination: destination, remoteCommand: command) ?? ""
     }
 
