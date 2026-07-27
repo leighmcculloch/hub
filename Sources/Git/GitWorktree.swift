@@ -10,6 +10,77 @@ struct GitFileChange: Identifiable, Hashable {
     var isUntracked: Bool { status == "??" }
 }
 
+/// Lines added/removed for one file. `nil` counts mean git reported `-`, which
+/// it does for binary files.
+struct GitLineStat: Equatable {
+    let added: Int?
+    let removed: Int?
+
+    var isBinary: Bool { added == nil && removed == nil }
+}
+
+/// One repo's changed files and their line counts, parsed from a single remote
+/// command so status and numstat cost one SSH round trip rather than two.
+struct GitRepoStatus: Equatable {
+    var changes: [GitFileChange] = []
+    /// Keyed by path. Untracked files are absent — they aren't in `git diff`.
+    var stats: [String: GitLineStat] = [:]
+
+    /// Separates the porcelain status from the numstat in the combined output.
+    static let separator = "---exe-numstat---"
+
+    /// Strips git's C-style quoting from a status path. Paths with spaces or
+    /// special characters come back as `"a b.txt"` with escapes; `--numstat`
+    /// emits them raw, so both sides have to agree for the lookup to work.
+    static func unquotePath(_ path: String) -> String {
+        guard path.count >= 2, path.hasPrefix("\""), path.hasSuffix("\"") else { return path }
+        var result = ""
+        var escaped = false
+        for character in path.dropFirst().dropLast() {
+            if escaped {
+                switch character {
+                case "n": result.append("\n")
+                case "t": result.append("\t")
+                default: result.append(character) // \" and \\ are literal
+                }
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else {
+                result.append(character)
+            }
+        }
+        return result
+    }
+
+    /// Parses `git status --porcelain=v1`, the separator, then
+    /// `git diff --numstat HEAD`.
+    static func parse(_ output: String) -> GitRepoStatus {
+        let sections = output.components(separatedBy: separator)
+        var result = GitRepoStatus()
+
+        for line in (sections.first ?? "").split(separator: "\n", omittingEmptySubsequences: true) {
+            let text = String(line)
+            guard text.count > 3 else { continue }
+            // `status` quotes paths containing spaces or specials while
+            // `--numstat` does not, so unquote here or the stat lookup misses.
+            result.changes.append(
+                GitFileChange(status: String(text.prefix(2)),
+                              path: unquotePath(String(text.dropFirst(3)))))
+        }
+
+        guard sections.count > 1 else { return result }
+        for line in sections[1].split(separator: "\n", omittingEmptySubsequences: true) {
+            // "<added>\t<removed>\t<path>", with "-" counts for binary files.
+            let fields = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+            guard fields.count == 3 else { continue }
+            result.stats[String(fields[2])] = GitLineStat(
+                added: Int(fields[0]), removed: Int(fields[1]))
+        }
+        return result
+    }
+}
+
 /// A snapshot of a git worktree: which repo, which branch, what changed, and the
 /// unified diff of all uncommitted changes.
 struct GitWorktreeState: Equatable {

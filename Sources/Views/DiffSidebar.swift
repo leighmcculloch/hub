@@ -45,6 +45,8 @@ private final class RemoteDiffModel: ObservableObject {
     /// nil == all repos.
     @Published var selectedRepo: String?
     @Published var changesByRepo: [String: [GitFileChange]] = [:]
+    /// Per-repo, per-path line counts shown beside each changed file.
+    @Published var statsByRepo: [String: [String: GitLineStat]] = [:]
     @Published var selection: SelectedFile?
     @Published var diffText: String = ""
     @Published var loadingRepos = false
@@ -92,10 +94,14 @@ private final class RemoteDiffModel: ObservableObject {
         if let selected = selectedRepo, !discovered.contains(selected) { selectedRepo = nil }
 
         var map: [String: [GitFileChange]] = [:]
+        var stats: [String: [String: GitLineStat]] = [:]
         for repo in visibleRepos {
-            map[repo] = await RemoteGit.changes(destination: destination, repo: repo)
+            let status = await RemoteGit.status(destination: destination, repo: repo)
+            map[repo] = status.changes
+            stats[repo] = status.stats
         }
         if map != changesByRepo { changesByRepo = map }
+        if stats != statsByRepo { statsByRepo = stats }
 
         // Keep the open diff live too.
         if let selection {
@@ -218,7 +224,8 @@ private struct RemoteDiffView: View {
                                 } label: {
                                     FileRow(
                                         change: change,
-                                        isSelected: model.selection == SelectedFile(repo: repo, path: change.path)
+                                        isSelected: model.selection == SelectedFile(repo: repo, path: change.path),
+                                        stat: model.statsByRepo[repo]?[change.path]
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -426,9 +433,42 @@ private func clampedListHeight(_ stored: Double, in available: CGFloat) -> CGFlo
 
 /// A changed-file row that keeps a sense of the file structure: the directory is
 /// dimmed and the filename emphasized.
+/// Compact `+N −M` for a changed file, so the list conveys size as well as
+/// which files changed.
+private struct LineStatLabel: View {
+    let stat: GitLineStat
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if stat.isBinary {
+                Text("bin")
+                    .foregroundStyle(.tertiary)
+            } else {
+                if let added = stat.added, added > 0 {
+                    Text("+\(added)").foregroundStyle(.green)
+                }
+                if let removed = stat.removed, removed > 0 {
+                    Text("−\(removed)").foregroundStyle(.red)
+                }
+            }
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .monospacedDigit()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        if stat.isBinary { return "binary file" }
+        return "\(stat.added ?? 0) added, \(stat.removed ?? 0) removed"
+    }
+}
+
 private struct FileRow: View {
     let change: GitFileChange
     let isSelected: Bool
+    /// Line counts, absent for untracked files (they aren't in `git diff`).
+    var stat: GitLineStat? = nil
 
     @State private var isHovering = false
 
@@ -442,6 +482,9 @@ private struct FileRow: View {
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer(minLength: 0)
+            if let stat {
+                LineStatLabel(stat: stat)
+            }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)

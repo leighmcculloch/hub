@@ -38,17 +38,18 @@ enum RemoteGit {
         return out.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
-    /// Changed files (porcelain status) for a home-relative repo.
-    static func changes(destination: String, repo: String) async -> [GitFileChange] {
-        let command = "git -C \"$HOME/\(repo)\" status --porcelain=v1 2>/dev/null"
-        guard let out = await run(destination: destination, remoteCommand: command) else { return [] }
-        return out
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .compactMap { line in
-                let text = String(line)
-                guard text.count > 3 else { return nil }
-                return GitFileChange(status: String(text.prefix(2)), path: String(text.dropFirst(3)))
-            }
+    /// Changed files plus their line counts, in one round trip: status and
+    /// numstat are concatenated with a separator rather than run as two SSH
+    /// commands, so adding the counts didn't double the per-poll cost.
+    static func status(destination: String, repo: String) async -> GitRepoStatus {
+        let git = "git -C \"$HOME/\(repo)\" -c core.quotePath=false"
+        let command = "\(git) status --porcelain=v1 2>/dev/null;"
+            + " echo '\(GitRepoStatus.separator)';"
+            + " \(git) diff --numstat HEAD 2>/dev/null"
+        guard let out = await run(destination: destination, remoteCommand: command) else {
+            return GitRepoStatus()
+        }
+        return GitRepoStatus.parse(out)
     }
 
     /// Unified diff for a single file within a repo (vs. HEAD).
