@@ -14,3 +14,17 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+
+  # The macOS job above is the real gate for the app. This one guards the
+  # property that lets the same tests run off a Mac at all: if an Apple-only
+  # import reaches a file the portable harness compiles, or a new
+  # Foundation-only file is added without being listed, it fails here rather
+  # than quietly going untested.
+  linux:
+    name: portable tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:5.9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Portable checks
+        run: ./scripts/check-linux.sh

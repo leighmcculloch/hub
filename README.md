@@ -131,12 +131,24 @@ swift run          # builds and launches the app
 swift build        # just compile
 ```
 
-Every push is built on a macOS runner by `.github/workflows/build.yml`.
+Every push is built and tested on a macOS runner by
+`.github/workflows/build.yml`. That job is the real gate: it's the only place
+the AppKit and SwiftUI code is compiled.
 
-On a non-Mac (Linux CI, agent sandboxes) a full build is impossible — AppKit and
-SwiftUI don't exist there. `scripts/check-linux.sh` does what can be done
-without them: syntax-parse every file, and type-check the platform-independent
-sources (exe.dev client, git, GitHub).
+On a non-Mac (Linux CI, agent sandboxes) a full build is impossible, because
+AppKit and SwiftUI don't exist there. `scripts/check-linux.sh` does what can be
+done without them:
+
+1. checks that every source importing no Apple-only framework is listed as
+   portable — so a new pure file can't be added and silently go untested;
+2. syntax-parses every file;
+3. runs the real test suite against the portable sources, by assembling a
+   scratch package from them plus the repo's actual test files. The tests it
+   runs are the committed ones, not a copy that can drift.
+
+The same workflow runs it on a Linux runner. Most of the logic lives in
+Foundation-only files precisely so it can be covered this way; the deliberate
+split is why the suite runs in seconds off a Mac.
 
 This runs the app as a bare executable rather than a `.app` bundle, so
 `Info.plist`/entitlements aren't applied — that's fine here since the app needs

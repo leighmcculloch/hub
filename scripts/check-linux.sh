@@ -34,6 +34,24 @@ PORTABLE=(
   Sources/GitHub/GitHubRepos.swift
 )
 
+# A source file that imports none of the Apple-only frameworks below could be
+# tested here, so it must be listed above. Without this check, adding a new
+# Foundation-only file and forgetting to list it means its logic silently never
+# runs on this path — the tests would still pass, having simply not covered it.
+echo "==> checking the portable list is complete"
+apple_only='^import (AppKit|SwiftUI|WebKit|SwiftTerm|Combine)'
+missing=$(comm -23 \
+  <(find Sources -name '*.swift' | while read -r f; do
+      grep -qE "$apple_only" "$f" || echo "$f"
+    done | sort) \
+  <(printf '%s\n' "${PORTABLE[@]}" | sort))
+if [ -n "$missing" ]; then
+  echo "error: these sources import no Apple-only framework but are not in PORTABLE:" >&2
+  echo "$missing" >&2
+  echo "Add them to scripts/check-linux.sh so their tests run here." >&2
+  exit 1
+fi
+
 echo "==> syntax-parsing all sources"
 swiftc -parse $(find Sources -name '*.swift')
 
