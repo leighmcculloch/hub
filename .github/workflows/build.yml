@@ -23,7 +23,10 @@ jobs:
   linux:
     name: portable tests (Linux)
     runs-on: ubuntu-latest
-    container: swift:5.9
+    # Not 5.9: the sources use `nonisolated(unsafe)`, which is 5.10+ syntax, so
+    # a 5.9 toolchain fails to even parse them. Package.swift's tools-version
+    # only fixes the manifest API, not the language accepted in sources.
+    container: swift:6.0
     steps:
       - uses: actions/checkout@v4
       - name: Portable checks
