@@ -108,31 +108,51 @@ enum GitWorktree {
         let repoRoot = URL(fileURLWithPath: toplevel)
         let branch = run(["rev-parse", "--abbrev-ref", "HEAD"], in: repoRoot)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let changes = parseStatus(run(["status", "--porcelain=v1"], in: repoRoot) ?? "")
+        // `--untracked-files=all` so a new directory lists its files instead of
+        // collapsing to one `?? dir/` row that nothing can be shown for.
+        let status = run(
+            ["-c", "core.quotePath=false", "status", "--porcelain=v1", "--untracked-files=all"],
+            in: repoRoot) ?? ""
+        // Parsed by the same routine as the remote sidebar rather than a second
+        // copy: the duplicate that used to live here had drifted, and was
+        // leaving git's quoting on paths containing spaces.
+        let changes = GitRepoStatus.parse(status + "\n" + GitRepoStatus.separator).changes
 
         // `git diff HEAD` covers both staged and unstaged changes to tracked
         // files — the full delta of the worktree against the last commit. On a
         // repo with no commits yet, fall back to the index diff.
-        let diff = run(["diff", "HEAD"], in: repoRoot)
+        let tracked = run(["diff", "HEAD"], in: repoRoot)
             ?? run(["diff"], in: repoRoot)
             ?? ""
 
-        return GitWorktreeState(repoRoot: repoRoot, branch: branch, changes: changes, diff: diff)
+        return GitWorktreeState(
+            repoRoot: repoRoot,
+            branch: branch,
+            changes: changes,
+            diff: tracked + untrackedDiff(for: changes, in: repoRoot))
     }
 
-    private static func parseStatus(_ output: String) -> [GitFileChange] {
-        output
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .compactMap { line in
-                let text = String(line)
-                guard text.count > 3 else { return nil }
-                let status = String(text.prefix(2))
-                let path = String(text.dropFirst(3))
-                return GitFileChange(status: status, path: path)
+    /// Untracked files have no blob in HEAD, so `git diff HEAD` omits them
+    /// entirely — clicking a newly created file scrolled to nothing. Diffing
+    /// each against `/dev/null` appends a normal "new file" section, which is
+    /// what the diff view already knows how to render and scroll to.
+    private static func untrackedDiff(for changes: [GitFileChange], in repoRoot: URL) -> String {
+        changes
+            .filter(\.isUntracked)
+            .compactMap {
+                // `--no-index` exits 1 whenever it finds a difference, which is
+                // every time it has anything to say.
+                run(["diff", "--no-index", "--", "/dev/null", $0.path],
+                    in: repoRoot, acceptNonZeroExit: true)
             }
+            .joined()
     }
 
-    private static func run(_ args: [String], in directory: URL) -> String? {
+    private static func run(
+        _ args: [String],
+        in directory: URL,
+        acceptNonZeroExit: Bool = false
+    ) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["git", "-C", directory.path] + args
@@ -150,7 +170,7 @@ enum GitWorktree {
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else { return nil }
+        guard acceptNonZeroExit || process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }
