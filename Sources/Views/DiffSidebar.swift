@@ -51,6 +51,9 @@ private final class RemoteDiffModel: ObservableObject {
     @Published var diffText: String = ""
     @Published var loadingRepos = false
     @Published var loadingDiff = false
+    /// Non-nil when the VM couldn't be reached, so "no repos" isn't shown for
+    /// what is really a connection failure.
+    @Published var connectionError: String?
 
     /// How often the file list and open diff are refreshed from the VM.
     private static let pollInterval: Duration = .seconds(3)
@@ -89,7 +92,18 @@ private final class RemoteDiffModel: ObservableObject {
 
         if showSpinner { loadingRepos = true }
 
-        let discovered = await RemoteGit.listRepos(destination: destination)
+        let discovered: [String]
+        do {
+            discovered = try await RemoteGit.listRepos(destination: destination)
+            if connectionError != nil { connectionError = nil }
+        } catch {
+            // Keep the last known repos on screen rather than blanking the
+            // sidebar on a transient blip; the banner explains the staleness.
+            let message = (error as? RemoteGitError)?.message ?? error.localizedDescription
+            if connectionError != message { connectionError = message }
+            if showSpinner { loadingRepos = false }
+            return
+        }
         if discovered != repos { repos = discovered }
         if let selected = selectedRepo, !discovered.contains(selected) { selectedRepo = nil }
 
@@ -141,6 +155,9 @@ private struct RemoteDiffView: View {
                 header
                 Divider()
                 repoPicker
+                if let error = model.connectionError {
+                    ConnectionErrorBanner(destination: model.destination, message: error)
+                }
                 Divider()
                 if model.repos.isEmpty || model.totalChanges == 0 {
                     emptyState
@@ -433,6 +450,37 @@ private func clampedListHeight(_ stored: Double, in available: CGFloat) -> CGFlo
 
 /// A changed-file row that keeps a sense of the file structure: the directory is
 /// dimmed and the filename emphasized.
+/// Shown when the VM can't be reached. Without this a connection failure is
+/// indistinguishable from an empty home directory.
+private struct ConnectionErrorBanner: View {
+    let destination: String
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Can't reach \(destination)")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(message)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Cannot reach \(destination). \(message)")
+    }
+}
+
 /// Compact `+N −M` for a changed file, so the list conveys size as well as
 /// which files changed.
 private struct LineStatLabel: View {
