@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Hosts the terminal views. All sessions' terminal views are kept mounted so
-/// their terminal state survives tab switches; only the selected one is shown.
+/// Hosts the terminal views. Every session's tabs are kept mounted so their
+/// terminal state survives switching; only the selected one is shown.
 ///
 /// This is deliberately an `NSViewRepresentable` over a container view rather
 /// than swapping SwiftUI views, because recreating a terminal view would tear
@@ -38,34 +38,37 @@ struct TerminalHost: NSViewRepresentable {
     }
 
     func updateNSView(_ container: ContainerView, context: Context) {
+        // Every tab of every session, not just the visible one: a mounted view
+        // is laid out even while hidden, so a tab is already the right size
+        // when it is switched to, instead of reflowing its pane's output.
+        let tabs = workspace.sessions.flatMap(\.tabs)
+
         // Mount any surfaces that aren't in the container yet, inset so the text
         // has padding inside the pane.
         let pad = Self.padding
-        for session in workspace.sessions {
-            let view = session.terminalView
-            if view.superview !== container {
-                view.removeFromSuperview()
-                view.frame = container.bounds.insetBy(dx: pad, dy: pad)
-                view.autoresizingMask = [.width, .height]
-                container.addSubview(view)
-            }
+        for tab in tabs where tab.view.superview !== container {
+            let view = tab.view
+            view.removeFromSuperview()
+            view.frame = container.bounds.insetBy(dx: pad, dy: pad)
+            view.autoresizingMask = [.width, .height]
+            container.addSubview(view)
         }
 
-        // Unmount surfaces whose session was closed.
-        let liveViews = Set(workspace.sessions.map { ObjectIdentifier($0.terminalView) })
+        // Unmount surfaces whose session was closed or whose pane went away.
+        let liveViews = Set(tabs.map { ObjectIdentifier($0.view) })
         for subview in container.subviews where !liveViews.contains(ObjectIdentifier(subview)) {
             subview.removeFromSuperview()
         }
 
-        // Show only the selected surface and give it focus.
-        for session in workspace.sessions {
-            let isSelected = session.id == workspace.selectedSessionID
-            session.terminalView.isHidden = !isSelected
-            if isSelected {
-                container.window?.makeFirstResponder(session.terminalView)
+        // Show only the selected session's selected tab, and give it focus.
+        let visible = workspace.selectedSession?.selectedTab
+        for tab in tabs {
+            let isVisible = tab.id == visible?.id
+            tab.view.isHidden = !isVisible
+            if isVisible {
+                container.window?.makeFirstResponder(tab.view)
                 // Match the padding to the terminal so the inset is invisible.
-                container.layer?.backgroundColor = session.terminalView
-                    .nativeBackgroundColor.cgColor
+                container.layer?.backgroundColor = tab.view.nativeBackgroundColor.cgColor
             }
         }
     }

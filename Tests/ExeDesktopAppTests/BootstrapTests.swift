@@ -139,34 +139,67 @@ final class BootstrapTests: XCTestCase {
         XCTAssertEqual(Bootstrap.shellQuote("it's"), #"'it'\''s'"#)
     }
 
-    // MARK: - Login shell command
+    // MARK: - Control-mode command
 
-    /// Every session goes through tmux so a dropped connection reattaches.
-    func testLoginShellAlwaysUsesTmux() {
-        let command = Bootstrap.loginShellCommand(startCommand: "")
-        XCTAssertTrue(command.contains("tmux new-session -A -s \(Bootstrap.tmuxSession)"))
+    /// The app is the tmux client, so tmux must be started in control mode and
+    /// attach to (or create) the one session.
+    func testTmuxIsStartedInControlMode() {
+        let command = Bootstrap.controlModeCommand(startCommand: "")
+        XCTAssertTrue(command.hasPrefix(
+            "exec tmux -C new-session -A -s \(Bootstrap.tmuxSession) "), command)
     }
 
-    /// The start command must reach tmux as a single argument, or a multi-word
-    /// command would be parsed as tmux's own flags.
-    func testStartCommandIsPassedAsOneQuotedArgument() {
-        let command = Bootstrap.loginShellCommand(startCommand: "claude --resume")
-        XCTAssertTrue(command.contains(Bootstrap.shellQuote("claude --resume")))
+    /// The first window's command must reach tmux as a single argument, or its
+    /// words would be parsed as tmux's own flags.
+    func testFirstWindowCommandIsOneQuotedArgument() {
+        let command = Bootstrap.controlModeCommand(startCommand: "claude --resume")
+        let argument = command.replacingOccurrences(
+            of: "exec tmux -C new-session -A -s \(Bootstrap.tmuxSession) ", with: "")
+        XCTAssertTrue(argument.hasPrefix("'") && argument.hasSuffix("'"), argument)
+        // Unquoting it once must give back a runnable shell command, with the
+        // start command intact inside it.
+        let unquoted = argument.dropFirst().dropLast()
+            .replacingOccurrences(of: #"'\''"#, with: "'")
+        XCTAssertTrue(unquoted.contains("claude --resume"), unquoted)
     }
 
-    /// Detaching (or a missing tmux) must leave a usable shell, not end the
-    /// session.
-    func testLoginShellFallsBackToAShell() {
+    /// The bootstrap script now runs *inside* tmux — it can't run before, where
+    /// its output would land in the middle of the control protocol.
+    func testBootstrapScriptRunsAsTheFirstWindow() {
+        let command = Bootstrap.command(setupScript: "", claudeSettings: "", repos: [])
+        guard let tmux = command.range(of: "exec tmux -C")
+        else { return XCTFail("expected tmux in control mode: \(command)") }
+        XCTAssertTrue(command[tmux.upperBound...].contains(Bootstrap.scriptPath),
+                      "tmux must run the script: \(command)")
+        // It is written and made executable before tmux starts, but never run
+        // there — its output would land in the middle of the control protocol.
+        XCTAssertFalse(command[..<tmux.lowerBound].contains("&& \(Bootstrap.scriptPath)"),
+                       String(command[..<tmux.lowerBound]))
+    }
+
+    /// tmux can no longer install itself from inside the bootstrap script, so
+    /// the remote command has to do it before starting tmux.
+    func testTmuxIsInstalledBeforeItIsStarted() {
+        let command = Bootstrap.command(setupScript: "", claudeSettings: "", repos: [])
+        guard let install = command.range(of: "install -y -qq tmux"),
+              let start = command.range(of: "exec tmux -C")
+        else { return XCTFail("expected a tmux install step: \(command)") }
+        XCTAssertTrue(install.upperBound < start.lowerBound)
+        XCTAssertFalse(Bootstrap.script(setupScript: "", claudeSettings: "", repos: [])
+            .contains("install -y -qq tmux"))
+    }
+
+    /// The start command exiting must leave a prompt in the tab, not close it.
+    func testTheFirstWindowEndsInAShell() {
         for start in ["", "claude"] {
-            XCTAssertTrue(Bootstrap.loginShellCommand(startCommand: start)
-                .hasSuffix("exec ${SHELL:-bash} -l'") ||
-                Bootstrap.loginShellCommand(startCommand: start) == "exec ${SHELL:-bash} -l")
+            XCTAssertTrue(Bootstrap.controlModeCommand(startCommand: start)
+                .contains("exec ${SHELL:-bash} -l"))
         }
     }
 
     func testBlankStartCommandIsTreatedAsNone() {
-        XCTAssertEqual(Bootstrap.loginShellCommand(startCommand: "   "),
-                       Bootstrap.loginShellCommand(startCommand: ""))
+        XCTAssertEqual(Bootstrap.controlModeCommand(startCommand: "   "),
+                       Bootstrap.controlModeCommand(startCommand: ""))
     }
 
     // MARK: - Bootstrap script
@@ -242,10 +275,9 @@ final class BootstrapTests: XCTestCase {
     /// a shell with no repo and git's error scrolled away.
     func testAFailedCloneIsReported() throws {
         // Asserted by running the generated script with a `git` that always
-        // fails, rather than by looking for "|| true" in the text: the tmux
-        // install line uses that deliberately, so a string check matches the
-        // wrong thing. Restoring the old behaviour makes this test print
-        // nothing, which is exactly what it checks for.
+        // fails, rather than by looking for "|| true" in the text: restoring
+        // the old behaviour makes this test print nothing, which is exactly
+        // what it checks for.
         let script = Bootstrap.script(
             setupScript: "", claudeSettings: "", repos: ["owner/repo"])
         let output = try runScript(script, gitExitCode: 1)

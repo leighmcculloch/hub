@@ -78,10 +78,14 @@ enum Bootstrap {
         return "\(trimmed)-\(suffix)"
     }
 
-    /// Build the remote command run over SSH: decode and execute a bootstrap
-    /// script (write `~/.claude/settings.json`, run the setup script, then a
-    /// `git clone` per repo through the exe.dev GitHub proxy), then drop into an
-    /// interactive login shell.
+    /// Build the remote command run over SSH: write the bootstrap script, make
+    /// sure tmux is installed, and hand the connection to tmux in control mode.
+    ///
+    /// Nothing may print to stdout before tmux does: stdout *is* the control
+    /// protocol the app parses. So, unlike an interactive attach, the bootstrap
+    /// script isn't run here — it is the command tmux runs in the session's
+    /// first window, where its output belongs to a pane and the user can watch
+    /// it in a tab.
     ///
     /// The script is base64-encoded so arbitrary multi-line user content (setup
     /// script, settings JSON) survives the trip through SSH argument and
@@ -97,35 +101,49 @@ enum Bootstrap {
                                   claudeSettings: claudeSettings,
                                   repos: repos,
                                   gitIdentity: gitIdentity).utf8).base64EncodedString()
-        return "printf %s '\(encoded)' | base64 -d > /tmp/exe-bootstrap.sh"
-            + " && chmod +x /tmp/exe-bootstrap.sh && /tmp/exe-bootstrap.sh;"
-            + " \(loginShellCommand(startCommand: startCommand))"
+        return "printf %s '\(encoded)' | base64 -d > \(scriptPath)"
+            + " && chmod +x \(scriptPath);"
+            + " \(installTmux)"
+            + " \(controlModeCommand(startCommand: startCommand))"
     }
 
     /// tmux session every VM session attaches to.
     static let tmuxSession = "exe"
 
-    /// The final command that hands the TTY to the user.
+    static let scriptPath = "/tmp/exe-bootstrap.sh"
+
+    /// tmux has to exist before it can be started, and it can no longer be
+    /// installed by the bootstrap script — that now runs *inside* tmux. Output
+    /// is discarded rather than printed because stdout is the control protocol;
+    /// a failure surfaces as tmux failing to start, with ssh's stderr shown on
+    /// the session.
+    static let installTmux = "command -v tmux >/dev/null 2>&1 ||"
+        + " { sudo apt-get update -qq >/dev/null 2>&1 &&"
+        + " sudo apt-get install -y -qq tmux >/dev/null 2>&1; } || true;"
+
+    /// Attach the app to tmux as a control-mode client (`-C`), so each pane's
+    /// output arrives as a stream the app renders into its own terminal tab.
     ///
-    /// Always goes through tmux: `-A` attaches to the existing session or
-    /// creates one, so a dropped SSH connection reattaches with work intact
-    /// rather than losing it. The trailing command runs *only* when the session
-    /// is created, never on attach, so reconnecting never stacks a second copy.
+    /// `-A` attaches to the existing session or creates one, so a dropped
+    /// connection reattaches with work intact. The trailing command runs *only*
+    /// when the session is created, never on attach, so reconnecting never
+    /// stacks a second copy of it.
     ///
-    /// It runs under a login shell so the user's profile — and therefore `PATH`
-    /// — is loaded first, and is followed by another login shell so detaching
-    /// (or tmux being unavailable) leaves you at a prompt instead of closing the
-    /// session. `${SHELL}` stays inside single quotes so it is expanded
-    /// remotely, not here.
-    static func loginShellCommand(startCommand: String) -> String {
+    /// That command is the session's first window: the bootstrap script, then
+    /// the configured start command, then a login shell — so the window stays
+    /// open with a prompt once the start command exits, instead of closing the
+    /// tab. It runs under a login shell so the user's profile, and therefore
+    /// `PATH`, is loaded first. `${SHELL}` stays inside single quotes so it is
+    /// expanded remotely, not here.
+    static func controlModeCommand(startCommand: String) -> String {
         let trimmed = startCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        var tmux = "tmux new-session -A -s \(tmuxSession)"
+        var window = "\(scriptPath);"
         if !trimmed.isEmpty {
-            // Quoted as one argument so multi-word commands aren't parsed as
-            // tmux's own flags.
-            tmux += " " + shellQuote(trimmed)
+            window += " \(trimmed);"
         }
-        return "exec ${SHELL:-bash} -l -c " + shellQuote("\(tmux); exec ${SHELL:-bash} -l")
+        window += " exec ${SHELL:-bash} -l"
+        let firstWindow = "${SHELL:-bash} -l -c " + shellQuote(window)
+        return "exec tmux -C new-session -A -s \(tmuxSession) \(shellQuote(firstWindow))"
     }
 
     /// Single-quote for a POSIX shell, escaping embedded single quotes.
@@ -174,15 +192,6 @@ enum Bootstrap {
 
             """
         }
-
-        // Every session runs inside tmux, so make sure it's there. Failure is
-        // tolerated: the login-shell fallback still gives a usable terminal.
-        script += """
-        if ! command -v tmux >/dev/null 2>&1; then
-          sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq tmux >/dev/null 2>&1 || true
-        fi
-
-        """
 
         script += setupScript
         script += "\n"

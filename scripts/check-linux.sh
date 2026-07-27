@@ -33,6 +33,8 @@ PORTABLE=(
   Sources/Git/RemoteGit.swift
   Sources/GitHub/GitHubRepos.swift
   Sources/GitHub/RepoReference.swift
+  Sources/Tmux/TmuxClient.swift
+  Sources/Tmux/TmuxControl.swift
 )
 
 # A source file that imports none of the Apple-only frameworks below could be
