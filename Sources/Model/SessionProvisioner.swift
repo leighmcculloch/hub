@@ -22,6 +22,12 @@ final class SessionProvisioner: ObservableObject {
     @Published var existingVMs: [ExeVM] = []
     @Published var loadingVMs = false
 
+    // Model picker state. The catalogue is remote, so it can be slow or absent;
+    // "Custom" is always offered regardless.
+    @Published var models: [GatewayModel] = []
+    @Published var modelsError: String?
+    @Published var loadingModels = false
+
     // Repo picker state.
     @Published var repos: [GitHubRepo] = []
     @Published var reposError: String?
@@ -72,6 +78,21 @@ final class SessionProvisioner: ObservableObject {
             || RepoReference.normalize(manualRepo) != nil
     }
 
+    /// The catalogue plus whatever is already selected: a model that has since
+    /// left the catalogue would otherwise leave the picker showing nothing.
+    var modelOptions: [GatewayModel] {
+        guard let selected = config.data.model, !models.contains(selected) else { return models }
+        return models + [selected]
+    }
+
+    func loadModels() async {
+        loadingModels = true
+        let result = await LLMGateway.list()
+        models = result.models
+        modelsError = result.error
+        loadingModels = false
+    }
+
     func loadRepos() async {
         loadingRepos = true
         reposError = nil
@@ -116,8 +137,20 @@ final class SessionProvisioner: ObservableObject {
             // lookup just means no names to avoid.
             let taken = Set((try? await exe.listVMs())?.compactMap(\.vm_name) ?? [])
             let vmName = Bootstrap.uniqueVMName(from: sessionName, existing: taken)
-            let environment = config.data.environment.filter { !$0.key.isEmpty }
+            let sessionEnvironment = config.data.selectedEnvironment
+            let model = config.data.model
+            // The model's variables come last so they win: pointing Claude Code
+            // at the gateway means blanking the token the environment sets.
+            let environment = EnvVar.merged([
+                config.data.globalEnvironment,
+                sessionEnvironment.environment,
+                model.map { LLMGateway.environment(for: $0) } ?? [],
+            ])
             var creating = "Creating VM \(vmName) (tags: \(tags.joined(separator: ", "))"
+            creating += "; environment: \(sessionEnvironment.name)"
+            if let model {
+                creating += "; model: \(model.label)"
+            }
             if !environment.isEmpty {
                 creating += "; env: \(environment.map(\.key).joined(separator: ", "))"
             }
@@ -127,11 +160,12 @@ final class SessionProvisioner: ObservableObject {
 
             log("VM ready at \(destination). Opening SSH session…")
             let bootstrap = Bootstrap.command(
-                setupScript: config.data.setupScript,
+                setupScript: sessionEnvironment.setupScript,
                 claudeSettings: config.data.claudeSettings,
                 repos: chosen,
-                startCommand: config.data.startCommand,
-                gitIdentity: gitIdentity
+                startCommand: sessionEnvironment.startCommand,
+                gitIdentity: gitIdentity,
+                model: model
             )
             phase = .done
 

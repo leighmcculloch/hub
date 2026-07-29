@@ -21,9 +21,10 @@ tab on [**exe.dev**](https://exe.dev):
 
 Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
 
-1. Name the session (the name becomes the VM name) and pick GitHub repos —
-   selected repos hoist to the top of the list. Existing VMs are listed too, so
-   a closed session can be reopened and continued.
+1. Name the session (the name becomes the VM name), choose an **environment**
+   and a **model**, and pick GitHub repos — selected repos hoist to the top of
+   the list. Existing VMs are listed too, so a closed session can be reopened
+   and continued.
 2. For each chosen repo the app checks for an existing exe.dev GitHub
    integration (`integrations list`) and, if missing, creates one that acts as
    you, attached to a per-repo tag
@@ -31,9 +32,10 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
 3. It creates a VM tagged for those integrations (`new --tag <slug> --json`), so
    the integrations bind to the VM.
 4. The terminal SSHes into the VM and runs, as its first commands: seed
-   `~/.claude/settings.json` (only if absent), your configurable **setup
-   script**, then `git clone` for each repo through the exe.dev GitHub proxy
-   (`https://github.int.exe.xyz/<owner>/<repo>.git`).
+   `~/.claude/settings.json` (only if absent), write the Codex and pi
+   configuration for the chosen model (only when one is chosen), run the
+   environment's **setup script**, then `git clone` for each repo through the
+   exe.dev GitHub proxy (`https://github.int.exe.xyz/<owner>/<repo>.git`).
 5. Every directory in the VM's home dir is marked trusted in `~/.claude.json`
    (merged, never clobbering existing state), so Claude Code doesn't prompt
    per folder.
@@ -53,17 +55,37 @@ it reattaches to the running session rather than starting over.
   environment variable. It is stored in `~/Library/Application Support/ExeDesktopApp/config.json`,
   never in this repo. The token needs these command permissions (`cmds`):
   `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`.
-- **Setup script** — edited in Settings, persisted in the same config file.
-  Defaults to `echo insert setup script here`.
-- **Start command** — what runs *inside* tmux, and only when the tmux session is
-  first created (e.g. `claude`). Reconnecting attaches instead of starting a
-  second copy. Empty means a plain shell. tmux itself is not configurable; the
-  bootstrap installs it if the VM lacks it, and falls back to a login shell if
-  that fails.
-- **Environment variables** — a `KEY=VALUE` list in Settings, passed to
-  `new --env` so they're set on the VM host itself and visible to every process
-  on it, not just the terminal's shell. Values with spaces or quotes are shell-
-  quoted for you.
+- **Environments** — a named bundle of a **setup script**, a **start command**,
+  and its own environment variables, edited in Settings and chosen per session.
+  Ships with two: *Claude Code* (starts `claude`, with a blank
+  `CLAUDE_CODE_OAUTH_TOKEN` row to paste a token into) and *Codex* (starts
+  `codex`). Add your own for anything else. The setup script runs over SSH as
+  the first command on the VM, before the repos are cloned. The start command
+  runs *inside* tmux, and only when the tmux session is first created —
+  reconnecting attaches instead of starting a second copy, and empty means a
+  plain shell. tmux itself is not configurable; the bootstrap installs it if
+  the VM lacks it, and falls back to a login shell if that fails.
+- **Global environment variables** — a `KEY=VALUE` list in Settings that
+  applies whichever environment a session runs. Both lists are passed to
+  `new --env`, so they're set on the VM host itself and visible to every
+  process on it, not just the terminal's shell. Values with spaces or quotes
+  are shell-quoted for you.
+- **Model** — chosen per session from the exe.dev LLM gateway's catalogue
+  (`https://exe.dev/llm-gateway-models.json`), or *Custom*, the default, which
+  configures nothing and leaves the VM's own setup alone. Choosing a gateway
+  model configures three harnesses and nothing else:
+  - **Claude Code** — `ANTHROPIC_API_KEY=implicit`,
+    `CLAUDE_CODE_OAUTH_TOKEN=` (blanked, so it can't win over the gateway),
+    `ANTHROPIC_BASE_URL=https://llm.int.exe.xyz` and `ANTHROPIC_MODEL=<id>`,
+    set on the VM host.
+  - **Codex** — `~/.codex/config.toml` with the gateway as the `exe-llm` model
+    provider, and the model selected. A `config.toml` that doesn't mention
+    `exe-llm` is treated as yours and left alone, with a note on the terminal.
+  - **pi** — the `exe-llm` provider merged into `~/.pi/agent/models.json`
+    (Anthropic models over `anthropic-messages`, everything else over
+    `openai-completions`), and `defaultProvider`/`defaultModel` merged into
+    `~/.pi/agent/settings.json`. Both merges leave your other providers and
+    settings in place.
 - **Terminal font** — family and size in Settings; `⌘+`/`⌘-` adjust size and
   `⌘0` resets.
 - **Claude settings** — the `~/.claude/settings.json` seeded onto each VM
@@ -104,8 +126,9 @@ under it and pumps the bytes both ways.
 | Provisioning | `Sources/Model/SessionProvisioner.swift` — repo pick → integration → VM → SSH bootstrap |
 | exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create) |
 | GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
-| Config | `Sources/Config/` — persisted token, font, env vars, scripts (`AppConfig`, `EnvVar`) |
+| Config | `Sources/Config/` — persisted token, font, env vars, environments (`AppConfig`, `EnvVar`, `SessionEnvironment`) |
 | Bootstrap | `Sources/Model/Bootstrap.swift` — VM naming + the remote bootstrap script |
+| Model gateway | `Sources/Model/LLMGateway.swift` — the exe.dev model catalogue and the harness configuration a choice turns into |
 | App state | `Sources/Model/Workspace.swift` — sessions + exe.dev service |
 | Git diff | `Sources/Git/GitWorktree.swift` (local) and `Sources/Git/RemoteGit.swift` (git over SSH on the VM) |
 | UI | `Sources/Views/` — sidebars, terminal host, resize handle, new-session sheet, settings |

@@ -81,11 +81,11 @@ final class ConfigTests: XCTestCase {
     /// Synthesized Decodable ignores default values, so a config written by an
     /// older build would otherwise fail to decode and silently reset.
     func testConfigDecodesWhenNewerKeysAreAbsent() throws {
-        let json = #"{"exeToken":"t","setupScript":"echo hi"}"#
+        let json = #"{"exeToken":"t","environments":[{"name":"Mine","setupScript":"echo hi"}]}"#
         let data = try JSONDecoder().decode(AppConfigData.self, from: Data(json.utf8))
         XCTAssertEqual(data.exeToken, "t")
-        XCTAssertEqual(data.setupScript, "echo hi")
-        XCTAssertTrue(data.environment.isEmpty)
+        XCTAssertEqual(data.selectedEnvironment.setupScript, "echo hi")
+        XCTAssertTrue(data.globalEnvironment.isEmpty)
         XCTAssertEqual(data.fontName, "Menlo")
         XCTAssertFalse(data.claudeSettings.isEmpty)
     }
@@ -93,7 +93,7 @@ final class ConfigTests: XCTestCase {
     func testConfigDecodesFromAnEmptyObject() throws {
         let data = try JSONDecoder().decode(AppConfigData.self, from: Data("{}".utf8))
         XCTAssertEqual(data.exeToken, "")
-        XCTAssertEqual(data.startCommand, "")
+        XCTAssertEqual(data.selectedEnvironment.startCommand, "claude")
     }
 
     /// The seeded Claude settings are shipped as text, so a typo would only

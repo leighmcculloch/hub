@@ -91,12 +91,14 @@ enum Bootstrap {
         claudeSettings: String,
         repos: [String],
         startCommand: String = "",
-        gitIdentity: (name: String, email: String)? = nil
+        gitIdentity: (name: String, email: String)? = nil,
+        model: GatewayModel? = nil
     ) -> String {
         let encoded = Data(script(setupScript: setupScript,
                                   claudeSettings: claudeSettings,
                                   repos: repos,
-                                  gitIdentity: gitIdentity).utf8).base64EncodedString()
+                                  gitIdentity: gitIdentity,
+                                  model: model).utf8).base64EncodedString()
         return "printf %s '\(encoded)' | base64 -d > /tmp/exe-bootstrap.sh"
             + " && chmod +x /tmp/exe-bootstrap.sh && /tmp/exe-bootstrap.sh;"
             + " \(loginShellCommand(startCommand: startCommand))"
@@ -138,7 +140,8 @@ enum Bootstrap {
         setupScript: String,
         claudeSettings: String,
         repos: [String],
-        gitIdentity: (name: String, email: String)? = nil
+        gitIdentity: (name: String, email: String)? = nil,
+        model: GatewayModel? = nil
     ) -> String {
         var script = "#!/usr/bin/env bash\n"
 
@@ -173,6 +176,13 @@ enum Bootstrap {
             fi
 
             """
+        }
+
+        // Point the harnesses that read a config file at the chosen gateway
+        // model. Claude Code needs nothing here: it reads the ANTHROPIC_*
+        // variables set on the VM host when it was created.
+        if let model {
+            script += harnessConfig(for: model)
         }
 
         // Every session runs inside tmux, so make sure it's there. Failure is
@@ -233,6 +243,65 @@ enum Bootstrap {
         // ~/.claude.json rather than replacing real state.
         script += trustHomeDirectories
         return script
+    }
+
+    /// Configure Codex and pi for `model`.
+    ///
+    /// This runs again on every reconnect, so it has to be safe to repeat and
+    /// safe to change your mind about. pi's two files are merged key by key,
+    /// leaving other providers and settings alone. Codex has no mergeable
+    /// format here, so its file is only rewritten when it's absent or already
+    /// names our provider — a `config.toml` someone wrote themselves is worth
+    /// more than a model selection, and saying so beats overwriting it quietly.
+    static func harnessConfig(for model: GatewayModel) -> String {
+        let codex = Data(LLMGateway.codexConfig(for: model).utf8).base64EncodedString()
+        let provider = Data(LLMGateway.piProvider(for: model).utf8).base64EncodedString()
+        let settings = Data(LLMGateway.piSettings(for: model).utf8).base64EncodedString()
+        let marker = LLMGateway.providerName
+
+        return """
+
+        mkdir -p "$HOME/.codex"
+        if [ ! -e "$HOME/.codex/config.toml" ] || grep -q \(shellQuote(marker)) "$HOME/.codex/config.toml"; then
+          printf %s '\(codex)' | base64 -d > "$HOME/.codex/config.toml"
+        else
+          echo "exe: left ~/.codex/config.toml alone — it doesn't use the \(marker) provider." >&2
+        fi
+
+        python3 - <<'PYEOF' || true
+        import base64, json, os
+
+        directory = os.path.expanduser("~/.pi/agent")
+        os.makedirs(directory, exist_ok=True)
+
+        def load(path):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+            return data if isinstance(data, dict) else {}
+
+        def save(path, data):
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+
+        models_path = os.path.join(directory, "models.json")
+        models = load(models_path)
+        providers = models.get("providers")
+        if not isinstance(providers, dict):
+            providers = {}
+        providers.update(json.loads(base64.b64decode("\(provider)")))
+        models["providers"] = providers
+        save(models_path, models)
+
+        settings_path = os.path.join(directory, "settings.json")
+        settings = load(settings_path)
+        settings.update(json.loads(base64.b64decode("\(settings)")))
+        save(settings_path, settings)
+        PYEOF
+
+        """
     }
 
     /// Merges `hasTrustDialogAccepted` for `$HOME` and each visible directory

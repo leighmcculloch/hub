@@ -18,12 +18,12 @@ final class AppConfigDataTests: XCTestCase {
         let defaults = AppConfigData()
 
         XCTAssertEqual(decoded.exeToken, defaults.exeToken)
-        XCTAssertEqual(decoded.setupScript, defaults.setupScript)
+        XCTAssertEqual(decoded.environments, defaults.environments)
         XCTAssertEqual(decoded.fontName, defaults.fontName)
         XCTAssertEqual(decoded.fontSize, defaults.fontSize)
-        XCTAssertEqual(decoded.startCommand, defaults.startCommand)
         XCTAssertEqual(decoded.claudeSettings, defaults.claudeSettings)
-        XCTAssertTrue(decoded.environment.isEmpty)
+        XCTAssertNil(decoded.model)
+        XCTAssertTrue(decoded.globalEnvironment.isEmpty)
     }
 
     /// A file from an older build has the keys it knew about and none of the
@@ -33,7 +33,7 @@ final class AppConfigDataTests: XCTestCase {
 
         XCTAssertEqual(decoded.exeToken, "secret")
         XCTAssertEqual(decoded.fontName, "Fira Code")
-        XCTAssertEqual(decoded.startCommand, AppConfigData().startCommand)
+        XCTAssertEqual(decoded.environments, AppConfigData().environments)
         XCTAssertEqual(decoded.claudeSettings, AppConfigData.defaultClaudeSettings)
     }
 
@@ -61,14 +61,14 @@ final class AppConfigDataTests: XCTestCase {
 
     func testSeveralWrongTypedValuesEachFallBackIndependently() throws {
         let decoded = try decode("""
-        {"exeToken":42,"setupScript":["a"],"fontName":true,"startCommand":"claude"}
+        {"exeToken":42,"environments":["a"],"fontName":true,"claudeSettings":"{}"}
         """)
         let defaults = AppConfigData()
 
         XCTAssertEqual(decoded.exeToken, defaults.exeToken)
-        XCTAssertEqual(decoded.setupScript, defaults.setupScript)
+        XCTAssertEqual(decoded.environments, defaults.environments)
         XCTAssertEqual(decoded.fontName, defaults.fontName)
-        XCTAssertEqual(decoded.startCommand, "claude", "the one good value was lost")
+        XCTAssertEqual(decoded.claudeSettings, "{}", "the one good value was lost")
     }
 
     func testAnExplicitNullFallsBackToTheDefault() throws {
@@ -77,8 +77,8 @@ final class AppConfigDataTests: XCTestCase {
 
     /// A malformed environment list shouldn't take the rest of the config down.
     func testAMalformedEnvironmentListFallsBackToEmpty() throws {
-        let decoded = try decode(#"{"environment":"not a list","exeToken":"secret"}"#)
-        XCTAssertTrue(decoded.environment.isEmpty)
+        let decoded = try decode(#"{"globalEnvironment":"not a list","exeToken":"secret"}"#)
+        XCTAssertTrue(decoded.globalEnvironment.isEmpty)
         XCTAssertEqual(decoded.exeToken, "secret")
     }
 
@@ -114,21 +114,25 @@ final class AppConfigDataTests: XCTestCase {
     func testConfigurationSurvivesAnEncodeDecodeCycle() throws {
         var original = AppConfigData()
         original.exeToken = "token"
-        original.setupScript = "brew install ripgrep"
-        original.startCommand = "claude"
+        original.environments = [SessionEnvironment(
+            name: "Pi", setupScript: "brew install ripgrep", startCommand: "pi",
+            environment: [EnvVar(key: "PI", value: "1")])]
+        original.selectedEnvironmentID = original.environments[0].id
+        original.model = GatewayModel(provider: "anthropic", model: "claude-opus-5")
         original.fontName = "SF Mono"
         original.fontSize = 15
-        original.environment = [EnvVar(key: "FOO", value: "bar")]
+        original.globalEnvironment = [EnvVar(key: "FOO", value: "bar")]
 
         let decoded = try JSONDecoder().decode(
             AppConfigData.self, from: JSONEncoder().encode(original))
 
         XCTAssertEqual(decoded.exeToken, original.exeToken)
-        XCTAssertEqual(decoded.setupScript, original.setupScript)
-        XCTAssertEqual(decoded.startCommand, original.startCommand)
+        XCTAssertEqual(decoded.environments, original.environments)
+        XCTAssertEqual(decoded.selectedEnvironmentID, original.selectedEnvironmentID)
+        XCTAssertEqual(decoded.model, original.model)
         XCTAssertEqual(decoded.fontName, original.fontName)
         XCTAssertEqual(decoded.fontSize, original.fontSize)
-        XCTAssertEqual(decoded.environment, original.environment)
+        XCTAssertEqual(decoded.globalEnvironment, original.globalEnvironment)
     }
 
     /// The default settings blob is shipped to every VM, so it has to be valid
@@ -145,23 +149,135 @@ final class AppConfigDataTests: XCTestCase {
     /// The config file can be hand-edited with bare key/value pairs, so a
     /// missing id has to be generated rather than failing the decode.
     func testAnEnvironmentEntryWithoutAnIDStillDecodes() throws {
-        let decoded = try decode(#"{"environment":[{"key":"FOO","value":"bar"}]}"#)
-        XCTAssertEqual(decoded.environment.map(\.key), ["FOO"])
-        XCTAssertEqual(decoded.environment.map(\.value), ["bar"])
+        let decoded = try decode(#"{"globalEnvironment":[{"key":"FOO","value":"bar"}]}"#)
+        XCTAssertEqual(decoded.globalEnvironment.map(\.key), ["FOO"])
+        XCTAssertEqual(decoded.globalEnvironment.map(\.value), ["bar"])
     }
 
     /// Generated ids must be distinct, or SwiftUI collapses the rows in the
     /// settings editor.
     func testGeneratedEnvironmentIDsAreDistinct() throws {
         let decoded = try decode("""
-        {"environment":[{"key":"A","value":"1"},{"key":"B","value":"2"}]}
+        {"globalEnvironment":[{"key":"A","value":"1"},{"key":"B","value":"2"}]}
         """)
-        XCTAssertEqual(Set(decoded.environment.map(\.id)).count, 2)
+        XCTAssertEqual(Set(decoded.globalEnvironment.map(\.id)).count, 2)
     }
 
     func testAnEnvironmentEntryKeepsAnExplicitID() throws {
         let id = UUID()
-        let decoded = try decode(#"{"environment":[{"id":"\#(id.uuidString)","key":"K"}]}"#)
-        XCTAssertEqual(decoded.environment.first?.id, id)
+        let decoded = try decode(#"{"globalEnvironment":[{"id":"\#(id.uuidString)","key":"K"}]}"#)
+        XCTAssertEqual(decoded.globalEnvironment.first?.id, id)
+    }
+
+    // MARK: - Environments
+
+    /// The two harnesses the app ships knowing about. The Claude Code one
+    /// carries the token variable so there's a row to paste into.
+    func testTheDefaultEnvironmentsAreClaudeCodeAndCodex() {
+        let environments = AppConfigData().environments
+        XCTAssertEqual(environments.map(\.name), ["Claude Code", "Codex"])
+        XCTAssertEqual(environments[0].startCommand, "claude")
+        XCTAssertEqual(environments[0].environment.map(\.key), ["CLAUDE_CODE_OAUTH_TOKEN"])
+        XCTAssertEqual(environments[0].environment.map(\.value), [""])
+        XCTAssertEqual(environments[1].startCommand, "codex")
+        XCTAssertTrue(environments[1].environment.isEmpty)
+    }
+
+    func testTheSelectedEnvironmentIsTheOneChosen() throws {
+        var config = AppConfigData()
+        config.selectedEnvironmentID = config.environments[1].id
+        XCTAssertEqual(config.selectedEnvironment.name, "Codex")
+    }
+
+    /// Nothing chosen, or a choice that has since been deleted: either way a
+    /// session still has to have something to run.
+    func testAMissingSelectionFallsBackToTheFirstEnvironment() {
+        var config = AppConfigData()
+        XCTAssertEqual(config.selectedEnvironment.name, "Claude Code")
+        config.selectedEnvironmentID = UUID()
+        XCTAssertEqual(config.selectedEnvironment.name, "Claude Code")
+    }
+
+    /// An empty list would leave the settings editor with nothing to edit and
+    /// no way back.
+    func testAnEmptyEnvironmentListFallsBackToTheDefaults() throws {
+        XCTAssertEqual(try decode(#"{"environments":[]}"#).environments,
+                       AppConfigData().environments)
+    }
+
+    /// Default ids are fixed, so a file that records only the selection still
+    /// points at the same environment on the next launch.
+    func testASelectionOfADefaultEnvironmentSurvivesWithoutTheList() throws {
+        let id = AppConfigData().environments[1].id
+        let decoded = try decode(#"{"selectedEnvironmentID":"\#(id.uuidString)"}"#)
+        XCTAssertEqual(decoded.selectedEnvironment.name, "Codex")
+    }
+
+    func testAnEnvironmentDecodesWithoutEveryField() throws {
+        let decoded = try decode(#"{"environments":[{"name":"Bare"}]}"#)
+        XCTAssertEqual(decoded.environments.map(\.name), ["Bare"])
+        XCTAssertEqual(decoded.environments[0].startCommand, "")
+        XCTAssertEqual(decoded.environments[0].setupScript, "")
+    }
+
+    // MARK: - Upgrading from the single setup script
+
+    /// The setup script someone wrote before environments existed has to come
+    /// with them, or an upgrade silently drops it.
+    func testALegacySetupScriptBecomesTheFirstEnvironment() throws {
+        let decoded = try decode("""
+        {"setupScript":"apt install ripgrep","startCommand":"claude --resume"}
+        """)
+
+        XCTAssertEqual(decoded.environments.count, AppConfigData().environments.count)
+        XCTAssertEqual(decoded.environments[0].setupScript, "apt install ripgrep")
+        XCTAssertEqual(decoded.environments[0].startCommand, "claude --resume")
+        XCTAssertEqual(decoded.selectedEnvironment.id, decoded.environments[0].id)
+    }
+
+    /// Once environments are in the file they are the truth; a stale legacy key
+    /// left behind by hand-editing must not overwrite them.
+    func testALegacySetupScriptIsIgnoredOnceEnvironmentsExist() throws {
+        let decoded = try decode("""
+        {"setupScript":"old","environments":[{"name":"Mine","setupScript":"new"}]}
+        """)
+        XCTAssertEqual(decoded.environments.map(\.setupScript), ["new"])
+    }
+
+    /// The global variables were called `environment` before the per-environment
+    /// lists forced the clearer name.
+    func testLegacyEnvironmentVariablesBecomeTheGlobalOnes() throws {
+        let decoded = try decode(#"{"environment":[{"key":"FOO","value":"bar"}]}"#)
+        XCTAssertEqual(decoded.globalEnvironment.map(\.key), ["FOO"])
+    }
+
+    func testTheNewVariablesKeyWinsOverTheLegacyOne() throws {
+        let decoded = try decode("""
+        {"environment":[{"key":"OLD"}],"globalEnvironment":[{"key":"NEW"}]}
+        """)
+        XCTAssertEqual(decoded.globalEnvironment.map(\.key), ["NEW"])
+    }
+
+    // MARK: - Model selection
+
+    /// Nil is "Custom": nothing is configured and the VM's own setup stands.
+    func testNoModelIsSelectedByDefault() throws {
+        XCTAssertNil(AppConfigData().model)
+        XCTAssertNil(try decode("{}").model)
+    }
+
+    func testASelectedModelRoundTrips() throws {
+        let decoded = try decode("""
+        {"model":{"provider":"fireworks","model":"accounts/fireworks/models/glm-5p2"}}
+        """)
+        XCTAssertEqual(decoded.model?.provider, "fireworks")
+        XCTAssertEqual(decoded.model?.model, "accounts/fireworks/models/glm-5p2")
+    }
+
+    /// A half-written model entry shouldn't cost the rest of the file.
+    func testAMalformedModelFallsBackToCustom() throws {
+        let decoded = try decode(#"{"model":{"provider":"anthropic"},"exeToken":"secret"}"#)
+        XCTAssertNil(decoded.model)
+        XCTAssertEqual(decoded.exeToken, "secret")
     }
 }

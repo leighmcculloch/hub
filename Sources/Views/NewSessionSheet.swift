@@ -4,6 +4,9 @@ import SwiftUI
 /// open an SSH tab that runs the setup script and clones the repos.
 struct NewSessionSheet: View {
     @ObservedObject var workspace: Workspace
+    /// Observed directly: the environment and model pickers write straight into
+    /// the config, and the sheet has to redraw when they do.
+    @ObservedObject private var config = AppConfig.shared
     @Environment(\.dismiss) private var dismiss
     @StateObject private var provisioner: SessionProvisioner
 
@@ -41,6 +44,7 @@ struct NewSessionSheet: View {
         }
         .frame(width: 580, height: 640)
         .task {
+            await provisioner.loadModels()
             await provisioner.loadRepos()
             await provisioner.loadExistingVMs()
         }
@@ -93,6 +97,12 @@ struct NewSessionSheet: View {
             }
             .padding(.horizontal, 14)
 
+            HStack(alignment: .top, spacing: 12) {
+                environmentPicker
+                modelPicker
+            }
+            .padding(.horizontal, 14)
+
             if workspace.config.effectiveToken.isEmpty {
                 tokenWarning
                     .padding(.horizontal, 14)
@@ -110,6 +120,73 @@ struct NewSessionSheet: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
         }
+    }
+
+    /// Which setup script, start command, and variables the VM gets. Edited in
+    /// Settings; picked here because it's a per-session choice.
+    private var environmentPicker: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionLabel("Environment")
+            Picker("Environment", selection: environmentSelection) {
+                ForEach(config.data.environments) { environment in
+                    Text(environment.name.isEmpty ? "Untitled" : environment.name)
+                        .tag(Optional(environment.id))
+                }
+            }
+            .labelsHidden()
+            Text(startCommandCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var environmentSelection: Binding<UUID?> {
+        Binding(
+            get: { config.data.selectedEnvironment.id },
+            set: { config.data.selectedEnvironmentID = $0 }
+        )
+    }
+
+    private var startCommandCaption: String {
+        let command = config.data.selectedEnvironment.startCommand
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return command.isEmpty ? "Starts a plain shell." : "Starts: \(command)"
+    }
+
+    /// Which model the VM's harnesses are pointed at. "Custom" configures
+    /// nothing, leaving whatever the VM already has — including whatever the
+    /// environment's own variables set up.
+    private var modelPicker: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionLabel("Model")
+            Picker("Model", selection: $config.data.model) {
+                Section("Custom") {
+                    Text("Custom — leave the VM's own setup").tag(GatewayModel?.none)
+                }
+                Section("exe.dev LLM Gateway") {
+                    ForEach(provisioner.modelOptions) { model in
+                        Text(model.label).tag(GatewayModel?.some(model))
+                    }
+                }
+            }
+            .labelsHidden()
+            Text(modelCaption)
+                .font(.caption)
+                .foregroundStyle(provisioner.modelsError == nil ? Color.secondary : Color.orange)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Says which tools the choice reaches, since nothing else on the VM is
+    /// touched by it.
+    private var modelCaption: String {
+        if let error = provisioner.modelsError { return error }
+        if provisioner.loadingModels { return "Loading models…" }
+        return "Configures Claude Code, Codex and pi only."
     }
 
     /// Section title plus a running summary of the selection, so the count and

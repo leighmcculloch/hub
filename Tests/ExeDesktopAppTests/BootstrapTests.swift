@@ -251,6 +251,100 @@ final class BootstrapTests: XCTestCase {
         XCTAssertTrue(text.contains(setup))
     }
 
+    // MARK: - Model configuration
+
+    /// Claude Code is configured by variables set on the VM host, so the script
+    /// only has the two harnesses that read a file.
+    func testAGatewayModelConfiguresCodexAndPi() throws {
+        let script = Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [],
+            model: GatewayModel(provider: "openai", model: "gpt-5.5"))
+
+        XCTAssertTrue(script.contains("$HOME/.codex/config.toml"))
+        XCTAssertTrue(script.contains("~/.pi/agent"))
+    }
+
+    func testNoModelMeansNoHarnessConfiguration() {
+        let script = Bootstrap.script(setupScript: "", claudeSettings: "", repos: [])
+        XCTAssertFalse(script.contains(".codex"))
+        XCTAssertFalse(script.contains(".pi/agent"))
+    }
+
+    /// Run for real: the generated shell has to produce files the harnesses can
+    /// actually read, which reading the script text can't tell you.
+    func testTheGeneratedConfigFilesAreWritten() throws {
+        let model = GatewayModel(provider: "anthropic", model: "claude-opus-5")
+        let home = try runInFreshHome(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [], model: model))
+
+        XCTAssertEqual(try text(at: home + "/.codex/config.toml"),
+                       LLMGateway.codexConfig(for: model))
+
+        let models = try json(at: home + "/.pi/agent/models.json")
+        let providers = try XCTUnwrap(models["providers"] as? [String: Any])
+        XCTAssertNotNil(providers["exe-llm"])
+
+        let settings = try json(at: home + "/.pi/agent/settings.json")
+        XCTAssertEqual(settings["defaultModel"] as? String, "claude-opus-5")
+    }
+
+    /// Reconnecting reruns the bootstrap, and the model can change between
+    /// runs, so a second pass has to land on the second choice.
+    func testChangingTheModelRewritesTheConfiguration() throws {
+        let home = try runInFreshHome(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [],
+            model: GatewayModel(provider: "openai", model: "gpt-5.5")))
+        _ = try runScript(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [],
+            model: GatewayModel(provider: "openai", model: "gpt-5.6-sol")),
+            gitExitCode: 0, home: home)
+
+        XCTAssertTrue(try text(at: home + "/.codex/config.toml").contains("gpt-5.6-sol"))
+        XCTAssertEqual(try json(at: home + "/.pi/agent/settings.json")["defaultModel"] as? String,
+                       "gpt-5.6-sol")
+    }
+
+    /// pi's files hold more than our provider, so they're merged rather than
+    /// replaced.
+    func testPiConfigurationKeepsWhatWasAlreadyThere() throws {
+        let home = try makeHome()
+        try FileManager.default.createDirectory(
+            atPath: home + "/.pi/agent", withIntermediateDirectories: true)
+        try Data(#"{"providers":{"ollama":{"baseUrl":"http://localhost:11434/v1"}}}"#.utf8)
+            .write(to: URL(fileURLWithPath: home + "/.pi/agent/models.json"))
+        try Data(#"{"theme":"dark"}"#.utf8)
+            .write(to: URL(fileURLWithPath: home + "/.pi/agent/settings.json"))
+
+        _ = try runScript(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [],
+            model: GatewayModel(provider: "openai", model: "gpt-5.5")),
+            gitExitCode: 0, home: home)
+
+        let providers = try XCTUnwrap(
+            try json(at: home + "/.pi/agent/models.json")["providers"] as? [String: Any])
+        XCTAssertNotNil(providers["ollama"], "an unrelated provider was dropped")
+        XCTAssertNotNil(providers["exe-llm"])
+        XCTAssertEqual(try json(at: home + "/.pi/agent/settings.json")["theme"] as? String, "dark")
+    }
+
+    /// A Codex config the user wrote themselves is worth more than a model
+    /// selection: it's left alone, and the run says so rather than going quiet.
+    func testAForeignCodexConfigIsLeftAlone() throws {
+        let home = try makeHome()
+        try FileManager.default.createDirectory(
+            atPath: home + "/.codex", withIntermediateDirectories: true)
+        let existing = "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+        try Data(existing.utf8).write(to: URL(fileURLWithPath: home + "/.codex/config.toml"))
+
+        let output = try runScript(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [],
+            model: GatewayModel(provider: "anthropic", model: "claude-opus-5")),
+            gitExitCode: 0, home: home)
+
+        XCTAssertEqual(try text(at: home + "/.codex/config.toml"), existing)
+        XCTAssertTrue(output.contains("left ~/.codex/config.toml alone"), output)
+    }
+
     // MARK: - Cloning repositories
 
     /// A failed clone used to be swallowed by `|| true`, so the user landed in
@@ -306,13 +400,47 @@ final class BootstrapTests: XCTestCase {
         XCTAssertFalse(script.contains("git clone"))
     }
 
-    /// Runs the generated script with a stub `git` on PATH, so the reporting
-    /// logic is exercised without touching the network.
-    private func runScript(_ script: String, gitExitCode: Int32) throws -> String {
+    // MARK: - Running the script
+
+    /// Temp directories used as `$HOME`, removed once the test has read what
+    /// the script wrote into them.
+    private var scratchDirectories: [String] = []
+
+    override func tearDownWithError() throws {
+        for directory in scratchDirectories {
+            try? FileManager.default.removeItem(atPath: directory)
+        }
+        scratchDirectories = []
+    }
+
+    private func makeHome() throws -> String {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        scratchDirectories.append(directory.path)
+        return directory.path
+    }
+
+    /// Run `script` in an empty home and hand back the home, for inspection.
+    private func runInFreshHome(_ script: String) throws -> String {
+        let home = try makeHome()
+        _ = try runScript(script, gitExitCode: 0, home: home)
+        return home
+    }
+
+    private func text(at path: String) throws -> String {
+        try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
+    }
+
+    private func json(at path: String) throws -> [String: Any] {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    /// Runs the generated script with a stub `git` on PATH, so the reporting
+    /// logic is exercised without touching the network.
+    private func runScript(_ script: String, gitExitCode: Int32, home: String? = nil) throws -> String {
+        let directory = URL(fileURLWithPath: try home ?? makeHome(), isDirectory: true)
 
         let stub = directory.appendingPathComponent("git")
         try Data("#!/bin/sh\nexit \(gitExitCode)\n".utf8).write(to: stub)

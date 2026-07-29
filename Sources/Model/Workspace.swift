@@ -106,12 +106,14 @@ final class Workspace: ObservableObject {
     /// The bootstrap run when connecting to an already-provisioned VM. Repos
     /// are already cloned, so it only re-applies the idempotent setup steps.
     private func reconnectBootstrap() -> String {
-        Bootstrap.command(
-            setupScript: config.data.setupScript,
+        let environment = config.data.selectedEnvironment
+        return Bootstrap.command(
+            setupScript: environment.setupScript,
             claudeSettings: config.data.claudeSettings,
             repos: [],
-            startCommand: config.data.startCommand,
-            gitIdentity: gitIdentity
+            startCommand: environment.startCommand,
+            gitIdentity: gitIdentity,
+            model: config.data.model
         )
     }
 

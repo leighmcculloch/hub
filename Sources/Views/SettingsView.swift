@@ -2,9 +2,10 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// Settings: exe.dev credentials, terminal appearance, environment variables,
-/// the per-session setup script, and the Claude settings seeded onto each VM.
-/// All are persisted to the JSON config in Application Support.
+/// Settings: exe.dev credentials, terminal appearance, the environments a
+/// session can be run in, global environment variables, and the Claude settings
+/// seeded onto each VM. All are persisted to the JSON config in Application
+/// Support.
 ///
 /// Split across tabs rather than one long form: it's the macOS Settings
 /// convention, and it keeps the window short enough to fit on any display even
@@ -24,10 +25,10 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             terminal
                 .tabItem { Label("Terminal", systemImage: "terminal") }
-            environment
-                .tabItem { Label("Environment", systemImage: "list.bullet.rectangle") }
-            setupScript
-                .tabItem { Label("Setup", systemImage: "wrench.and.screwdriver") }
+            environments
+                .tabItem { Label("Environments", systemImage: "wrench.and.screwdriver") }
+            globalVariables
+                .tabItem { Label("Variables", systemImage: "list.bullet.rectangle") }
             claudeSettings
                 .tabItem { Label("Claude", systemImage: "sparkles") }
         }
@@ -50,11 +51,6 @@ struct SettingsView: View {
                         status(ok: false, "No token configured — creating a VM will fail.")
                     }
                 }
-            }
-
-            Section("Start command") {
-                TextField("Start command", text: $config.data.startCommand, prompt: Text("e.g. claude"))
-                caption("Every session runs inside a tmux session named \"\(Bootstrap.tmuxSession)\", so a dropped connection reattaches with your work intact. This command runs inside it, and only when the session is first created — reconnecting attaches instead of starting a second copy. Leave empty for a plain shell.")
             }
         }
         .formStyle(.grouped)
@@ -91,80 +87,160 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    // MARK: - Environment
+    // MARK: - Environments
 
-    private var environment: some View {
+    /// One environment at a time, chosen from the picker at the top. A list
+    /// beside a form would halve the width available to the setup script, and
+    /// these are edited one at a time anyway.
+    private var environments: some View {
         Form {
-            Section("Environment variables") {
-                caption("Set on the host when each VM is created, so every process on the VM sees them.")
-
-                if config.data.environment.isEmpty {
-                    Text("No variables set.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 8)
-                } else {
-                    // Column headings label the two same-looking fields. The
-                    // fields deliberately carry no placeholder, which would
-                    // repeat these labels.
-                    HStack(spacing: 6) {
-                        Text("Key").frame(width: 140, alignment: .leading)
-                        Text("Value").frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.trailing, 24)
-
-                    ForEach($config.data.environment) { $variable in
-                        HStack(spacing: 6) {
-                            TextField("", text: $variable.key)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 12, design: .monospaced))
-                                .frame(width: 140)
-                                .accessibilityLabel("Key")
-                            TextField("", text: $variable.value)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(size: 12, design: .monospaced))
-                                .accessibilityLabel("Value")
-                            Button {
-                                config.data.environment.removeAll { $0.id == variable.id }
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                            .help("Remove \(variable.key.isEmpty ? "this variable" : variable.key)")
+            Section {
+                HStack(spacing: 6) {
+                    Picker("Environment", selection: environmentSelection) {
+                        ForEach(config.data.environments) { environment in
+                            Text(environmentName(environment)).tag(Optional(environment.id))
                         }
                     }
+                    Button {
+                        let added = SessionEnvironment(name: "New Environment")
+                        config.data.environments.append(added)
+                        config.data.selectedEnvironmentID = added.id
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .help("Add an environment")
+                    Button(role: .destructive) {
+                        removeSelectedEnvironment()
+                    } label: {
+                        Image(systemName: "minus")
+                    }
+                    .help("Remove this environment")
+                    // The last one can't go: a session has to run something.
+                    .disabled(config.data.environments.count <= 1)
+                }
+                caption("New sessions use the environment selected here; it can also be changed on the New Session sheet.")
+            }
+
+            if let index = selectedEnvironmentIndex {
+                Section("Name") {
+                    TextField("Name", text: $config.data.environments[index].name)
+                        .labelsHidden()
                 }
 
-                HStack {
-                    Button {
-                        config.data.environment.append(EnvVar())
-                    } label: {
-                        Label("Add Variable", systemImage: "plus")
-                    }
-                    Spacer()
-                    // Nameless rows are dropped when the VM is created; say so
-                    // rather than letting them look active.
-                    if config.data.environment.contains(where: { $0.key.isEmpty }) {
-                        status(ok: false, "Rows without a name are ignored.")
-                    }
+                Section("Start command") {
+                    TextField("Start command",
+                              text: $config.data.environments[index].startCommand,
+                              prompt: Text("e.g. claude"))
+                        .labelsHidden()
+                    caption("Every session runs inside a tmux session named \"\(Bootstrap.tmuxSession)\", so a dropped connection reattaches with your work intact. This command runs inside it, and only when the session is first created — reconnecting attaches instead of starting a second copy. Leave empty for a plain shell.")
+                }
+
+                Section("Environment variables") {
+                    caption("Set on the host alongside the global variables when a VM using this environment is created.")
+                    variableEditor($config.data.environments[index].environment)
+                }
+
+                Section("Setup script") {
+                    caption("Runs over SSH as the first command on each new VM, before the repos are cloned.")
+                    editor(text: $config.data.environments[index].setupScript)
+                        .frame(height: 140)
                 }
             }
         }
         .formStyle(.grouped)
     }
 
-    // MARK: - Setup script
+    /// Nil selections and ids left over from a deleted environment both resolve
+    /// to the one actually in use, so the picker is never blank.
+    private var environmentSelection: Binding<UUID?> {
+        Binding(
+            get: { config.data.selectedEnvironment.id },
+            set: { config.data.selectedEnvironmentID = $0 }
+        )
+    }
 
-    private var setupScript: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Setup script").font(.headline)
-            caption("Runs over SSH as the first command on each new VM, before the repos are cloned.")
-            editor(text: $config.data.setupScript)
+    private var selectedEnvironmentIndex: Int? {
+        config.data.environments.firstIndex { $0.id == config.data.selectedEnvironment.id }
+    }
+
+    private func environmentName(_ environment: SessionEnvironment) -> String {
+        environment.name.isEmpty ? "Untitled" : environment.name
+    }
+
+    private func removeSelectedEnvironment() {
+        guard config.data.environments.count > 1, let index = selectedEnvironmentIndex else { return }
+        config.data.environments.remove(at: index)
+        config.data.selectedEnvironmentID = config.data.environments.first?.id
+    }
+
+    // MARK: - Global variables
+
+    private var globalVariables: some View {
+        Form {
+            Section("Global environment variables") {
+                caption("Set on the host when each VM is created, whichever environment it uses, so every process on the VM sees them.")
+                variableEditor($config.data.globalEnvironment)
+            }
         }
-        .padding(16)
+        .formStyle(.grouped)
+    }
+
+    /// The key/value rows, shared by the global list and each environment's.
+    @ViewBuilder
+    private func variableEditor(_ variables: Binding<[EnvVar]>) -> some View {
+        if variables.wrappedValue.isEmpty {
+            Text("No variables set.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 8)
+        } else {
+            // Column headings label the two same-looking fields. The fields
+            // deliberately carry no placeholder, which would repeat these
+            // labels.
+            HStack(spacing: 6) {
+                Text("Key").frame(width: 140, alignment: .leading)
+                Text("Value").frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.trailing, 24)
+
+            ForEach(variables) { $variable in
+                HStack(spacing: 6) {
+                    TextField("", text: $variable.key)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: 140)
+                        .accessibilityLabel("Key")
+                    TextField("", text: $variable.value)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                        .accessibilityLabel("Value")
+                    Button {
+                        variables.wrappedValue.removeAll { $0.id == variable.id }
+                    } label: {
+                        Image(systemName: "minus.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Remove \(variable.key.isEmpty ? "this variable" : variable.key)")
+                }
+            }
+        }
+
+        HStack {
+            Button {
+                variables.wrappedValue.append(EnvVar())
+            } label: {
+                Label("Add Variable", systemImage: "plus")
+            }
+            Spacer()
+            // Nameless rows are dropped when the VM is created; say so rather
+            // than letting them look active.
+            if variables.wrappedValue.contains(where: { $0.key.isEmpty }) {
+                status(ok: false, "Rows without a name are ignored.")
+            }
+        }
     }
 
     // MARK: - Claude settings
