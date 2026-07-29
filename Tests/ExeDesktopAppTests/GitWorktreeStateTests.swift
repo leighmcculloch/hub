@@ -194,6 +194,65 @@ final class GitWorktreeStateTests: XCTestCase {
         XCTAssertFalse(paths.contains { $0.contains("=>") || $0.contains("{") }, "\(paths)")
     }
 
+    // MARK: - Log
+
+    /// The fixture's default branch is whatever `git init` chose, so it is
+    /// renamed to a known one — the log's whole job is to stop at that branch.
+    private func branchAhead() throws {
+        try git("git branch -M master && git checkout -qb feature")
+        try write("first.txt", "one\n")
+        try git("git add first.txt && git commit -qm 'first on the branch'")
+        try write("second.txt", "two\n")
+        try git("git add second.txt && git commit -qm 'second on the branch'")
+    }
+
+    func testTheLogStopsAtTheDefaultBranch() throws {
+        try branchAhead()
+        let log = try XCTUnwrap(GitWorktree.state(for: repo)).log
+
+        XCTAssertEqual(log.base, "master")
+        XCTAssertEqual(log.commits.map(\.subject),
+                       ["second on the branch", "first on the branch"],
+                       "newest first, and the default branch's own commits excluded")
+    }
+
+    func testTheDefaultBranchItselfHasNoCommitsAhead() throws {
+        try git("git branch -M master")
+        let log = try XCTUnwrap(GitWorktree.state(for: repo)).log
+
+        XCTAssertEqual(log.base, "master")
+        XCTAssertTrue(log.commits.isEmpty, "\(log.commits.map(\.subject))")
+    }
+
+    /// With no `main` or `master` to stop at, the whole history is the log.
+    func testWithoutADefaultBranchTheWholeHistoryIsListed() throws {
+        try git("git branch -M some-other-name")
+        let log = try XCTUnwrap(GitWorktree.state(for: repo)).log
+
+        XCTAssertEqual(log.base, "")
+        XCTAssertEqual(log.commits.map(\.subject), ["init"])
+    }
+
+    func testARangeDiffCoversEveryCommitInIt() throws {
+        try branchAhead()
+        let log = try XCTUnwrap(GitWorktree.state(for: repo)).log
+        let diff = GitWorktree.rangeDiff(
+            in: repo, from: log.exclusiveBase(forOldest: 1), to: log.commits[0].sha)
+
+        XCTAssertTrue(diff.contains("+one"), diff)
+        XCTAssertTrue(diff.contains("+two"), diff)
+    }
+
+    func testASingleCommitDiffExcludesTheOneBeforeIt() throws {
+        try branchAhead()
+        let log = try XCTUnwrap(GitWorktree.state(for: repo)).log
+        let diff = GitWorktree.rangeDiff(
+            in: repo, from: log.exclusiveBase(forOldest: 0), to: log.commits[0].sha)
+
+        XCTAssertTrue(diff.contains("+two"), diff)
+        XCTAssertFalse(diff.contains("+one"), "the earlier commit leaked into the range:\n\(diff)")
+    }
+
     // MARK: - Harness
 
     private static let git: String? = ["/usr/bin/git", "/opt/homebrew/bin/git", "/bin/git"]

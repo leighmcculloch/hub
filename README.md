@@ -14,8 +14,12 @@ tab on [**exe.dev**](https://exe.dev):
   in the VM's home directory (plus any git worktrees under each repo's
   `.claude/worktrees`), lets you pick one (or view all), browse changed
   files, and see each file's diff — run over SSH. For a local shell it follows
-  the shell's cwd. It auto-refreshes every 3s (including the open diff), so
-  edits appear without clicking anything. Resizable, and hideable with `⌘R`.
+  the shell's cwd. Below the file list is **the git log for each folder shown**:
+  the commits that branch has beyond its default branch, newest first. Click one
+  to read its diff, shift-click a second to diff the whole run together, or take
+  the **All N commits** row to diff the branch against `origin/main`. It
+  auto-refreshes every 3s (including the open diff), so edits appear without
+  clicking anything. Resizable, and hideable with `⌘R`.
 
 ## exe.dev VM per tab
 
@@ -106,10 +110,11 @@ it reattaches to the running session rather than starting over.
 
 ```
 ┌───────────┬──────────────────────────┬─────────────────┐
-│ Session   │                          │  Worktree Diff  │
-│ tabs      │   Active terminal        │  (git diff of   │
-│ (⌘T/⌘W)   │   (libghostty)           │   the terminal's│
-│           │                          │   cwd)          │
+│ Session   │                          │  Changed files  │
+│ tabs      │   Active terminal        ├─────────────────┤
+│ (⌘T/⌘W)   │   (libghostty)           │  Commit log     │
+│           │                          ├─────────────────┤
+│           │                          │  Diff           │
 └───────────┴──────────────────────────┴─────────────────┘
 ```
 
@@ -131,6 +136,7 @@ under it and pumps the bytes both ways.
 | Model gateway | `Sources/Model/LLMGateway.swift` — the exe.dev model catalogue and the harness configuration a choice turns into |
 | App state | `Sources/Model/Workspace.swift` — sessions + exe.dev service |
 | Git diff | `Sources/Git/GitWorktree.swift` (local) and `Sources/Git/RemoteGit.swift` (git over SSH on the VM) |
+| Git log | `Sources/Git/GitLog.swift` — commits ahead of the default branch; `Sources/Model/DiffTarget.swift` — what a click or shift-click selects |
 | UI | `Sources/Views/` — sidebars, terminal host, resize handle, new-session sheet, settings |
 | App entry | `Sources/App/` — `@main` SwiftUI `App` + `AppDelegate` |
 

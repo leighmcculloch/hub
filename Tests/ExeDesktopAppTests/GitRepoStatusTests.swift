@@ -74,4 +74,52 @@ final class GitRepoStatusTests: XCTestCase {
         XCTAssertEqual(parsed.stats.count, 1)
         XCTAssertEqual(parsed.stats["a"], GitLineStat(added: 1, removed: 2))
     }
+
+    // MARK: - The log half
+
+    private func output(status: String, numstat: String, base: String, log: String) -> String {
+        "\(status)\n\(GitRepoStatus.separator)\n\(numstat)\n"
+            + "\(GitRepoStatus.logSeparator)\n\(base)\n\(log)"
+    }
+
+    private func commit(_ sha: String, _ subject: String) -> String {
+        [sha, subject, "Ada", "2 days ago"].joined(separator: "\u{1f}")
+    }
+
+    func testParsesTheLogAndItsBase() {
+        let parsed = GitRepoStatus.parse(output(
+            status: " M a.swift",
+            numstat: "1\t0\ta.swift",
+            base: "origin/main",
+            log: [commit("a1b2c3d", "second"), commit("e4f5a6b", "first")].joined(separator: "\n")))
+
+        XCTAssertEqual(parsed.changes.count, 1)
+        XCTAssertEqual(parsed.log.base, "origin/main")
+        XCTAssertEqual(parsed.log.commits.map(\.subject), ["second", "first"])
+    }
+
+    /// No default branch resolved: the base line is legitimately blank, and it
+    /// must not be mistaken for the first commit.
+    func testAnEmptyBaseLineIsNotReadAsACommit() {
+        let parsed = GitRepoStatus.parse(output(
+            status: "", numstat: "", base: "", log: commit("a1b2c3d", "only")))
+
+        XCTAssertEqual(parsed.log.base, "")
+        XCTAssertEqual(parsed.log.commits.map(\.sha), ["a1b2c3d"])
+    }
+
+    /// A branch level with its default branch has a base but no commits.
+    func testABranchWithNoCommitsAheadStillReportsItsBase() {
+        let parsed = GitRepoStatus.parse(output(status: "", numstat: "", base: "master", log: ""))
+        XCTAssertEqual(parsed.log.base, "master")
+        XCTAssertTrue(parsed.log.commits.isEmpty)
+    }
+
+    /// The local worktree path reuses this parser for status alone, so output
+    /// that stops before the log separator must still parse.
+    func testOutputWithoutALogSectionParses() {
+        let parsed = GitRepoStatus.parse(output(status: " M a.swift", numstat: "1\t0\ta.swift"))
+        XCTAssertEqual(parsed.changes.count, 1)
+        XCTAssertEqual(parsed.log, GitLog())
+    }
 }

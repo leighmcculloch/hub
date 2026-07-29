@@ -23,6 +23,7 @@ PORTABLE=(
   Sources/Config/SessionEnvironment.swift
   Sources/Config/SessionStore.swift
   Sources/Model/Bootstrap.swift
+  Sources/Model/DiffTarget.swift
   Sources/Model/LLMGateway.swift
   Sources/Model/MessageText.swift
   Sources/Model/PollBackoff.swift
@@ -32,6 +33,7 @@ PORTABLE=(
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift
   Sources/Git/DiffParse.swift
+  Sources/Git/GitLog.swift
   Sources/Git/GitWorktree.swift
   Sources/Git/RemoteGit.swift
   Sources/GitHub/GitHubRepos.swift

@@ -215,6 +215,129 @@ final class FileDiffCommandTests: XCTestCase {
         XCTAssertEqual(byPath["staged.txt"]?.isUntracked, false)
     }
 
+    // MARK: - The log half of the status command
+
+    /// The fixture's default branch is whatever `git init` chose, so it is
+    /// renamed to a known one — the log's whole job is to stop at that branch.
+    private func branchAhead() throws {
+        try run("git branch -M master && git checkout -qb feature")
+        try write("first.txt", "one\n")
+        try run("git add first.txt && git commit -qm 'first on the branch'")
+        try write("second.txt", "two\n")
+        try run("git add second.txt && git commit -qm 'second on the branch'")
+    }
+
+    private func log() throws -> GitLog {
+        GitRepoStatus.parse(try shell(RemoteGit.statusCommand(repo: repo)).output).log
+    }
+
+    func testListsOnlyTheCommitsAheadOfTheDefaultBranch() throws {
+        try branchAhead()
+        let log = try log()
+
+        XCTAssertEqual(log.base, "master")
+        XCTAssertEqual(log.commits.map(\.subject),
+                       ["second on the branch", "first on the branch"],
+                       "newest first, and the default branch's own commits excluded")
+    }
+
+    func testCommitFieldsAreFilledIn() throws {
+        try branchAhead()
+        let newest = try XCTUnwrap(try log().commits.first)
+
+        // Not compared to the fixture's configured name: `GIT_AUTHOR_NAME` in
+        // the environment outranks it, and which field landed where is what
+        // matters here.
+        XCTAssertFalse(newest.sha.isEmpty)
+        XCTAssertFalse(newest.author.isEmpty)
+        XCTAssertTrue(newest.relativeDate.hasSuffix("ago"), newest.relativeDate)
+    }
+
+    /// On the default branch there is nothing ahead of it — the list is empty
+    /// rather than the repo's whole history.
+    func testTheDefaultBranchItselfHasNoCommitsAhead() throws {
+        try run("git branch -M master")
+        let log = try log()
+
+        XCTAssertEqual(log.base, "master")
+        XCTAssertTrue(log.commits.isEmpty, "\(log.commits.map(\.subject))")
+    }
+
+    /// The format has to survive whatever a subject contains, including the
+    /// shell metacharacters the command is assembled from.
+    func testASubjectWithMetacharactersSurvives() throws {
+        try run("git branch -M master && git checkout -qb feature")
+        try run("git commit --allow-empty -qm \"don't \\$break; 100% \\`ok\\`\"")
+
+        XCTAssertEqual(try log().commits.first?.subject, "don't $break; 100% `ok`")
+    }
+
+    /// With no `main` or `master` anywhere there is nothing to stop at, so the
+    /// whole history is listed and the blank base says so.
+    func testWithoutADefaultBranchTheWholeHistoryIsListed() throws {
+        try run("git branch -M some-other-name")
+        let log = try log()
+
+        XCTAssertEqual(log.base, "")
+        XCTAssertEqual(log.commits.map(\.subject), ["init"])
+    }
+
+    /// A repo with no commits at all still has untracked files worth listing.
+    /// `run` throws away a non-zero exit, and both `diff HEAD` and `log` fail
+    /// here, so the command has to end at status 0 regardless.
+    func testAnEmptyRepositoryStillReportsItsUntrackedFiles() throws {
+        let fresh = "fresh repo"
+        try FileManager.default.createDirectory(
+            at: home.appendingPathComponent(fresh), withIntermediateDirectories: true)
+        let result = try shell("cd \"$HOME\"/'\(fresh)' && git init -q . && echo hi > new.txt")
+        XCTAssertEqual(result.status, 0)
+
+        let status = try shell(RemoteGit.statusCommand(repo: fresh))
+        XCTAssertEqual(status.status, 0, "a non-zero exit is discarded, blanking the file list")
+        XCTAssertTrue(GitRepoStatus.parse(status.output).changes.map(\.path).contains("new.txt"))
+    }
+
+    // MARK: - Range diffs
+
+    func testARangeDiffCoversEveryCommitInIt() throws {
+        try branchAhead()
+        let log = try log()
+        // The whole branch: from the default branch to its newest commit.
+        let diff = try shell(RemoteGit.rangeDiffCommand(
+            repo: repo, from: log.exclusiveBase(forOldest: 1), to: log.commits[0].sha)).output
+
+        XCTAssertTrue(diff.contains("+one"), diff)
+        XCTAssertTrue(diff.contains("+two"), diff)
+    }
+
+    /// A single commit is a range of one: the commit before it, to it.
+    func testASingleCommitDiffExcludesTheOneBeforeIt() throws {
+        try branchAhead()
+        let log = try log()
+        let diff = try shell(RemoteGit.rangeDiffCommand(
+            repo: repo, from: log.exclusiveBase(forOldest: 0), to: log.commits[0].sha)).output
+
+        XCTAssertTrue(diff.contains("+two"), diff)
+        XCTAssertFalse(diff.contains("+one"), "the earlier commit leaked into the range:\n\(diff)")
+    }
+
+    /// A revision reaches the command as a branch name out of the repo, and git
+    /// permits `;` and `>` in one. Unquoted, this branch would end the command
+    /// and create a file.
+    func testARangeDiffQuotesItsRevisions() throws {
+        let hostile = "odd;>pwned"
+        try run("git branch -M master && git checkout -qb '\(hostile)'")
+        try write("first.txt", "one\n")
+        try run("git add first.txt && git commit -qm 'on the odd branch'")
+
+        let diff = try shell(RemoteGit.rangeDiffCommand(
+            repo: repo, from: "master", to: hostile)).output
+        XCTAssertTrue(diff.contains("+one"), diff)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: home.appendingPathComponent("pwned").path),
+            "the revision escaped its quoting")
+    }
+
     // MARK: - Harness
 
     private static let git: String? = ["/usr/bin/git", "/opt/homebrew/bin/git", "/bin/git"]

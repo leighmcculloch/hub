@@ -38,9 +38,10 @@ enum RemoteGit {
         return out.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
-    /// Changed files plus their line counts, in one round trip: status and
-    /// numstat are concatenated with a separator rather than run as two SSH
-    /// commands, so adding the counts didn't double the per-poll cost.
+    /// Changed files, their line counts, and the repo's log, in one round trip:
+    /// the three are concatenated with separators rather than run as separate
+    /// SSH commands, so neither the counts nor the log multiplied the per-poll
+    /// cost.
     static func status(destination: String, repo: String) async -> GitRepoStatus {
         guard let out = await run(destination: destination,
                                   remoteCommand: statusCommand(repo: repo)) else {
@@ -68,7 +69,46 @@ enum RemoteGit {
             + " -c core.quotePath=false -c status.renames=false -c diff.renames=false"
         return "\(git) status --porcelain=v1 --untracked-files=all 2>/dev/null;"
             + " echo '\(GitRepoStatus.separator)';"
-            + " \(git) diff --numstat HEAD 2>/dev/null"
+            + " \(git) diff --numstat HEAD 2>/dev/null;"
+            + " echo '\(GitRepoStatus.logSeparator)';"
+            + " \(logCommand(git: git));"
+            // `run` discards a non-zero exit, and the halves above legitimately
+            // fail on a repo with no commits yet — where `status` still has
+            // untracked files to report. Without this the whole list blanks.
+            + " exit 0"
+    }
+
+    /// Resolves the repo's default branch, prints it, then lists the commits
+    /// HEAD has beyond it.
+    ///
+    /// The base is printed even though the caller could guess, because the log
+    /// alone doesn't say what it stopped at — and when nothing resolves, the
+    /// blank line is what tells the sidebar it is showing plain history rather
+    /// than a branch's own work.
+    private static func logCommand(git: String) -> String {
+        "base=;"
+            + " for ref in $(\(git) symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
+            + " \(GitLog.baseCandidates.joined(separator: " ")); do"
+            + " \(git) rev-parse --verify -q \"$ref\" >/dev/null 2>&1 && base=$ref && break;"
+            + " done;"
+            + " echo \"$base\";"
+            + " \(git) log -n \(GitLog.limit) --pretty=format:'\(GitLog.prettyFormat)'"
+            + " \"${base:+$base..}HEAD\" 2>/dev/null"
+    }
+
+    /// The combined diff of a run of commits: everything between `from`
+    /// (exclusive) and `to` (inclusive).
+    static func rangeDiff(destination: String, repo: String, from: String, to: String) async -> String {
+        await run(destination: destination,
+                  remoteCommand: rangeDiffCommand(repo: repo, from: from, to: to)) ?? ""
+    }
+
+    /// Both revisions come from git's own output, but they are quoted anyway:
+    /// the base can be a ref name from the repo, and a branch may be named
+    /// anything a filesystem accepts.
+    static func rangeDiffCommand(repo: String, from: String, to: String) -> String {
+        "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo)) diff"
+            + " \(Bootstrap.shellQuote(from)) \(Bootstrap.shellQuote(to)) 2>/dev/null"
     }
 
     /// Unified diff for a single file within a repo.
