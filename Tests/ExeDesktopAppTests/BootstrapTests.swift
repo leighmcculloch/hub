@@ -203,6 +203,21 @@ final class BootstrapTests: XCTestCase {
         XCTAssertTrue(script.contains(#"if [ ! -f "$HOME/.claude.json" ]"#))
     }
 
+    /// libghostty's kitty keyboard protocol needs tmux's extended-keys on, or
+    /// modified keys like Shift+Enter never reach the terminal.
+    func testScriptEnablesTmuxExtendedKeys() throws {
+        let script = Bootstrap.script(setupScript: "", claudeSettings: "", repos: [])
+        let output = try runScript(script + "cat \"$HOME/.tmux.conf\"", gitExitCode: 0)
+        XCTAssertEqual(output, "set -g extended-keys on\n")
+    }
+
+    /// Re-running the bootstrap (e.g. a VM restart) must not duplicate the line.
+    func testTmuxExtendedKeysIsNotDuplicatedOnRerun() throws {
+        let script = Bootstrap.script(setupScript: "", claudeSettings: "", repos: [])
+        let output = try runScript(script + script + "cat \"$HOME/.tmux.conf\"", gitExitCode: 0)
+        XCTAssertEqual(output, "set -g extended-keys on\n")
+    }
+
     func testNoClaudeSettingsMeansNoSeeding() {
         let script = Bootstrap.script(setupScript: "", claudeSettings: "  ", repos: [])
         XCTAssertFalse(script.contains(".claude/settings.json"))

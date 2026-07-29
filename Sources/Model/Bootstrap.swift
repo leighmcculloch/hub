@@ -184,6 +184,18 @@ enum Bootstrap {
 
         """
 
+        // libghostty sends the kitty keyboard protocol for modified keys (e.g.
+        // Shift+Enter), which tmux only forwards when extended-keys is on.
+        // Seeded before the tmux server starts, so a fresh VM picks it up
+        // without needing a restart; guarded so re-running the script doesn't
+        // duplicate the line.
+        script += """
+        if ! grep -qs '^set -g extended-keys on$' "$HOME/.tmux.conf"; then
+          echo 'set -g extended-keys on' >> "$HOME/.tmux.conf"
+        fi
+
+        """
+
         script += setupScript
         script += "\n"
 
