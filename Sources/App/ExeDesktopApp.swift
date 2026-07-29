@@ -21,6 +21,13 @@ struct ExeDesktopAppMain: App {
                     .keyboardShortcut("w", modifiers: .command)
                 Button("New Browser Tab") { workspace.newBrowserTab() }
                     .keyboardShortcut("b", modifiers: [.command, .shift])
+                Divider()
+                // tmux windows within the selected session. ⌘T is taken by the
+                // session (a whole VM), so these take the option variants.
+                Button("New Terminal Tab") { workspace.newTerminalTab() }
+                    .keyboardShortcut("t", modifiers: [.command, .option])
+                Button("Close Terminal Tab") { workspace.closeSelectedTerminalTab() }
+                    .keyboardShortcut("w", modifiers: [.command, .option])
             }
 
             CommandGroup(after: .sidebar) {
@@ -37,6 +44,10 @@ struct ExeDesktopAppMain: App {
                     .keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("Previous Session") { workspace.selectAdjacentSession(offset: -1) }
                     .keyboardShortcut("[", modifiers: [.command, .shift])
+                Button("Next Terminal Tab") { workspace.selectAdjacentTerminalTab(offset: 1) }
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                Button("Previous Terminal Tab") { workspace.selectAdjacentTerminalTab(offset: -1) }
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
                 Divider()
                 ForEach(1...9, id: \.self) { number in
                     Button(number == 9 ? "Last Session" : "Session \(number)") {

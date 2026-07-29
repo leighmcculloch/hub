@@ -2,19 +2,26 @@ import Combine
 import Foundation
 import Termini
 
-/// One terminal tab: a libghostty surface driven by a local PTY, plus the
-/// observable state the UI binds to (its title and current working directory).
+/// One session: either a local shell, or a VM whose tmux session the app drives
+/// itself over tmux's control protocol.
 ///
-/// Main-actor isolated: the ghostty surface and its controller are, and the
+/// For a VM there is no tmux *on screen* — the app is the tmux client. Every
+/// pane in the session gets its own libghostty surface, shown as a tab in the
+/// terminal space, so tmux's windows and splits arrive as native tabs and its
+/// status bar and prefix key never come into it. Panes keep running on the VM
+/// whichever tab is showing, and a dropped connection reattaches to the same
+/// panes.
+///
+/// Main-actor isolated: the ghostty surfaces and their controllers are, and the
 /// rest of this is UI state read straight by the views.
 @MainActor
 final class TerminalSession: ObservableObject, Identifiable {
-    /// What the terminal runs when the tab opens.
+    /// What the session runs when it opens.
     enum Launch {
-        /// A local login shell (the plain terminal).
+        /// A local login shell (the plain terminal, no tmux).
         case localShell
-        /// SSH into `destination` and run `bootstrap` as the remote command
-        /// (setup script + git clone, then an interactive login shell).
+        /// SSH into `destination` and run `bootstrap` as the remote command:
+        /// the tmux control-mode client, which brings up the session's panes.
         case ssh(destination: String, bootstrap: String)
     }
 
@@ -22,21 +29,33 @@ final class TerminalSession: ObservableObject, Identifiable {
     nonisolated let id = UUID()
 
     @Published var title: String
-    /// The shell's current working directory, updated from OSC 7. For SSH tabs
-    /// this reflects the remote path.
+    /// The current working directory. For a local shell it comes from OSC 7;
+    /// for a VM from tmux, which swallows OSC 7 and reports the active pane's
+    /// path itself.
     @Published var workingDirectory: URL?
-    /// True once the underlying process has exited (SSH dropped or shell quit).
+    /// True once the session's process has exited (SSH dropped, tmux gone, or
+    /// the local shell quit).
     @Published private(set) var isDisconnected = false
+    /// What ssh or tmux said on the way out, when they said anything. Without
+    /// it a VM that has been deleted, or a tmux that failed to install, looks
+    /// exactly like an idle disconnect.
+    @Published private(set) var disconnectReason: String?
 
-    /// The terminal's transport end. `TerminiTerminalView` binds to it to get a
-    /// live ghostty surface; `start()` wires the PTY to the other side.
-    let controller: TerminiTerminalController
+    /// One tab per tmux pane, in tmux's own window and pane order; exactly one
+    /// tab for a local shell.
+    @Published private(set) var tabs: [TerminalTab] = []
+    @Published var selectedTabID: TerminalTab.ID? {
+        didSet {
+            guard selectedTabID != oldValue else { return }
+            focusSelectedPane()
+        }
+    }
 
-    /// The SSH destination for VM-backed tabs (nil for local shells). The diff
-    /// sidebar uses this to run git over SSH against the VM.
+    /// The SSH destination for VM-backed sessions (nil for local shells). The
+    /// diff sidebar uses this to run git over SSH against the VM.
     let sshDestination: String?
 
-    /// The exe.dev VM backing this tab, if any. Needed to delete it.
+    /// The exe.dev VM backing this session, if any. Needed to delete it.
     let vmName: String?
 
     /// Right-sidebar sub-tabs belonging to *this* session, so switching
@@ -77,45 +96,148 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     private let launch: Launch
+
+    /// The local shell's PTY, for `.localShell` sessions.
     private var process: TerminiLocalPTYProcess?
     private var oscScanner = TerminalOSCScanner()
+
+    /// The tmux control-mode client, for VM sessions.
+    private var client: TmuxClient?
+    /// What each in-flight command's reply is for, oldest first. tmux answers
+    /// commands in order and says nothing about which reply is which, so this
+    /// queue is what pairs them up.
+    private var pendingReplies: [PendingReply] = []
+    /// Set while a pane listing is already queued, so a burst of notifications
+    /// (one tmux action emits several) costs one `list-panes`, not one each.
+    private var refreshQueued = false
+    /// The size last reported to tmux. Every report resizes every window in the
+    /// session, so an unchanged layout pass must not send one.
+    private var reportedSize: (cols: Int, rows: Int)?
+
+    private enum PendingReply {
+        case panes
+        /// A `capture-pane` whose lines restore this pane's screen.
+        case capture(paneID: String)
+        /// Nothing to do with the reply; only its place in the queue matters.
+        case ignored
+    }
 
     init(title: String = "Terminal", launch: Launch = .localShell, vmName: String? = nil) {
         self.title = title
         self.launch = launch
         self.vmName = vmName
-        controller = TerminiTerminalController()
         if case let .ssh(destination, _) = launch {
             sshDestination = destination
         } else {
             sshDestination = nil
         }
 
-        // Keystrokes and mouse reports come back out of the surface here, and
-        // the PTY is told whenever the surface's cell grid changes size.
-        controller.onTransportWrite = { [weak self] data in
-            self?.process?.send(data)
-        }
-        controller.onSizeChange = { [weak self] size in
-            self?.process?.resize(to: .init(columns: size.columns, rows: size.rows))
-        }
-
         start()
     }
 
+    deinit {
+        client?.stop()
+    }
+
+    // MARK: - Tabs
+
+    var selectedTab: TerminalTab? {
+        tabs.first { $0.id == selectedTabID } ?? tabs.first
+    }
+
+    /// The tab strip is tmux's window list; a local shell has nothing to list.
+    var showsTabBar: Bool { sshDestination != nil }
+
+    /// Open another tmux window. tmux announces the new pane, and the tab
+    /// appears when it does.
+    func newTab() {
+        send(TmuxControl.newWindow())
+    }
+
+    /// Kill the pane behind a tab. The tab goes when tmux reports the pane gone,
+    /// so a refused kill leaves the tab where it was.
+    func closeTab(_ tab: TerminalTab) {
+        guard let paneID = tab.paneID else { return }
+        send(TmuxControl.killPane(paneID))
+    }
+
+    func selectAdjacentTab(offset: Int) {
+        let current = tabs.firstIndex { $0.id == selectedTabID }
+        guard let index = TabNavigation.index(
+            from: current, offset: offset, count: tabs.count)
+        else { return }
+        selectedTabID = tabs[index].id
+    }
+
+    // MARK: - Launching
+
     private func start() {
         isDisconnected = false
+        disconnectReason = nil
+        pendingReplies = []
+        reportedSize = nil
+
+        switch launch {
+        case .localShell:
+            startLocalShell()
+
+        case let .ssh(destination, bootstrap):
+            // Tabs are rebuilt from the pane listing rather than reused: on a
+            // reconnect the panes have moved on without us, and each tab
+            // restores its pane's screen as it reappears.
+            tabs = []
+            selectedTabID = nil
+            let client = TmuxClient(
+                destination: destination,
+                remoteCommand: bootstrap,
+                onEvents: { [weak self] events in
+                    // Delivered on the main queue by the client, so this stays
+                    // synchronous — hopping again would let a later read's
+                    // events overtake an earlier one's.
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        for event in events { self.handle(event) }
+                    }
+                },
+                onExit: { [weak self] message in
+                    MainActor.assumeIsolated {
+                        self?.disconnected(reason: message)
+                    }
+                })
+            self.client = client
+            client.start()
+            send(TmuxControl.listPanes(), expecting: .panes)
+        }
+    }
+
+    /// The plain terminal: one tab whose surface is wired straight to a local
+    /// PTY, with no tmux in between.
+    private func startLocalShell() {
+        // Reuses the existing tab on a restart, so the surface — and with it
+        // the scrollback — survives.
+        let tab = tabs.first ?? TerminalTab(paneID: nil, title: "Shell")
+        tabs = [tab]
+        selectedTabID = tab.id
 
         let process = TerminiLocalPTYProcess()
         process.onOutput = { [weak self] data in
             Task { @MainActor in self?.receive(data) }
         }
         process.onExit = { [weak self] _ in
-            Task { @MainActor in self?.isDisconnected = true }
+            Task { @MainActor in self?.disconnected(reason: nil) }
+        }
+
+        // Keystrokes and mouse reports come back out of the surface here, and
+        // the PTY is told whenever the surface's cell grid changes size.
+        tab.controller.onTransportWrite = { [weak self] data in
+            self?.process?.send(data)
+        }
+        tab.controller.onSizeChange = { [weak self] size in
+            self?.process?.resize(to: .init(columns: size.columns, rows: size.rows))
         }
 
         do {
-            try process.start(spec: processSpec(), initialSize: initialPTYSize())
+            try process.start(spec: localShellSpec(), initialSize: initialPTYSize(tab))
             self.process = process
         } catch {
             // Nothing spawned, so nothing will report an exit; say so here.
@@ -124,8 +246,10 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
     }
 
-    /// Terminal output on its way to the surface, read for the sequences the UI
-    /// needs before being handed over untouched.
+    /// Local-shell output on its way to the surface, read for the sequences the
+    /// UI needs before being handed over untouched. Only a local shell reports
+    /// a title or directory this way: tmux consumes OSC before it reaches a
+    /// control client.
     private func receive(_ data: Data) {
         for event in oscScanner.scan(data) {
             switch event {
@@ -137,7 +261,7 @@ final class TerminalSession: ObservableObject, Identifiable {
                 workingDirectory = Self.directory(from: reported)
             }
         }
-        controller.processRemoteOutput(data)
+        tabs.first?.controller.processRemoteOutput(data)
     }
 
     /// OSC 7 reports a `file://host/path` URL; some shells send a bare path.
@@ -148,67 +272,201 @@ final class TerminalSession: ObservableObject, Identifiable {
         return URL(fileURLWithPath: reported)
     }
 
-    private func processSpec() -> TerminiProcessSpec {
-        let home = URL(fileURLWithPath: NSHomeDirectory())
-
-        switch launch {
-        case .localShell:
-            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            // `-l` makes it a login shell, so the user's profile is sourced.
-            return TerminiProcessSpec(
-                executableURL: URL(fileURLWithPath: shell),
-                arguments: ["-l"],
-                environment: Self.inheritedEnvironment,
-                workingDirectoryURL: home)
-
-        case let .ssh(destination, bootstrap):
-            // `-t` forces a remote PTY; accept-new avoids an interactive
-            // host-key prompt on first connect. The ControlMaster options (shared
-            // with RemoteGit) make this the multiplex master, so the diff
-            // sidebar's git-over-SSH calls reuse this one connection. `bootstrap`
-            // is passed as the single remote command argument.
-            var args = RemoteGit.sshControlArgs(for: destination)
-            args += [
-                "-t",
-                "-o", "ConnectTimeout=15",
-                "-o", "ConnectionAttempts=10", // retry while the VM finishes booting
-                "-o", "ServerAliveInterval=30",
-                destination,
-                bootstrap,
-            ]
-            return TerminiProcessSpec(
-                executableURL: URL(fileURLWithPath: "/usr/bin/ssh"),
-                arguments: args,
-                environment: Self.inheritedEnvironment,
-                workingDirectoryURL: home)
-        }
+    private func localShellSpec() -> TerminiProcessSpec {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        // `-l` makes it a login shell, so the user's profile is sourced.
+        return TerminiProcessSpec(
+            executableURL: URL(fileURLWithPath: shell),
+            arguments: ["-l"],
+            environment: Self.inheritedEnvironment,
+            workingDirectoryURL: URL(fileURLWithPath: NSHomeDirectory()))
     }
 
     /// Termini gives the child a PATH of its own choosing; put back the one the
-    /// app was launched with so the shell — and `ssh` — find the user's tools.
+    /// app was launched with so the shell finds the user's tools.
     private static var inheritedEnvironment: [String: String] {
         guard let path = ProcessInfo.processInfo.environment["PATH"] else { return [:] }
         return ["PATH": path]
     }
 
     /// The surface's size if it already has one — on reconnect it does, so the
-    /// remote shell starts out matching the pane instead of resizing into it.
-    private func initialPTYSize() -> TerminiLocalPTYProcess.Size {
-        guard let size = controller.currentSize() else { return .default }
+    /// shell starts out matching the pane instead of resizing into it.
+    private func initialPTYSize(_ tab: TerminalTab) -> TerminiLocalPTYProcess.Size {
+        guard let size = tab.controller.currentSize() else { return .default }
         return .init(columns: size.columns, rows: size.rows)
     }
 
-    /// Re-run the launch command against this same surface. Used to recover a
-    /// dropped SSH session without losing the tab.
+    /// Re-run the launch command. Recovers a dropped SSH session without losing
+    /// the session tab — the panes are still running on the VM.
     func reconnect() {
         guard isDisconnected else { return }
         start()
     }
 
-    /// A short label for the tab strip.
+    /// A short label for the session strip.
     var displayName: String {
         if !title.isEmpty { return title }
         if let dir = workingDirectory { return dir.lastPathComponent }
         return "Terminal"
+    }
+
+    // MARK: - tmux
+
+    private func send(_ command: String, expecting: PendingReply = .ignored) {
+        guard let client else { return }
+        pendingReplies.append(expecting)
+        client.send(command)
+    }
+
+    private func handle(_ event: TmuxEvent) {
+        switch event {
+        case let .output(pane, bytes):
+            tab(forPane: pane)?.controller.processRemoteOutput(Data(bytes))
+        case .paneListChanged:
+            scheduleRefresh()
+        case let .reply(reply):
+            handle(reply)
+        case let .exit(reason):
+            client?.stop()
+            disconnected(reason: reason)
+        }
+    }
+
+    private func handle(_ reply: TmuxReply) {
+        let expectation: PendingReply = pendingReplies.isEmpty
+            ? .ignored : pendingReplies.removeFirst()
+        // An error is tmux refusing a command — a pane that died first, say.
+        // There is nothing to apply, and its notification will say what is true.
+        guard !reply.isError else { return }
+        switch expectation {
+        case .panes:
+            apply(panes: TmuxControl.parsePanes(reply.lines))
+        case let .capture(paneID):
+            guard let tab = tabs.first(where: { $0.paneID == paneID }) else { return }
+            let restore = TmuxControl.restoreScreen(
+                lines: reply.lines, cursorX: tab.cursor.x, cursorY: tab.cursor.y)
+            tab.controller.processRemoteOutput(Data(restore))
+        case .ignored:
+            break
+        }
+    }
+
+    /// Ask for the pane list once per run loop turn: one tmux action emits
+    /// several notifications, and they all mean the same thing here.
+    private func scheduleRefresh() {
+        guard !refreshQueued else { return }
+        refreshQueued = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refreshQueued = false
+                guard self.client != nil else { return }
+                self.send(TmuxControl.listPanes(), expecting: .panes)
+            }
+        }
+    }
+
+    /// Reconcile the tabs with what tmux says exists: new panes become tabs,
+    /// closed ones drop out, and the order follows tmux's windows and panes
+    /// rather than the order the app happened to hear about them.
+    private func apply(panes: [TmuxPane]) {
+        let existing = Dictionary(tabs.compactMap { tab in tab.paneID.map { ($0, tab) } },
+                                  uniquingKeysWith: { first, _ in first })
+        var ordered: [TerminalTab] = []
+        for pane in panes.sorted(by: { ($0.windowIndex, $0.index) < ($1.windowIndex, $1.index) }) {
+            let tab = existing[pane.id] ?? restoredTab(for: pane)
+            tab.title = pane.title
+            tab.windowID = pane.windowID
+            tab.cursor = (pane.cursorX, pane.cursorY)
+            ordered.append(tab)
+        }
+        tabs = ordered
+
+        if !tabs.contains(where: { $0.id == selectedTabID }) {
+            let active = panes.first { $0.isActive }
+            selectedTabID = tabs.first { $0.paneID == active?.id }?.id ?? tabs.first?.id
+        }
+        // tmux consumes OSC 7, so the sidebar's idea of the directory can only
+        // come from here.
+        let selected = selectedTab?.paneID
+        if let path = panes.first(where: { $0.id == selected })?.currentPath, !path.isEmpty {
+            workingDirectory = URL(fileURLWithPath: path)
+        }
+    }
+
+    /// A tab for a pane the app hasn't seen before, with its screen restored:
+    /// tmux replays nothing on attach, so a pane that was already running would
+    /// otherwise show up blank until whatever is in it redrew.
+    private func restoredTab(for pane: TmuxPane) -> TerminalTab {
+        let tab = makeTab(paneID: pane.id, title: pane.title)
+        tab.cursor = (pane.cursorX, pane.cursorY)
+        send(TmuxControl.capturePane(pane.id), expecting: .capture(paneID: pane.id))
+        return tab
+    }
+
+    /// The tab showing `pane`, created on the spot if output arrived before the
+    /// listing that describes it. Dropping those bytes would lose the first
+    /// thing a new window prints, which is its prompt.
+    private func tab(forPane pane: String) -> TerminalTab? {
+        if let tab = tabs.first(where: { $0.paneID == pane }) { return tab }
+        guard sshDestination != nil else { return nil }
+        let tab = makeTab(paneID: pane, title: "")
+        tabs.append(tab)
+        if selectedTabID == nil { selectedTabID = tab.id }
+        scheduleRefresh()
+        return tab
+    }
+
+    private func makeTab(paneID: String, title: String) -> TerminalTab {
+        let tab = TerminalTab(paneID: paneID, title: title)
+        // Keystrokes and mouse reports leaving this pane's surface go back to
+        // that pane, byte for byte.
+        tab.controller.onTransportWrite = { [weak self] data in
+            guard let self else { return }
+            for command in TmuxControl.sendKeys(pane: paneID, bytes: Array(data)) {
+                self.send(command)
+            }
+        }
+        // Every surface shares the window's terminal area, so only the visible
+        // one's size is worth telling tmux about.
+        tab.controller.onSizeChange = { [weak self, weak tab] size in
+            guard let self, let tab, self.selectedTab === tab else { return }
+            self.report(cols: size.columns, rows: size.rows)
+        }
+        return tab
+    }
+
+    /// Point tmux at the pane the user just switched to, so another attached
+    /// client — and anything that acts on the "current" pane — agrees with
+    /// what's on screen.
+    private func focusSelectedPane() {
+        guard let tab = selectedTab, let paneID = tab.paneID else { return }
+        // A tab built from output alone doesn't know its window yet; the next
+        // pane listing fills that in.
+        if let windowID = tab.windowID {
+            for command in TmuxControl.selectPane(window: windowID, pane: paneID) {
+                send(command)
+            }
+        }
+        if let size = tab.controller.currentSize() {
+            report(cols: size.columns, rows: size.rows)
+        }
+    }
+
+    /// tmux sizes the session's windows to fit its client, and a control client
+    /// has no size at all until it says so.
+    private func report(cols: Int, rows: Int) {
+        guard client != nil, cols > 0, rows > 0 else { return }
+        let size = (cols: cols, rows: rows)
+        if let reportedSize, reportedSize == size { return }
+        reportedSize = size
+        send(TmuxControl.refreshClient(cols: cols, rows: rows))
+    }
+
+    private func disconnected(reason: String?) {
+        client = nil
+        pendingReplies = []
+        isDisconnected = true
+        disconnectReason = reason
     }
 }

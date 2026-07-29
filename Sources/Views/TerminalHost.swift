@@ -2,31 +2,35 @@ import AppKit
 import SwiftUI
 import Termini
 
-/// Hosts the terminal surfaces. Every session that has been shown keeps its
-/// surface mounted so the terminal state survives tab switches; only the
-/// selected one is drawn and takes input.
+/// Hosts the terminal surfaces. Every tab that has been shown keeps its surface
+/// mounted so the terminal state survives switching; only the selected one is
+/// drawn and takes input.
 struct TerminalHost: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject private var config = AppConfig.shared
 
-    /// Sessions whose surface has been created. A surface takes first responder
-    /// as it comes up, so one is mounted only once its tab has been selected —
-    /// otherwise restoring several tabs at launch would leave the keyboard on
-    /// whichever surface happened to finish last.
-    @State private var mounted: Set<TerminalSession.ID> = []
+    /// Tabs whose surface has been created. A surface takes first responder as
+    /// it comes up, so one is mounted only once its tab has been selected —
+    /// otherwise a session attaching to a tmux that already has several panes
+    /// would leave the keyboard on whichever surface happened to finish last.
+    /// Until then a pane's output waits in its controller and is replayed when
+    /// the surface arrives.
+    @State private var mounted: Set<TerminalTab.ID> = []
 
     var body: some View {
         ZStack {
             ForEach(workspace.sessions) { session in
-                if mounted.contains(session.id) {
-                    let isSelected = session.id == workspace.selectedSessionID
-                    TerminiTerminalView(
-                        controller: session.controller,
-                        appearance: appearance,
-                        isRenderVisible: isSelected
-                    )
-                    .opacity(isSelected ? 1 : 0)
-                    .allowsHitTesting(isSelected)
+                ForEach(session.tabs) { tab in
+                    if mounted.contains(tab.id) {
+                        let isSelected = isSelected(session: session, tab: tab)
+                        TerminiTerminalView(
+                            controller: tab.controller,
+                            appearance: appearance,
+                            isRenderVisible: isSelected
+                        )
+                        .opacity(isSelected ? 1 : 0)
+                        .allowsHitTesting(isSelected)
+                    }
                 }
             }
         }
@@ -35,12 +39,21 @@ struct TerminalHost: View {
         .onChange(of: workspace.selectedSessionID) {
             mountSelected()
             // A surface that is already mounted won't focus itself.
-            workspace.selectedSession?.controller.focus()
+            workspace.selectedSession?.selectedTab?.controller.focus()
+        }
+        .onChange(of: workspace.selectedSession?.selectedTab?.id) {
+            mountSelected()
+            workspace.selectedSession?.selectedTab?.controller.focus()
         }
     }
 
+    private func isSelected(session: TerminalSession, tab: TerminalTab) -> Bool {
+        session.id == workspace.selectedSessionID
+            && tab.id == session.selectedTab?.id
+    }
+
     private func mountSelected() {
-        guard let id = workspace.selectedSessionID else { return }
+        guard let id = workspace.selectedSession?.selectedTab?.id else { return }
         mounted.insert(id)
     }
 

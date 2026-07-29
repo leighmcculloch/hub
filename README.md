@@ -8,8 +8,12 @@ tab on [**exe.dev**](https://exe.dev):
   `⌘T` for a new one, `⌘W` to close. Resizable, and hideable with `⌘S`. On
   launch the sidebar also lists the VMs already on your exe.dev account under
   **EXISTING**; nothing is connected until you click one.
-- **The active terminal** filling the middle. Each tab is a real terminal on its
-  own PTY, kept alive in the background so it survives tab switches.
+- **The active terminal** filling the middle, with **a terminal tab strip** above
+  it: for a VM session the app is the tmux client, so every tmux window (and
+  every pane of a split) is its own native tab. `⌥⌘T` opens another tmux window,
+  `⌥⌘W` closes the pane behind a tab, `⌥⌘←`/`⌥⌘→` move between them. Tabs appear
+  and disappear as tmux's windows do, however they were opened. Each tab keeps
+  its own terminal, alive in the background, so switching costs nothing.
 - **A worktree diff sidebar** on the right. For a VM tab it lists the git repos
   in the VM's home directory (plus any git worktrees under each repo's
   `.claude/worktrees`), lets you pick one (or view all), browse changed
@@ -35,21 +39,24 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
    (`integrations add github --act-as-user --attach tag:<slug>`).
 3. It creates a VM tagged for those integrations (`new --tag <slug> --json`), so
    the integrations bind to the VM.
-4. The terminal SSHes into the VM and runs, as its first commands: seed
+4. The app SSHes into the VM and attaches to a tmux session named `exe`,
+   creating it if needed — as a **control-mode client** (`tmux -C`), so tmux
+   talks protocol to the app instead of drawing itself into a terminal.
+5. The bootstrap runs as the command of that session's first window: seed
    `~/.claude/settings.json` (only if absent), write the Codex and pi
    configuration for the chosen model (only when one is chosen), run the
    environment's **setup script**, then `git clone` for each repo through the
-   exe.dev GitHub proxy (`https://github.int.exe.xyz/<owner>/<repo>.git`).
-5. Every directory in the VM's home dir is marked trusted in `~/.claude.json`
+   exe.dev GitHub proxy (`https://github.int.exe.xyz/<owner>/<repo>.git`) — so
+   you watch it happen in the first tab, and it doesn't run again when you
+   reattach.
+6. Every directory in the VM's home dir is marked trusted in `~/.claude.json`
    (merged, never clobbering existing state), so Claude Code doesn't prompt
    per folder.
-6. It then attaches to a tmux session named `exe` on the VM, creating it if
-   needed. Everything runs inside tmux, so a dropped connection reattaches with
-   work intact.
 
 If an SSH session drops while the app is in the background, it reconnects
-automatically when the app regains focus — and because the shell lives in tmux,
-it reattaches to the running session rather than starting over.
+automatically when the app regains focus — and because the panes live in tmux,
+it reattaches to the running session rather than starting over, restoring each
+pane's screen as its tab comes back.
 
 `⌃⌘T` opens a plain local shell instead (no VM), useful offline.
 
@@ -63,12 +70,13 @@ it reattaches to the running session rather than starting over.
   and its own environment variables, edited in Settings and chosen per session.
   Ships with two: *Claude Code* (starts `claude`, with a blank
   `CLAUDE_CODE_OAUTH_TOKEN` row to paste a token into) and *Codex* (starts
-  `codex`). Add your own for anything else. The setup script runs over SSH as
-  the first command on the VM, before the repos are cloned. The start command
-  runs *inside* tmux, and only when the tmux session is first created —
-  reconnecting attaches instead of starting a second copy, and empty means a
-  plain shell. tmux itself is not configurable; the bootstrap installs it if
-  the VM lacks it, and falls back to a login shell if that fails.
+  `codex`). Add your own for anything else. The setup script runs in the first
+  tmux window, before the repos are cloned. The start command follows it, and
+  both run only when the tmux session is first created — reconnecting attaches
+  instead of starting a second copy. When the start command exits the window
+  stays open at a shell; empty means just a shell. tmux itself is not
+  configurable and is required — the app is a tmux client, so the remote command
+  installs tmux first if the VM lacks it.
 - **Global environment variables** — a `KEY=VALUE` list in Settings that
   applies whichever environment a session runs. Both lists are passed to
   `new --env`, so they're set on the VM host itself and visible to every
@@ -110,24 +118,41 @@ it reattaches to the running session rather than starting over.
 
 ```
 ┌───────────┬──────────────────────────┬─────────────────┐
-│ Session   │                          │  Changed files  │
-│ tabs      │   Active terminal        ├─────────────────┤
-│ (⌘T/⌘W)   │   (libghostty)           │  Commit log     │
-│           │                          ├─────────────────┤
+│ Session   │ tmux windows as tabs     │  Changed files  │
+│ tabs      ├──────────────────────────┼─────────────────┤
+│ (⌘T/⌘W)   │   Active terminal        │  Commit log     │
+│           │   (libghostty)           ├─────────────────┤
 │           │                          │  Diff           │
 └───────────┴──────────────────────────┴─────────────────┘
 ```
 
 SwiftUI provides the window chrome and both sidebars; the terminal itself is a
 libghostty surface — Ghostty's terminal engine, rendered on the GPU — wrapped as
-a SwiftUI view by Termini. Each session owns a `TerminiTerminalController`, which
-is the surface's transport end: the app spawns the shell (or `ssh`) on a PTY
-under it and pumps the bytes both ways.
+a SwiftUI view by Termini. Each tab owns a `TerminiTerminalController`, which is
+that surface's transport end: the app pumps bytes both ways through it, from a
+local PTY for a plain shell and from tmux for a VM session's panes.
+
+**The tmux client is the app.** Rather than SSHing into a shell and running
+tmux, which would render tmux's own status bar and prefix keys inside one
+terminal, the remote command is `tmux -C` — [control
+mode](https://github.com/tmux/tmux/wiki/Control-Mode). tmux then speaks a line
+protocol on stdout: `%output %<pane> <escaped bytes>` for everything a pane
+writes, notifications when windows and panes come, go and get renamed, and a
+`%begin`/`%end` block per command sent back on stdin. So:
+
+- each pane's bytes are fed to that pane's own libghostty surface — one tab each;
+- keystrokes go back as `send-keys -H <hex>`, byte for byte, so typed UTF-8
+  arrives as the bytes the terminal produced;
+- the visible tab's size is reported with `refresh-client -C`, which is what
+  sizes the session's windows;
+- a pane the app hasn't seen is restored with `capture-pane`, because tmux
+  replays nothing on attach.
 
 | Area | Files |
 | --- | --- |
-| Terminal session | `Sources/Model/TerminalSession.swift` — a libghostty surface fed by a PTY; local shell or SSH-into-VM |
-| Terminal output | `Sources/Model/TerminalOSC.swift` — reads the title and cwd out of the terminal's byte stream |
+| tmux protocol | `Sources/Tmux/TmuxControl.swift` — parsing control mode and building its commands; `TmuxClient.swift` — the ssh process and its byte plumbing |
+| Terminal session | `Sources/Model/TerminalSession.swift` — a local shell, or a tmux session whose panes are `TerminalTab`s |
+| Terminal output | `Sources/Model/TerminalOSC.swift` — reads the title and cwd out of a local shell's byte stream |
 | Provisioning | `Sources/Model/SessionProvisioner.swift` — repo pick → integration → VM → SSH bootstrap |
 | exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create) |
 | GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
@@ -140,14 +165,17 @@ under it and pumps the bytes both ways.
 | UI | `Sources/Views/` — sidebars, terminal host, resize handle, new-session sheet, settings |
 | App entry | `Sources/App/` — `@main` SwiftUI `App` + `AppDelegate` |
 
-**How the diff follows the terminal:** the shell reports its working directory
-via OSC 7. libghostty renders that sequence but doesn't report it back to the
-embedding app, so `TerminalOSCScanner` reads it (and the title, OSC 0/2) off the
-PTY stream on its way to the surface and updates the session's
+**How the diff follows the terminal:** a local shell reports its working
+directory via OSC 7. libghostty renders that sequence but doesn't report it back
+to the embedding app, so `TerminalOSCScanner` reads it (and the title, OSC 0/2)
+off the PTY stream on its way to the surface and updates the session's
 `@Published workingDirectory`; the diff sidebar then recomputes `git diff HEAD`
-for that directory whenever it changes.
+for that directory whenever it changes. A VM session's panes are inside tmux,
+which consumes OSC 7 itself, so the path comes from tmux's
+`#{pane_current_path}` in the same listing that builds the tabs.
 
-> OSC 7 reporting requires shell integration that emits it. macOS zsh and bash
+> OSC 7 reporting requires shell integration that emits it (local shells only —
+> a VM session gets its path from tmux). macOS zsh and bash
 > set up under Terminal.app already do; if the sidebar isn't tracking `cd`,
 > enable OSC 7 in your shell profile (search "shell integration OSC 7"). Untracked
 > directories simply show "Not a git repository".

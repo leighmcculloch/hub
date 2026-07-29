@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -34,6 +35,11 @@ final class Workspace: ObservableObject {
     // so init doesn't have to cross into the main actor to store them.
     nonisolated(unsafe) let exe: ExeService
     nonisolated(unsafe) private let sessionStore: SessionStore
+    /// Forwards each session's changes as a change to the workspace. A session's
+    /// tabs come and go on tmux's schedule, and the terminal host — which mounts
+    /// the surfaces for *all* sessions — only re-runs when the workspace itself
+    /// says something changed.
+    private var sessionObservers: [AnyCancellable] = []
 
     /// Nonisolated so the token closure below isn't inferred main-actor
     /// isolated: `ExeClient` calls it from its request path, off the main actor.
@@ -56,6 +62,21 @@ final class Workspace: ObservableObject {
 
     var selectedSession: TerminalSession? {
         sessions.first { $0.id == selectedSessionID }
+    }
+
+    // MARK: - Terminal tabs (tmux windows within the selected session)
+
+    func newTerminalTab() {
+        selectedSession?.newTab()
+    }
+
+    func closeSelectedTerminalTab() {
+        guard let session = selectedSession, let tab = session.selectedTab else { return }
+        session.closeTab(tab)
+    }
+
+    func selectAdjacentTerminalTab(offset: Int) {
+        selectedSession?.selectAdjacentTab(offset: offset)
     }
 
     /// Known VMs that aren't already open as a tab.
@@ -99,8 +120,17 @@ final class Workspace: ObservableObject {
     ) {
         let session = TerminalSession(title: title, launch: launch, vmName: vmName)
         sessions.append(session)
+        observeSessions()
         selectedSessionID = session.id
         if persist { persistSessions() }
+    }
+
+    private func observeSessions() {
+        sessionObservers = sessions.map { session in
+            session.objectWillChange.sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+        }
     }
 
     /// The bootstrap run when connecting to an already-provisioned VM. Repos
@@ -178,6 +208,7 @@ final class Workspace: ObservableObject {
     func closeSession(_ session: TerminalSession) {
         guard let index = sessions.firstIndex(where: { $0.id == session.id }) else { return }
         sessions.remove(at: index)
+        observeSessions()
         if selectedSessionID == session.id {
             selectedSessionID = sessions[safe: index]?.id ?? sessions.last?.id
         }

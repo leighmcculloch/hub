@@ -23,10 +23,20 @@ struct ContentView: View {
                              onCommit: { storedSessionSidebarWidth = sessionSidebarWidth })
             }
 
-            ZStack {
-                TerminalHost(workspace: workspace)
-                if workspace.sessions.isEmpty {
-                    EmptyWorkspaceView(workspace: workspace)
+            VStack(spacing: 0) {
+                // tmux's windows, as tabs. A local shell has no tmux and so no
+                // strip.
+                if let session = workspace.selectedSession, session.showsTabBar {
+                    TerminalTabBar(session: session)
+                    Divider()
+                }
+                ZStack {
+                    TerminalHost(workspace: workspace)
+                    if workspace.sessions.isEmpty {
+                        EmptyWorkspaceView(workspace: workspace)
+                    } else if let session = workspace.selectedSession, session.tabs.isEmpty {
+                        ConnectingView(session: session)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -86,6 +96,41 @@ struct ContentView: View {
     private var windowTitle: String {
         guard let session = workspace.selectedSession else { return "Exe Desktop App" }
         return "Exe Desktop App — \(session.displayName)"
+    }
+}
+
+/// Shown while a VM session has no panes yet: either it is still connecting, or
+/// the connection failed and there is something to say about why. Without this
+/// a failed attach is an empty black rectangle.
+private struct ConnectingView: View {
+    @ObservedObject var session: TerminalSession
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if session.isDisconnected {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.orange)
+                Text("Disconnected")
+                    .font(.system(size: 12, weight: .semibold))
+                if let reason = session.disconnectReason {
+                    Text(reason)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                Button("Reconnect") { session.reconnect() }
+                    .padding(.top, 4)
+            } else {
+                ProgressView().controlSize(.small)
+                Text("Connecting to \(session.sshDestination ?? "the VM")…")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 
