@@ -236,10 +236,12 @@ final class BootstrapTests: XCTestCase {
         XCTAssertTrue(script.contains(#"if [ ! -f "$HOME/.claude.json" ]"#))
     }
 
-    /// libghostty's kitty keyboard protocol needs tmux's extended-keys on, or
-    /// modified keys like Shift+Enter never reach the terminal. It has to be
-    /// seeded before the server starts, so it lives in the remote command rather
-    /// than in the bootstrap script — which now runs inside tmux.
+    /// libghostty's kitty keyboard protocol needs tmux's extended-keys forced
+    /// on, or modified keys like Shift+Enter and Shift+Tab never reach the
+    /// terminal — Claude Code never sends the request that plain "on" waits
+    /// for. It has to be seeded before the server starts, so it lives in the
+    /// remote command rather than in the bootstrap script — which now runs
+    /// inside tmux.
     func testExtendedKeysIsEnabledBeforeTmuxStarts() throws {
         let command = Bootstrap.command(setupScript: "", claudeSettings: "", repos: [])
         guard let seed = command.range(of: Bootstrap.enableExtendedKeys),
@@ -249,15 +251,15 @@ final class BootstrapTests: XCTestCase {
 
         let output = try runScript(
             Bootstrap.enableExtendedKeys + " cat \"$HOME/.tmux.conf\"", gitExitCode: 0)
-        XCTAssertEqual(output, "set -g extended-keys on\n")
+        XCTAssertEqual(output, "set -g extended-keys always\nset -as terminal-features \",*:extkeys\"\n")
     }
 
-    /// Reconnecting re-runs the remote command, which must not duplicate the line.
+    /// Reconnecting re-runs the remote command, which must not duplicate the lines.
     func testTmuxExtendedKeysIsNotDuplicatedOnRerun() throws {
         let seed = Bootstrap.enableExtendedKeys
         let output = try runScript(
             seed + " " + seed + " cat \"$HOME/.tmux.conf\"", gitExitCode: 0)
-        XCTAssertEqual(output, "set -g extended-keys on\n")
+        XCTAssertEqual(output, "set -g extended-keys always\nset -as terminal-features \",*:extkeys\"\n")
     }
 
     func testNoClaudeSettingsMeansNoSeeding() {

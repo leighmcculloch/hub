@@ -126,13 +126,20 @@ enum Bootstrap {
         + " sudo apt-get install -y -qq tmux >/dev/null 2>&1; } || true;"
 
     /// libghostty sends the kitty keyboard protocol for modified keys (e.g.
-    /// Shift+Enter), which tmux only forwards when extended-keys is on. Seeded
-    /// here rather than from the bootstrap script because the script now runs
-    /// *inside* tmux, by which time the server has already read its config;
-    /// guarded so re-running it doesn't duplicate the line.
+    /// Shift+Enter, Shift+Tab), but tmux only forwards it to a pane that asks
+    /// for it first — Claude Code never does, so those keys never reach it.
+    /// `always` forces tmux to report them unconditionally; `extkeys` is the
+    /// matching terminal-features flag tmux checks (the option is spelled
+    /// `extended-keys`, but the feature name it looks for is shorter — one
+    /// word, not two). Seeded here rather than from the bootstrap script
+    /// because the script now runs *inside* tmux, by which time the server has
+    /// already read its config; guarded so re-running it doesn't duplicate
+    /// the lines.
     static let enableExtendedKeys =
-        "grep -qs '^set -g extended-keys on$' \"$HOME/.tmux.conf\" ||"
-        + " echo 'set -g extended-keys on' >> \"$HOME/.tmux.conf\";"
+        "grep -qs '^set -g extended-keys always$' \"$HOME/.tmux.conf\" ||"
+        + " echo 'set -g extended-keys always' >> \"$HOME/.tmux.conf\";"
+        + " grep -qs '^set -as terminal-features .,\\*:extkeys.$' \"$HOME/.tmux.conf\" ||"
+        + " echo 'set -as terminal-features \",*:extkeys\"' >> \"$HOME/.tmux.conf\";"
 
     /// Attach the app to tmux as a control-mode client (`-C`), so each pane's
     /// output arrives as a stream the app renders into its own terminal tab.
