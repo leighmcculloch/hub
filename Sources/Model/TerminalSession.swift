@@ -69,6 +69,12 @@ final class TerminalSession: ObservableObject, Identifiable {
         sshDestination.map { "https://\($0)" }
     }
 
+    /// Shelley — exe.dev's own web agent — which the default VM image serves on
+    /// port 9999. nil for a local shell, which has no VM to serve it.
+    var shelleyURL: String? {
+        sshDestination.map { "https://\($0):9999/" }
+    }
+
     var selectedSidebarTab: SidebarTab? {
         sidebarTabs.first { $0.id == selectedSidebarTabID } ?? sidebarTabs.first
     }
@@ -154,9 +160,30 @@ final class TerminalSession: ObservableObject, Identifiable {
         send(TmuxControl.newWindow())
     }
 
+    /// Open a tab showing this VM's Shelley, after the pane tabs. Unlike a pane
+    /// tab this one is the app's own, so it appears straight away.
+    func newShelleyTab() {
+        guard let address = shelleyURL else { return }
+        let tab = TerminalTab(
+            paneID: nil, title: "Shelley", browser: BrowserModel(initialAddress: address))
+        tabs.append(tab)
+        selectedTabID = tab.id
+    }
+
     /// Kill the pane behind a tab. The tab goes when tmux reports the pane gone,
-    /// so a refused kill leaves the tab where it was.
+    /// so a refused kill leaves the tab where it was. A Shelley tab has no pane
+    /// and is dropped here.
     func closeTab(_ tab: TerminalTab) {
+        if tab.isBrowser {
+            guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+            tabs.remove(at: index)
+            if selectedTabID == tab.id {
+                // Prefer the tab that took its place, else the last one.
+                let next = index < tabs.count ? tabs[index] : tabs.last
+                selectedTabID = next?.id
+            }
+            return
+        }
         guard let paneID = tab.paneID else { return }
         send(TmuxControl.killPane(paneID))
     }
@@ -182,11 +209,14 @@ final class TerminalSession: ObservableObject, Identifiable {
             startLocalShell()
 
         case let .ssh(destination, bootstrap):
-            // Tabs are rebuilt from the pane listing rather than reused: on a
-            // reconnect the panes have moved on without us, and each tab
-            // restores its pane's screen as it reappears.
-            tabs = []
-            selectedTabID = nil
+            // Pane tabs are rebuilt from the pane listing rather than reused: on
+            // a reconnect the panes have moved on without us, and each tab
+            // restores its pane's screen as it reappears. Shelley tabs aren't
+            // tmux's, so a dropped connection is nothing to them.
+            tabs = tabs.filter { $0.isBrowser }
+            if !tabs.contains(where: { $0.id == selectedTabID }) {
+                selectedTabID = nil
+            }
             let client = TmuxClient(
                 destination: destination,
                 remoteCommand: bootstrap,
@@ -380,11 +410,16 @@ final class TerminalSession: ObservableObject, Identifiable {
             tab.cursor = (pane.cursorX, pane.cursorY)
             ordered.append(tab)
         }
-        tabs = ordered
+        // The listing can't speak for Shelley tabs, which keep their place after
+        // the panes.
+        tabs = ordered + tabs.filter { $0.isBrowser }
 
         if !tabs.contains(where: { $0.id == selectedTabID }) {
-            let active = panes.first { $0.isActive }
-            selectedTabID = tabs.first { $0.paneID == active?.id }?.id ?? tabs.first?.id
+            // A Shelley tab's pane ID is nil, so it must not stand in for a
+            // listing that named no active pane.
+            let active = panes.first { $0.isActive }?.id
+            selectedTabID = tabs.first { $0.paneID != nil && $0.paneID == active }?.id
+                ?? tabs.first?.id
         }
         // tmux consumes OSC 7, so the sidebar's idea of the directory can only
         // come from here.

@@ -2,9 +2,10 @@ import AppKit
 import SwiftUI
 import Termini
 
-/// Hosts the terminal surfaces. Every tab that has been shown keeps its surface
-/// mounted so the terminal state survives switching; only the selected one is
-/// drawn and takes input.
+/// Hosts the terminal surfaces, and the web view of any Shelley tab. Every tab
+/// that has been shown keeps its surface mounted so the terminal state — or the
+/// loaded page — survives switching; only the selected one is drawn and takes
+/// input.
 struct TerminalHost: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject private var config = AppConfig.shared
@@ -23,11 +24,17 @@ struct TerminalHost: View {
                 ForEach(session.tabs) { tab in
                     if mounted.contains(tab.id) {
                         let isSelected = isSelected(session: session, tab: tab)
-                        TerminiTerminalView(
-                            controller: tab.controller,
-                            appearance: appearance,
-                            isRenderVisible: isSelected
-                        )
+                        Group {
+                            if let browser = tab.browser {
+                                BrowserPane(browser: browser)
+                            } else {
+                                TerminiTerminalView(
+                                    controller: tab.controller,
+                                    appearance: appearance,
+                                    isRenderVisible: isSelected
+                                )
+                            }
+                        }
                         .opacity(isSelected ? 1 : 0)
                         .allowsHitTesting(isSelected)
                     }
@@ -63,7 +70,14 @@ struct TerminalHost: View {
     /// that race.
     private func focusSelected() {
         DispatchQueue.main.async {
-            workspace.selectedSession?.selectedTab?.controller.focus()
+            guard let tab = workspace.selectedSession?.selectedTab else { return }
+            // A Shelley tab's terminal surface is never on screen; focusing it
+            // would take the keyboard away from the page.
+            if let browser = tab.browser {
+                browser.focus()
+            } else {
+                tab.controller.focus()
+            }
         }
     }
 

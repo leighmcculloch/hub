@@ -13,7 +13,12 @@ tab on [**exe.dev**](https://exe.dev):
   every pane of a split) is its own native tab. `⌥⌘T` opens another tmux window,
   `⌥⌘W` closes the pane behind a tab, `⌥⌘←`/`⌥⌘→` move between them. Tabs appear
   and disappear as tmux's windows do, however they were opened. Each tab keeps
-  its own terminal, alive in the background, so switching costs nothing.
+  its own terminal, alive in the background, so switching costs nothing. The
+  strip's **+** is a small dropdown: clicking it opens a terminal as before, and
+  its menu also offers **Shelley** — exe.dev's own web agent, served on the VM's
+  port 9999 — as a browser tab in the same strip, complete with an address bar.
+  A Shelley tab isn't tmux's, so it sits after the pane tabs and survives a
+  reconnect.
 - **A worktree diff sidebar** on the right. For a VM tab it lists the git repos
   in the VM's home directory (plus any git worktrees under each repo's
   `.claude/worktrees`), lets you pick one (or view all), browse changed

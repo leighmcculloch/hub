@@ -1,11 +1,13 @@
 import SwiftUI
 
 /// The horizontal tab strip above the terminal: one tab per tmux pane in the
-/// selected session, plus a button for a new tmux window.
+/// selected session, plus a button for a new tmux window — or, from its menu, a
+/// tab showing the VM's Shelley.
 ///
-/// This *is* tmux's window list — the tabs are named by tmux and appear and
+/// The pane tabs *are* tmux's window list — they are named by tmux and appear and
 /// disappear as windows and splits do, whether they were opened from here or by
-/// something running on the VM.
+/// something running on the VM. Shelley tabs are the app's own and sit after
+/// them.
 struct TerminalTabBar: View {
     @ObservedObject var session: TerminalSession
 
@@ -27,18 +29,25 @@ struct TerminalTabBar: View {
 
             Divider().frame(height: 16)
 
-            Button(action: { session.newTab() }) {
+            // Clicking + opens a terminal, as it always has; the menu beside it
+            // is the way to a Shelley tab instead.
+            Menu {
+                Button("New Terminal") { session.newTab() }
+                Button("New Shelley") { session.newShelleyTab() }
+                    .disabled(session.shelleyURL == nil)
+            } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 10, weight: .bold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .contentShape(Rectangle())
+            } primaryAction: {
+                session.newTab()
             }
-            .buttonStyle(.plain)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.visible)
+            .fixedSize()
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 2)
-            .help("New tmux window (⌥⌘T)")
-            .accessibilityLabel("New terminal tab")
+            .padding(.horizontal, 6)
+            .help("New tmux window (⌥⌘T), or Shelley from the menu")
+            .accessibilityLabel("New tab")
         }
         // Fixed, or the scroll view would take the terminal's height with it.
         .frame(height: 30)
@@ -82,7 +91,7 @@ private struct TerminalTabButton: View {
             .foregroundStyle(.secondary)
             // Kept in the layout at zero opacity so tabs don't reflow on hover.
             .opacity(isHovering || isSelected ? 1 : 0)
-            .help("Close pane")
+            .help(tab.isBrowser ? "Close tab" : "Close pane")
             .accessibilityLabel("Close \(tab.displayName)")
         }
         .padding(.horizontal, 8)

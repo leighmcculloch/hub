@@ -5,7 +5,9 @@ import Termini
 /// One tab in the terminal space, and the terminal surface it shows.
 ///
 /// A VM session has one tab per tmux pane, identified by `paneID`; a local shell
-/// has a single tab whose surface is driven by a local PTY.
+/// has a single tab whose surface is driven by a local PTY. A tab can instead
+/// hold a browser — Shelley, the VM's own web agent — in which case `browser` is
+/// set and there is no pane behind it.
 ///
 /// Main-actor isolated, like the surface controller it owns.
 @MainActor
@@ -16,6 +18,10 @@ final class TerminalTab: ObservableObject, Identifiable {
     /// The tmux pane this renders, e.g. `%3`. nil for a local shell.
     let paneID: String?
 
+    /// The web view this tab shows instead of a terminal, for a Shelley tab.
+    /// nil for every tab that renders a pane.
+    let browser: BrowserModel?
+
     /// The tmux window the pane belongs to, e.g. `@1`. Not known for a tab
     /// created from a pane's output before the listing that describes it.
     var windowID: String?
@@ -24,7 +30,8 @@ final class TerminalTab: ObservableObject, Identifiable {
     /// emulator's state (scrollback, modes, what's on screen) lives behind it,
     /// so it must survive tab switches. Output that arrives before a surface is
     /// mounted is held by the controller and replayed to the surface when one
-    /// is, so a background pane doesn't lose what it printed.
+    /// is, so a background pane doesn't lose what it printed. Unused by a
+    /// Shelley tab, which shows its web view instead.
     let controller: TerminiTerminalController
 
     @Published var title: String
@@ -34,11 +41,16 @@ final class TerminalTab: ObservableObject, Identifiable {
     /// listing that described it.
     var cursor: (x: Int, y: Int) = (0, 0)
 
-    init(paneID: String?, title: String) {
+    init(paneID: String?, title: String, browser: BrowserModel? = nil) {
         self.paneID = paneID
         self.title = title
+        self.browser = browser
         controller = TerminiTerminalController()
     }
+
+    /// True for a Shelley tab: no pane behind it, and a web view rather than a
+    /// terminal surface on screen.
+    var isBrowser: Bool { browser != nil }
 
     var displayName: String { title.isEmpty ? "Terminal" : title }
 }

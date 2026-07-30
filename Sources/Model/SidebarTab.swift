@@ -39,6 +39,11 @@ final class BrowserModel: NSObject, ObservableObject {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
 
+    /// Put the keyboard in the page, the way a terminal tab focuses its surface.
+    func focus() {
+        webView.window?.makeFirstResponder(webView)
+    }
+
     /// Accept bare hostnames like `foo.exe.xyz`, defaulting to https.
     static func url(from text: String) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
