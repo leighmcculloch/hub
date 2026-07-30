@@ -10,6 +10,11 @@ struct TerminalHost: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject private var config = AppConfig.shared
 
+    /// The app's effective light/dark appearance. The app doesn't force an
+    /// appearance, so this tracks the system — and when it flips, the terminal
+    /// surface is re-themed to match (see `appearance` below).
+    @Environment(\.colorScheme) private var colorScheme
+
     /// Tabs whose surface has been created. A surface takes first responder as
     /// it comes up, so one is mounted only once its tab has been selected —
     /// otherwise a session attaching to a tmux that already has several panes
@@ -81,10 +86,15 @@ struct TerminalHost: View {
         }
     }
 
-    /// Only the font is set here: it's in Settings and on ⌘+/⌘-. Colours and
-    /// anything else come from ghostty's own config, which it loads itself.
+    /// The font is set here; colours come from a `TerminiTerminalTheme` picked
+    /// to match the app's appearance — a light preset when the desktop is in
+    /// light mode, a dark one otherwise. The surface applies the theme's OSC
+    /// colour sequences live, so flipping the system appearance re-themes every
+    /// mounted surface without a relaunch. Padding still rides along via the
+    /// extra config file below.
     private var appearance: TerminiTerminalAppearance {
         TerminiTerminalAppearance(
+            theme: colorScheme == .light ? .blueprint : .midnightBloom,
             fontSize: config.data.fontSize,
             fontFamily: TerminiTerminalFontFamily(
                 name: Self.familyName(of: config.data.fontName)),
