@@ -122,9 +122,10 @@ final class Workspace: ObservableObject {
         title: String,
         launch: TerminalSession.Launch,
         vmName: String? = nil,
+        autoName: Bool = false,
         persist: Bool = true
     ) {
-        let session = TerminalSession(title: title, launch: launch, vmName: vmName)
+        let session = TerminalSession(title: title, launch: launch, vmName: vmName, autoNameArmed: autoName)
         sessions.append(session)
         observeSessions()
         selectedSessionID = session.id

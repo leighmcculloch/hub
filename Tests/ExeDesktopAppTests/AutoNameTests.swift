@@ -110,6 +110,60 @@ final class AutoNameTests: XCTestCase {
         XCTAssertEqual(results["empty payload"], "")
     }
 
+    // MARK: - Shelley, the third harness
+
+    /// The capture script posts to the handler the app registers, matches
+    /// Shelley's two send-message endpoints, and fires once — the pieces the
+    /// app's `WKScriptMessageHandler` and the page agree on without sharing code.
+    func testFirstPromptCaptureScriptShape() {
+        let js = AutoName.firstPromptCaptureScript
+        XCTAssertTrue(js.contains("window.webkit.messageHandlers.\(AutoName.messageHandlerName)"))
+        // A first message goes to /conversations/new, a later one to /chat.
+        XCTAssertTrue(js.contains("/\\/chat(?:\\?|$)/"))
+        XCTAssertTrue(js.contains("/conversations\\/new"))
+        XCTAssertTrue(js.contains("\"POST\""))
+        XCTAssertTrue(js.contains("parsed.message"))
+        // A `sent` flag is what keeps it to one prompt per tab.
+        XCTAssertTrue(js.contains("sent") && js.contains("sent = true"))
+        // Wrapping fetch, not replacing it: the chat still goes through.
+        XCTAssertTrue(js.contains("origFetch") && js.contains("origFetch.apply"))
+    }
+
+    /// `renameCommand` runs the script under a login shell — the only place the
+    /// rename token is exported — and points at the script by the same name the
+    /// bootstrap installs.
+    func testRenameCommandRunsTheScriptUnderALoginShell() {
+        let cmd = AutoName.renameCommand(prompt: "add oauth login")
+        XCTAssertTrue(cmd.hasPrefix("bash -l -c "), cmd)
+        XCTAssertTrue(cmd.contains("python3 \"$HOME/\(AutoName.scriptName)\""), cmd)
+    }
+
+    /// The prompt reaches the script verbatim through the login shell, the SSH
+    /// argument, and two layers of shell-quoting — including a single quote and
+    /// a newline, the characters most likely to be mangled. Run for real with a
+    /// stub script, so the quoting is checked rather than assumed.
+    func testRenameCommandDeliversThePromptVerbatim() throws {
+        let home = try freshHome()
+        // A stub that answers the way the real script's `task` would: parse the
+        // JSON argv and print the prompt it carries.
+        let stub = home + "/" + AutoName.scriptName
+        try """
+        #!/usr/bin/env python3
+        import json, sys
+        print(json.loads(sys.argv[1])["prompt"])
+        """.write(toFile: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub)
+
+        let prompt = "He said 'hi'\nand a second line"
+        let cmd = AutoName.renameCommand(prompt: prompt)
+        // Simulate sshd: a clean environment, the command handed to a non-login
+        // shell that itself execs the login shell `renameCommand` asks for.
+        guard let output = try runShell("bash -c " + quote(cmd), home: home) else {
+            throw XCTSkip("no bash to check the delivered prompt with")
+        }
+        XCTAssertEqual(output, prompt)
+    }
+
     // MARK: - Helpers
 
     /// `sanitize` and `task` applied to a spread of inputs, in one python3 run.
@@ -173,6 +227,54 @@ final class AutoNameTests: XCTestCase {
         if process.terminationStatus == 127 { return nil }
         XCTAssertEqual(process.terminationStatus, 0,
                        String(data: error, encoding: .utf8) ?? "python3 failed")
+        return String(data: out, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// An empty home directory for the stub script to live in, removed after.
+    private func freshHome() throws -> String {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("autoname-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url.path
+    }
+
+    /// Single-quote `argument` for a POSIX shell, escaping embedded quotes —
+    /// the same spelling `Bootstrap.shellQuote` uses, here so the test can build
+    /// the outer `bash -c` command that wraps `renameCommand`'s output.
+    private func quote(_ argument: String) -> String {
+        "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Run `command` under `/bin/sh` with `HOME` set to `home` and little else,
+    /// returning trimmed stdout — or nil when there is no shell, which is a
+    /// skip rather than a failure.
+    private func runShell(_ command: String, home: String) throws -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+        process.environment = [
+            "HOME": home,
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+        ]
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        let out = stdout.fileHandleForReading.readDataToEndOfFile()
+        let error = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        // 127 is the shell or python3 not being found — a skip, not a failure,
+        // the same call the `python` helper makes.
+        if process.terminationStatus == 127 { return nil }
+        XCTAssertEqual(process.terminationStatus, 0,
+                       String(data: error, encoding: .utf8) ?? "shell failed")
         return String(data: out, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

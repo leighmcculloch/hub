@@ -524,8 +524,8 @@ struct NewSessionSheet: View {
 
     @MainActor
     private func create() async {
-        if let (launch, title, vmName) = await provisioner.provision(gitIdentity: workspace.gitIdentity) {
-            workspace.addSession(title: title, launch: launch, vmName: vmName)
+        if let (launch, title, vmName, autoName) = await provisioner.provision(gitIdentity: workspace.gitIdentity) {
+            workspace.addSession(title: title, launch: launch, vmName: vmName, autoName: autoName)
             dismiss()
         }
     }

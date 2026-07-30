@@ -376,4 +376,80 @@ enum AutoName {
             main()
         """#
     }
+
+    // MARK: - Shelley, the third harness
+
+    /// The name of the `WKScriptMessageHandler` the capture script posts to and
+    /// the app registers, kept in one place so the two sides can't drift apart.
+    static let messageHandlerName = "shelleyFirstPrompt"
+
+    /// JavaScript injected into a Shelley tab's page at document start, so the
+    /// app can do for Shelley what a `UserPromptSubmit` hook does for Claude
+    /// Code: see the first prompt and hand it to the rename script.
+    ///
+    /// Shelley has no hook of its own, and the app only sees the bytes its
+    /// webview draws, so the prompt is caught at the network layer instead.
+    /// Shelley sends a user message one of two ways: a first message POSTs to
+    /// `…/conversations/new` (`sendMessageWithNewConversation`), a later one to
+    /// `…/conversation/<id>/chat` (`sendMessage`) — both with `{message, …}`.
+    /// Wrapping `fetch` reads that `message` without depending on Shelley's DOM,
+    /// only on those two URL shapes and the field name. The first match is
+    /// posted to the message handler and the wrapper goes quiet — one prompt
+    /// names one VM, and the rest are left to the page. Everything is guarded so
+    /// a Shelley UI change can never raise an exception over its own chat.
+    static let firstPromptCaptureScript = #"""
+    (function () {
+      var handler = window.webkit
+        && window.webkit.messageHandlers
+        && window.webkit.messageHandlers.\#(messageHandlerName);
+      if (!handler) return;
+      var sent = false;
+      var origFetch = window.fetch;
+      window.fetch = function (input, init) {
+        try {
+          if (!sent && init
+              && (init.method || "GET").toUpperCase() === "POST") {
+            var url = typeof input === "string" ? input
+                    : (input && input.url) || "";
+            if (/\/(?:conversations\/new|chat)(?:\?|$)/.test(url)
+                && typeof init.body === "string") {
+              var parsed = JSON.parse(init.body);
+              if (parsed && typeof parsed.message === "string"
+                  && parsed.message.trim()) {
+                sent = true;
+                handler.postMessage({ prompt: parsed.message });
+              }
+            }
+          }
+        } catch (e) { /* never let naming break the chat */ }
+        return origFetch.apply(this, arguments);
+      };
+    })();
+    """#
+
+    /// The remote command that feeds a captured Shelley prompt to the rename
+    /// script — the same `{"prompt": …}` payload Codex's `notify` delivers, just
+    /// sent over SSH from the app instead of by a harness hook.
+    ///
+    /// Run under `bash -l` because the rename token (`EXE_RENAME_TOKEN`) is
+    /// exported by `/etc/profile.d`, so only a login shell sees it: a bare
+    /// `ssh host 'cmd'` runs a non-login shell and the script would find no
+    /// token and rename nothing. The JSON is built with `JSONSerialization` so
+    /// the prompt's quotes and newlines survive, then shell-quoted for the
+    /// trip through SSH argument and remote-shell parsing. The script's own
+    /// armed/marker gates still decide whether a rename happens, so a named
+    /// session — which never armed — is left alone even if this is run.
+    static func renameCommand(prompt: String) -> String {
+        let payload: String
+        if let data = try? JSONSerialization.data(withJSONObject: ["prompt": prompt]),
+           let json = String(data: data, encoding: .utf8) {
+            payload = json
+        } else {
+            // Malformed in a way the script's `task` turns into "" — no rename
+            // — rather than handing it JSON it can't parse.
+            payload = "{\"prompt\":\"\"}"
+        }
+        let inner = "python3 \"$HOME/\(scriptName)\" " + Bootstrap.shellQuote(payload)
+        return "bash -l -c " + Bootstrap.shellQuote(inner)
+    }
 }

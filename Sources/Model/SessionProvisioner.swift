@@ -127,7 +127,7 @@ final class SessionProvisioner: ObservableObject {
     /// `gitIdentity` seeds the VM's commit identity. Repos are optional — a
     /// session with none is just a bare VM.
     func provision(gitIdentity: (name: String, email: String)? = nil) async
-        -> (launch: TerminalSession.Launch, title: String, vmName: String)?
+        -> (launch: TerminalSession.Launch, title: String, vmName: String, autoName: Bool)?
     {
         let chosen = chosenRepos
 
@@ -191,7 +191,7 @@ final class SessionProvisioner: ObservableObject {
 
             let trimmedName = sessionName.trimmingCharacters(in: .whitespaces)
             let title = !trimmedName.isEmpty ? trimmedName : vmName
-            return (.ssh(destination: destination, bootstrap: bootstrap), title, vmName)
+            return (.ssh(destination: destination, bootstrap: bootstrap), title, vmName, autoNameToken != nil)
         } catch {
             errorMessage = error.localizedDescription
             phase = .failed

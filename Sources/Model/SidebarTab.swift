@@ -17,10 +17,26 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published var canGoBack = false
     @Published var canGoForward = false
 
-    init(initialAddress: String) {
-        address = initialAddress
+    /// Called once with the first prompt typed into a Shelley tab, so the app
+    /// can name the VM from it the way Claude Code's hook would. nil for an
+    /// ordinary browser tab, which has no prompt to capture.
+    private let onFirstPrompt: ((String) -> Void)?
+    /// The relay registered as the message handler, held so it can be torn down
+    /// after the first prompt. The content controller also retains it; this is
+    /// so removal is reachable without the controller knowing our name.
+    private var firstPromptRelay: FirstPromptRelay?
+    /// One prompt names one VM: further messages are ignored even if the page
+    /// reloads and re-runs the capture script.
+    private var firstPromptFired = false
+
+    init(initialAddress: String, onFirstPrompt: ((String) -> Void)? = nil) {
+        self.address = initialAddress
+        self.onFirstPrompt = onFirstPrompt
         super.init()
         webView.navigationDelegate = self
+        if onFirstPrompt != nil {
+            installFirstPromptCapture()
+        }
         load()
     }
 
@@ -58,6 +74,56 @@ final class BrowserModel: NSObject, ObservableObject {
         canGoForward = webView.canGoForward
         if let current = webView.url?.absoluteString { address = current }
         pageTitle = webView.title ?? ""
+    }
+
+    // MARK: - First-prompt capture (Shelley)
+
+    /// Wires the page to report its first chat message back to the app. The
+    /// script wraps `fetch` at document start; the relay receives what it posts
+    /// without the content controller retaining `self` — the cycle that would
+    /// otherwise keep this model and its web view alive after the tab closes.
+    private func installFirstPromptCapture() {
+        let controller = webView.configuration.userContentController
+        let relay = FirstPromptRelay(self)
+        firstPromptRelay = relay
+        controller.add(relay, contentWorld: .page, name: AutoName.messageHandlerName)
+        controller.addUserScript(WKUserScript(
+            source: AutoName.firstPromptCaptureScript,
+            contentWorld: .page,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true))
+    }
+
+    /// Called by the relay on the first message from the page. Hands the prompt
+    /// to the closure once, then unregisters the handler so a reloaded page
+    /// finds no handler to post to and the capture goes quiet for good.
+    func receiveFirstPrompt(_ message: WKScriptMessage) {
+        guard !firstPromptFired else { return }
+        let prompt: String?
+        if let object = message.body as? [String: Any] {
+            prompt = object["prompt"] as? String
+        } else {
+            prompt = message.body as? String
+        }
+        guard let prompt, !prompt.isEmpty else { return }
+        firstPromptFired = true
+        webView.configuration.userContentController
+            .removeScriptMessageHandler(forName: AutoName.messageHandlerName)
+        firstPromptRelay = nil
+        onFirstPrompt?(prompt)
+    }
+}
+
+/// Forwards a `WKScriptMessageHandler` callback to `BrowserModel` through a
+/// weak reference, so the content controller — which retains its handlers —
+/// can't keep the model (and its web view) alive past the tab's lifetime.
+private final class FirstPromptRelay: NSObject, WKScriptMessageHandler {
+    weak var sink: BrowserModel?
+    init(_ sink: BrowserModel) { self.sink = sink; super.init() }
+    func userContentController(
+        _ controller: WKUserContentController, didReceive message: WKScriptMessage
+    ) {
+        sink?.receiveFirstPrompt(message)
     }
 }
 

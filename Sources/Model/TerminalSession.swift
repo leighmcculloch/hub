@@ -61,6 +61,11 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// The exe.dev VM backing this session, if any. Needed to delete it.
     @Published private(set) var vmName: String?
 
+    /// True for a session created without a name, whose VM was armed to name
+    /// itself from the agent's first prompt. Set once, at creation; a reconnect
+    /// leaves it false, the same as arming itself isn't re-decided on reconnect.
+    let autoNameArmed: Bool
+
     /// Right-sidebar sub-tabs belonging to *this* session, so switching
     /// sessions swaps the whole sidebar. The diff tab is permanent.
     @Published var sidebarTabs: [SidebarTab] = [SidebarTab(kind: .diff, title: "Diff")]
@@ -137,10 +142,11 @@ final class TerminalSession: ObservableObject, Identifiable {
         case ignored
     }
 
-    init(title: String = "Terminal", launch: Launch = .localShell, vmName: String? = nil) {
+    init(title: String = "Terminal", launch: Launch = .localShell, vmName: String? = nil, autoNameArmed: Bool = false) {
         self.title = title
         self.launch = launch
         self.vmName = vmName
+        self.autoNameArmed = autoNameArmed
         if case let .ssh(destination, _) = launch {
             sshDestination = destination
         } else {
@@ -171,12 +177,36 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Open a tab showing this VM's Shelley, after the pane tabs. Unlike a pane
     /// tab this one is the app's own, so it appears straight away.
+    ///
+    /// For a session armed to auto-name, the tab is wired to report its first
+    /// prompt back so the VM can name itself — the same rename Claude Code's
+    /// hook triggers, since Shelley has no hook of its own.
     func newShelleyTab() {
-        guard let address = shelleyURL else { return }
+        guard let address = shelleyURL, let destination = sshDestination else { return }
+        // `destination` is captured by value so the closure need not reach into
+        // this main-actor model from WebKit's callback — no `self` to keep
+        // alive, no actor to cross.
+        let onFirstPrompt: ((String) -> Void)? = autoNameArmed
+            ? { prompt in Self.feedRenameScript(destination: destination, prompt: prompt) }
+            : nil
         let tab = TerminalTab(
-            paneID: nil, title: "Shelley", browser: BrowserModel(initialAddress: address))
+            paneID: nil, title: "Shelley",
+            browser: BrowserModel(initialAddress: address, onFirstPrompt: onFirstPrompt))
         tabs.append(tab)
         selectedTabID = tab.id
+    }
+
+    /// Feed a Shelley prompt to the on-VM rename script over the terminal's own
+    /// multiplexed SSH connection — the same `{"prompt": …}` payload Claude
+    /// Code's hook and Codex's notify deliver. Fire-and-forget: the script forks
+    /// and detaches, so this returns at once and never holds up the UI, and its
+    /// armed/marker gates still decide whether a rename actually happens.
+    private nonisolated static func feedRenameScript(destination: String, prompt: String) {
+        Task {
+            _ = await RemoteGit.run(
+                destination: destination,
+                remoteCommand: AutoName.renameCommand(prompt: prompt))
+        }
     }
 
     /// Kill the pane behind a tab. The tab goes when tmux reports the pane gone,
