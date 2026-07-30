@@ -7,10 +7,18 @@ import Foundation
 enum Bootstrap {
     /// Seeded to `~/.claude.json` on a fresh VM. Claude Code keeps onboarding
     /// state here rather than in `settings.json`, so this is what actually
-    /// suppresses the first-run flow.
+    /// suppresses the first-run flow. The custom API key the app injects (the
+    /// literal "implicit") is pre-approved here, so Claude Code never prompts
+    /// to trust it; `trustHomeDirectories` re-asserts the same on reconnect.
     static let claudeState = """
     {
-      "hasCompletedOnboarding": true
+      "hasCompletedOnboarding": true,
+      "customApiKeyResponses": {
+        "approved": [
+          "implicit"
+        ],
+        "rejected": []
+      }
     }
     """
 
@@ -339,9 +347,20 @@ enum Bootstrap {
         """
     }
 
-    /// Merges `hasTrustDialogAccepted` for `$HOME` and each visible directory
-    /// under it into `~/.claude.json`. Tolerates a missing or malformed file,
-    /// and is a no-op if python3 isn't present.
+    /// Merges `~/.claude.json` so a fresh VM — and a reconnect to one that's
+    /// accumulated real state — never hits the first-run flow, the custom API
+    /// key prompt, or the per-directory trust dialog.
+    ///
+    /// `hasCompletedOnboarding` skips onboarding. `customApiKeyResponses`
+    /// pre-approves the custom API key the app injects (the literal
+    /// "implicit"), merged non-destructively so a key the user approved or
+    /// rejected elsewhere is left in place — we only make sure "implicit" is
+    /// approved and not rejected. `hasTrustDialogAccepted` is set for `$HOME`
+    /// and every repo cloned under it: the top-level scan covers the repos
+    /// this script clones, and a depth-bounded walk picks up a repo cloned
+    /// anywhere below `$HOME` too. Hidden and heavy directories are skipped
+    /// so the walk stays cheap on every reconnect. Tolerates a missing or
+    /// malformed file, and is a no-op if python3 isn't present.
     static let trustHomeDirectories = """
 
     python3 - <<'PYEOF' || true
@@ -355,15 +374,42 @@ enum Bootstrap {
         data = {}
     if not isinstance(data, dict):
         data = {}
-    data.setdefault("hasCompletedOnboarding", True)
+
+    data["hasCompletedOnboarding"] = True
+
+    # Pre-approve the injected custom API key ("implicit"), non-destructively.
+    cap = data.setdefault("customApiKeyResponses", {})
+    if not isinstance(cap, dict):
+        cap = data["customApiKeyResponses"] = {}
+    approved = cap.setdefault("approved", [])
+    if not isinstance(approved, list):
+        approved = cap["approved"] = []
+    if "implicit" not in approved:
+        approved.append("implicit")
+    rejected = cap.get("rejected")
+    if isinstance(rejected, list):
+        if "implicit" in rejected:
+            rejected.remove("implicit")
+    else:
+        rejected = []
+    cap["rejected"] = rejected
+
+    # Trust $HOME and every repo cloned under it.
     projects = data.setdefault("projects", {})
     if not isinstance(projects, dict):
         projects = data["projects"] = {}
-    targets = [home]
+    skip = {"node_modules", "__pycache__", "dist", "build", "target", "venv"}
+    targets = {home}
     for name in sorted(os.listdir(home)):
         full = os.path.join(home, name)
         if not name.startswith(".") and os.path.isdir(full):
-            targets.append(full)
+            targets.add(full)
+    for root, dirs, _ in os.walk(home, topdown=True):
+        dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
+        if os.path.isdir(os.path.join(root, ".git")):
+            targets.add(root)
+        if os.path.relpath(root, home).count(os.sep) >= 4:
+            dirs[:] = []
     for target in targets:
         entry = projects.setdefault(target, {})
         if isinstance(entry, dict):

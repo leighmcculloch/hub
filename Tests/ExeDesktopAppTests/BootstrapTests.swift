@@ -229,6 +229,63 @@ final class BootstrapTests: XCTestCase {
         }
     }
 
+    // MARK: - Trust and API key approval
+
+    /// $HOME itself is a working directory the user can open Claude in, so it
+    /// must be trusted, not only the repos cloned beneath it.
+    func testHomeIsTrusted() throws {
+        let home = try runInFreshHome(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: []))
+        let projects = try XCTUnwrap(
+            try json(at: home + "/.claude.json")["projects"] as? [String: Any])
+        let entry = try XCTUnwrap(projects[home] as? [String: Any])
+        XCTAssertEqual(entry["hasTrustDialogAccepted"] as? Bool, true)
+    }
+
+    /// A repo cloned below the top level of $HOME must be trusted too, not
+    /// just the repos this script clones into $HOME directly.
+    func testANestedRepoIsTrusted() throws {
+        let home = try makeHome()
+        let nested = home + "/projects/thing"
+        try FileManager.default.createDirectory(
+            atPath: nested + "/.git", withIntermediateDirectories: true)
+        _ = try runScript(Bootstrap.script(setupScript: "", claudeSettings: "", repos: []),
+                          gitExitCode: 0, home: home)
+
+        let projects = try XCTUnwrap(
+            try json(at: home + "/.claude.json")["projects"] as? [String: Any])
+        let entry = try XCTUnwrap(projects[nested] as? [String: Any])
+        XCTAssertEqual(entry["hasTrustDialogAccepted"] as? Bool, true)
+    }
+
+    /// The custom API key the app injects ("implicit") must be approved in
+    /// ~/.claude.json, so Claude Code starts without prompting to trust it.
+    func testTheCustomApiKeyIsPreApproved() throws {
+        let home = try runInFreshHome(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: []))
+        let cap = try XCTUnwrap(
+            try json(at: home + "/.claude.json")["customApiKeyResponses"] as? [String: Any])
+        let approved = try XCTUnwrap(cap["approved"] as? [String])
+        XCTAssertTrue(approved.contains("implicit"), "\(cap)")
+    }
+
+    /// A reconnect reruns the bootstrap: an earlier state that rejected
+    /// "implicit" must be repaired, not left blocking the key.
+    func testTheCustomApiKeyStaysApprovedOnRerun() throws {
+        let home = try makeHome()
+        try Data(#"{"customApiKeyResponses":{"approved":[],"rejected":["implicit"]}}"#.utf8)
+            .write(to: URL(fileURLWithPath: home + "/.claude.json"))
+        _ = try runScript(Bootstrap.script(setupScript: "", claudeSettings: "", repos: []),
+                          gitExitCode: 0, home: home)
+
+        let cap = try XCTUnwrap(
+            try json(at: home + "/.claude.json")["customApiKeyResponses"] as? [String: Any])
+        let approved = try XCTUnwrap(cap["approved"] as? [String])
+        let rejected = try XCTUnwrap(cap["rejected"] as? [String])
+        XCTAssertTrue(approved.contains("implicit"), "\(cap)")
+        XCTAssertFalse(rejected.contains("implicit"), "\(cap)")
+    }
+
     /// Existing files on the VM carry real state and must never be clobbered.
     func testSeededFilesAreOnlyWrittenWhenAbsent() {
         let script = Bootstrap.script(setupScript: "", claudeSettings: #"{"a":1}"#, repos: [])
