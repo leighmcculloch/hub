@@ -54,7 +54,8 @@ struct AppConfigData: Codable {
       "remoteControlAtStartup": true,
       "hasCompletedOnboarding": true,
       "disableWorkflows": false,
-      "prefersReducedMotion": true
+      "prefersReducedMotion": true,
+      "skipDangerousModePermissionPrompt": true
     }
     """
 
