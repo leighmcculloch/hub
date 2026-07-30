@@ -16,8 +16,7 @@ settings:
 
 packages:
   Termini:
-    url: https://github.com/arach/Termini.git
-    revision: 5fe5375dc7742fc436a5c03583e17c9a64afb6e2
+    path: Vendor/Termini
 
 targets:
   ExeDesktopApp:

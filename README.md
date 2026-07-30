@@ -190,9 +190,9 @@ which consumes OSC 7 itself, so the path comes from tmux's
 
 ## Building
 
-Termini is pulled via Swift Package Manager, and it fetches the prebuilt
-`GhosttyKit.xcframework` for you — nothing to vendor or build by hand. There are
-two ways to build.
+Termini is vendored under `Vendor/Termini` (see its `README.md` for why) as a
+local Swift package, which still fetches the prebuilt `GhosttyKit.xcframework`
+for you — nothing to build by hand. There are two ways to build.
 
 ### Swift CLI (fastest for dev)
 

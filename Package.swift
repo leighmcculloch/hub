@@ -8,14 +8,10 @@ let package = Package(
         .macOS(.v14)
     ],
     dependencies: [
-        // libghostty, wrapped as a SwiftUI surface. Pinned to a revision rather
-        // than a version: the embedding APIs this app uses — per-surface
-        // appearance config and the render-visibility gate that lets background
-        // tabs stay warm without drawing — landed after the only release tag.
-        .package(
-            url: "https://github.com/arach/Termini.git",
-            revision: "5fe5375dc7742fc436a5c03583e17c9a64afb6e2"
-        )
+        // libghostty, wrapped as a SwiftUI surface. Vendored locally (see
+        // Vendor/Termini/README.md) rather than pulled from arach/Termini,
+        // so we can carry a fix to its clipboard-write callback.
+        .package(path: "Vendor/Termini")
     ],
     targets: [
         .executableTarget(
