@@ -34,10 +34,11 @@ tab on [**exe.dev**](https://exe.dev):
 
 Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
 
-1. Name the session (the name becomes the VM name), choose an **environment**
-   and a **model**, and pick GitHub repos — selected repos hoist to the top of
-   the list. Existing VMs are listed too, so a closed session can be reopened
-   and continued.
+1. Name the session (the name becomes the VM name) or leave it blank to have the
+   VM **name itself** — see below — then choose an **environment** and a
+   **model**, and pick GitHub repos — selected repos hoist to the top of the
+   list. Existing VMs are listed too, so a closed session can be reopened and
+   continued.
 2. For each chosen repo the app checks for an existing exe.dev GitHub
    integration (`integrations list`) and, if missing, creates one that acts as
    you, attached to a per-repo tag
@@ -58,6 +59,32 @@ Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
    (merged, never clobbering existing state), so Claude Code doesn't prompt
    per folder.
 
+### Sessions that name themselves
+
+Leave the name blank and the VM names itself after the work you give it. The
+first prompt Claude Code or Codex receives triggers a hook on the VM, which asks
+the exe.dev LLM gateway (`claude-haiku-4-5`, keyless from inside a VM) for a
+two-to-four-word name and calls `rename` on the exe.dev API. The tab, the VM and
+its hostname all follow — the app polls each connected VM's own
+`reflection.int.exe.xyz` name every 10s, so a rename shows up in the sidebar and
+in the stored workspace without you doing anything.
+
+It happens once per VM, and only for a VM created from a blank name: a name you
+typed is never replaced. The pieces on the VM are all in the home directory —
+`.exe-autoname` (the script), `.exe-autoname-armed` (this VM may rename itself)
+and `.exe-autoname-done` (it already tried; the file says what happened). The
+hook is wired into `~/.claude/settings.json` as a `UserPromptSubmit` hook and
+into `~/.codex/config.toml` as `notify`, both merged into whatever is already
+there. Codex gets `notify` rather than its own `UserPromptSubmit` hook because a
+Codex hook stays inert until someone runs `/hooks` and trusts it.
+
+The VM does the renaming, so it needs a token — a **`rename`-only** one, minted
+by the app (`ssh-key generate-api-key --cmds=rename`), cached in the app's
+config, and passed to the VM as `EXE_RENAME_TOKEN`. It can rename that machine
+and nothing else, which is the point: an agent runs on the VM with permissions
+bypassed. If your account token may not mint one, the session is still created
+and the new-session log says so.
+
 If an SSH session drops while the app is in the background, it reconnects
 automatically when the app regains focus — and because the panes live in tmux,
 it reattaches to the running session rather than starting over, restoring each
@@ -70,7 +97,8 @@ pane's screen as its tab comes back.
 - **exe.dev token** — set it in Settings (`⌘,`) or the `EXE_DEV_TOKEN`
   environment variable. It is stored in `~/Library/Application Support/ExeDesktopApp/config.json`,
   never in this repo. The token needs these command permissions (`cmds`):
-  `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`.
+  `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`,
+  and — for sessions that name themselves — `ssh-key generate-api-key`.
 - **Environments** — a named bundle of a **setup script**, a **start command**,
   and its own environment variables, edited in Settings and chosen per session.
   Ships with two: *Claude Code* (starts `claude`, with a blank
@@ -162,10 +190,11 @@ writes, notifications when windows and panes come, go and get renamed, and a
 | Terminal session | `Sources/Model/TerminalSession.swift` — a local shell, or a tmux session whose panes are `TerminalTab`s |
 | Terminal output | `Sources/Model/TerminalOSC.swift` — reads the title and cwd out of a local shell's byte stream |
 | Provisioning | `Sources/Model/SessionProvisioner.swift` — repo pick → integration → VM → SSH bootstrap |
-| exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create) |
+| exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create), `RemoteVM` (what a VM says its name is now) |
 | GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
 | Config | `Sources/Config/` — persisted token, font, env vars, environments (`AppConfig`, `EnvVar`, `SessionEnvironment`) |
 | Bootstrap | `Sources/Model/Bootstrap.swift` — VM naming + the remote bootstrap script |
+| Auto-naming | `Sources/Model/AutoName.swift` — the script a VM renames itself with, and the token it uses |
 | Model gateway | `Sources/Model/LLMGateway.swift` — the exe.dev model catalogue and the harness configuration a choice turns into |
 | App state | `Sources/Model/Workspace.swift` — sessions + exe.dev service |
 | Git diff | `Sources/Git/GitWorktree.swift` (local) and `Sources/Git/RemoteGit.swift` (git over SSH on the VM) |

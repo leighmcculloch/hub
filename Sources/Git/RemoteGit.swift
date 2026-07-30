@@ -146,7 +146,11 @@ enum RemoteGit {
     }
 
     /// Run one remote command, returning stdout on success (exit 0), else nil.
-    private static func run(destination: String, remoteCommand: String) async -> String? {
+    ///
+    /// Not private because this is the app's one way of running something on a
+    /// VM over the terminal's connection; `RemoteVM` asks the VM its name with
+    /// it.
+    static func run(destination: String, remoteCommand: String) async -> String? {
         try? await runOrThrow(destination: destination, remoteCommand: remoteCommand)
     }
 

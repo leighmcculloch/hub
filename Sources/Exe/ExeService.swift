@@ -62,6 +62,44 @@ final class ExeService {
         try await client.run("rm \(name)")
     }
 
+    /// Mint the token a VM renames itself with — scoped to `rename` alone, so
+    /// it can sit on a machine an agent runs unattended on. See `AutoName`.
+    ///
+    /// Throws when the account's own token isn't allowed to mint one, which is
+    /// the common case until `ssh-key generate-api-key` is added to its `cmds`.
+    func generateRenameToken() async throws -> String {
+        let data = try await client.run(AutoName.mintTokenCommand)
+        guard let token = Self.apiKey(from: data) else {
+            throw ExeError(message: "No API key in exe.dev's reply: \(MessageText.condense(data))")
+        }
+        return token
+    }
+
+    /// The token out of `ssh-key generate-api-key --json`.
+    ///
+    /// Found by shape rather than by key name: exe.dev tokens are `exe0.`/`exe1.`
+    /// strings, and that is the one thing about this response worth relying on —
+    /// a renamed field would otherwise turn auto-naming off silently.
+    static func apiKey(from data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        return token(in: root)
+    }
+
+    private static func token(in value: Any) -> String? {
+        switch value {
+        case let text as String:
+            return text.hasPrefix("exe0.") || text.hasPrefix("exe1.") ? text : nil
+        case let list as [Any]:
+            return list.compactMap(token(in:)).first
+        case let object as [String: Any]:
+            // Sorted so a response with two token-shaped values resolves the
+            // same way every time rather than on dictionary order.
+            return object.sorted { $0.key < $1.key }.compactMap { token(in: $0.value) }.first
+        default:
+            return nil
+        }
+    }
+
     /// Ensure a GitHub integration exists for `repo` ("owner/name") and return
     /// the tag that binds it to a VM, creating the integration (acting as the
     /// user) if it doesn't already exist.

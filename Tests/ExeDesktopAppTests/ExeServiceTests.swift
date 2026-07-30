@@ -73,6 +73,30 @@ final class ExeServiceTests: XCTestCase {
         let integrations = try JSONDecoder().decode([ExeIntegration].self, from: Data(json.utf8))
         XCTAssertNil(integrations[0].attachedTag)
     }
+
+    // MARK: - The minted rename token
+
+    /// Found by shape, not by field name: the reply's key isn't something worth
+    /// pinning a feature on, but an `exe0.`/`exe1.` string is a token.
+    func testAPIKeyIsFoundWhateverItIsCalled() {
+        for json in [#"{"api_key":"exe1.AAA"}"#,
+                     #"{"token":"exe1.AAA"}"#,
+                     #"{"key":{"value":"exe1.AAA"},"label":"x"}"#,
+                     #"{"keys":["exe1.AAA"]}"#] {
+            XCTAssertEqual(ExeService.apiKey(from: Data(json.utf8)), "exe1.AAA", json)
+        }
+        XCTAssertEqual(ExeService.apiKey(from: Data(#"{"t":"exe0.eyJ9.AAA"}"#.utf8)),
+                       "exe0.eyJ9.AAA")
+    }
+
+    /// A reply with no token in it must read as a failure, not as an empty token
+    /// that then goes onto a VM.
+    func testNoAPIKeyIsFoundInAnUnrelatedReply() {
+        XCTAssertNil(ExeService.apiKey(from: Data(#"{"error":"not allowed"}"#.utf8)))
+        XCTAssertNil(ExeService.apiKey(from: Data(#"{"label":"exe-desktop-autoname"}"#.utf8)))
+        XCTAssertNil(ExeService.apiKey(from: Data("not json".utf8)))
+        XCTAssertNil(ExeService.apiKey(from: Data()))
+    }
 }
 
 /// Config values that get persisted and round-tripped.

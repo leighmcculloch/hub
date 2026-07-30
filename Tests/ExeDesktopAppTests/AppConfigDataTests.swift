@@ -122,11 +122,15 @@ final class AppConfigDataTests: XCTestCase {
         original.fontName = "SF Mono"
         original.fontSize = 15
         original.globalEnvironment = [EnvVar(key: "FOO", value: "bar")]
+        original.renameToken = "exe1.AAA"
+        original.renameTokenMinted = Date(timeIntervalSince1970: 1_780_000_000)
 
         let decoded = try JSONDecoder().decode(
             AppConfigData.self, from: JSONEncoder().encode(original))
 
         XCTAssertEqual(decoded.exeToken, original.exeToken)
+        XCTAssertEqual(decoded.renameToken, original.renameToken)
+        XCTAssertEqual(decoded.renameTokenMinted, original.renameTokenMinted)
         XCTAssertEqual(decoded.environments, original.environments)
         XCTAssertEqual(decoded.selectedEnvironmentID, original.selectedEnvironmentID)
         XCTAssertEqual(decoded.model, original.model)

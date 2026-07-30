@@ -389,6 +389,80 @@ final class BootstrapTests: XCTestCase {
         XCTAssertTrue(output.contains("left ~/.codex/config.toml alone"), output)
     }
 
+    // MARK: - Auto-naming
+
+    /// Arming is a decision made once, when a VM is created for a session
+    /// nobody named. The wiring itself is emitted every time, gated on the flag
+    /// that arming leaves behind.
+    func testArmingOnlyHappensWhenAsked() {
+        let armed = Bootstrap.script(setupScript: "", claudeSettings: "", repos: [],
+                                     autoName: true)
+        let plain = Bootstrap.script(setupScript: "", claudeSettings: "", repos: [])
+        XCTAssertTrue(armed.contains(": > \"$HOME/\(AutoName.armedName)\""))
+        XCTAssertFalse(plain.contains(": > \"$HOME/\(AutoName.armedName)\""))
+        for script in [armed, plain] {
+            XCTAssertTrue(script.contains("if [ -e \"$HOME/\(AutoName.armedName)\" ]; then"))
+        }
+    }
+
+    /// Run for real: an armed VM ends up with the script installed and both
+    /// harnesses pointing at it.
+    func testAnArmedVMGetsTheScriptAndBothHooks() throws {
+        let home = try runInFreshHome(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [], autoName: true))
+        let script = home + "/" + AutoName.scriptName
+
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: script))
+        XCTAssertTrue(try text(at: home + "/.claude/settings.json").contains(script))
+        XCTAssertTrue(try text(at: home + "/.codex/config.toml")
+            .hasPrefix("notify = [\"\(script)\"]"))
+    }
+
+    /// A session the user named keeps its name: nothing is installed, and the
+    /// harnesses are left as they were.
+    func testAnUnarmedVMIsLeftAlone() throws {
+        let home = try runInFreshHome(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: []))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/" + AutoName.scriptName))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/.claude/settings.json"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/.codex/config.toml"))
+    }
+
+    /// Two ways the auto-naming and the model configuration share one file, both
+    /// checked by picking a model *after* the VM was created without one: the
+    /// notify hook alone must not read as a config the user wrote (which would
+    /// refuse them a model ever after), and rewriting the file for the model must
+    /// not be the end of the hook.
+    func testReconnectingRestoresTheCodexHook() throws {
+        let home = try runInFreshHome(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [], autoName: true))
+        _ = try runScript(Bootstrap.script(
+            setupScript: "", claudeSettings: "", repos: [],
+            model: GatewayModel(provider: "anthropic", model: "claude-opus-5")),
+            gitExitCode: 0, home: home)
+
+        let codex = try text(at: home + "/.codex/config.toml")
+        XCTAssertTrue(codex.contains("notify = [\"\(home)/\(AutoName.scriptName)\"]"), codex)
+        XCTAssertTrue(codex.contains("claude-opus-5"), codex)
+    }
+
+    /// Wiring the hooks twice would leave two of them, running the naming twice
+    /// on the first prompt.
+    func testTheHooksAreNotDuplicatedOnRerun() throws {
+        let script = Bootstrap.script(setupScript: "", claudeSettings: "", repos: [],
+                                      autoName: true)
+        let home = try runInFreshHome(script)
+        _ = try runScript(script, gitExitCode: 0, home: home)
+
+        let hooks = try json(at: home + "/.claude/settings.json")["hooks"] as? [String: Any]
+        let groups = try XCTUnwrap(hooks?["UserPromptSubmit"] as? [Any])
+        XCTAssertEqual(groups.count, 1)
+        let notifyLines = try text(at: home + "/.codex/config.toml")
+            .split(separator: "\n").filter { $0.hasPrefix("notify = ") }
+        XCTAssertEqual(notifyLines.count, 1)
+    }
+
     // MARK: - Cloning repositories
 
     /// A failed clone used to be swallowed by `|| true`, so the user landed in

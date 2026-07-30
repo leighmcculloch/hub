@@ -6,6 +6,15 @@ struct AppConfigData: Codable {
     /// or supplied via the `EXE_DEV_TOKEN` environment variable.
     var exeToken: String = ""
 
+    /// A `rename`-only exe.dev token, handed to VMs that name themselves from
+    /// the agent's first prompt (see `AutoName`). Minted on demand rather than
+    /// entered, and cached here so one key on the account serves every session.
+    var renameToken: String = ""
+
+    /// When it was minted, so it can be replaced before its expiry passes and
+    /// takes auto-naming down with it.
+    var renameTokenMinted: Date?
+
     /// The ways a session can be run — setup script, start command, and its own
     /// environment variables. One is chosen when a session is created.
     var environments: [SessionEnvironment] = SessionEnvironment.defaults
@@ -82,6 +91,8 @@ struct AppConfigData: Codable {
         }
 
         exeToken = value(.exeToken, defaults.exeToken)
+        renameToken = value(.renameToken, defaults.renameToken)
+        renameTokenMinted = value(.renameTokenMinted, defaults.renameTokenMinted)
         // An empty list would leave nothing to select or edit, so it's treated
         // as absent rather than honoured.
         let stored = value(.environments, defaults.environments)

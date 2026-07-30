@@ -97,13 +97,15 @@ enum Bootstrap {
         repos: [String],
         startCommand: String = "",
         gitIdentity: (name: String, email: String)? = nil,
-        model: GatewayModel? = nil
+        model: GatewayModel? = nil,
+        autoName: Bool = false
     ) -> String {
         let encoded = Data(script(setupScript: setupScript,
                                   claudeSettings: claudeSettings,
                                   repos: repos,
                                   gitIdentity: gitIdentity,
-                                  model: model).utf8).base64EncodedString()
+                                  model: model,
+                                  autoName: autoName).utf8).base64EncodedString()
         return "printf %s '\(encoded)' | base64 -d > \(scriptPath)"
             + " && chmod +x \(scriptPath);"
             + " \(installTmux)"
@@ -172,12 +174,18 @@ enum Bootstrap {
     }
 
     /// The script body that gets base64-encoded into `command`.
+    /// `autoName` arms the VM to name itself from the agent's first prompt. Only
+    /// passed on the connect that *creates* the VM, and only when the session
+    /// was created without a name; the wiring itself is re-applied on every
+    /// connect, because a reconnect rewrites the harness configuration it lives
+    /// in. See `AutoName`.
     static func script(
         setupScript: String,
         claudeSettings: String,
         repos: [String],
         gitIdentity: (name: String, email: String)? = nil,
-        model: GatewayModel? = nil
+        model: GatewayModel? = nil,
+        autoName: Bool = false
     ) -> String {
         var script = "#!/usr/bin/env bash\n"
 
@@ -220,6 +228,13 @@ enum Bootstrap {
         if let model {
             script += harnessConfig(for: model)
         }
+
+        // After the harness configuration, which rewrites the very file Codex's
+        // half of the wiring goes into.
+        if autoName {
+            script += AutoName.arm
+        }
+        script += AutoName.install
 
         script += setupScript
         script += "\n"
@@ -268,6 +283,11 @@ enum Bootstrap {
     /// format here, so its file is only rewritten when it's absent or already
     /// names our provider — a `config.toml` someone wrote themselves is worth
     /// more than a model selection, and saying so beats overwriting it quietly.
+    ///
+    /// The auto-naming hook counts as ours too: on a session with no model
+    /// chosen it is the only thing in the file, and treating that as the user's
+    /// work would refuse them a model ever after. Rewriting it is safe because
+    /// the wiring runs again, after this, and puts its `notify` back.
     static func harnessConfig(for model: GatewayModel) -> String {
         let codex = Data(LLMGateway.codexConfig(for: model).utf8).base64EncodedString()
         let provider = Data(LLMGateway.piProvider(for: model).utf8).base64EncodedString()
@@ -277,7 +297,7 @@ enum Bootstrap {
         return """
 
         mkdir -p "$HOME/.codex"
-        if [ ! -e "$HOME/.codex/config.toml" ] || grep -q \(shellQuote(marker)) "$HOME/.codex/config.toml"; then
+        if [ ! -e "$HOME/.codex/config.toml" ] || grep -qF -e \(shellQuote(marker)) -e \(shellQuote(AutoName.scriptName)) "$HOME/.codex/config.toml"; then
           printf %s '\(codex)' | base64 -d > "$HOME/.codex/config.toml"
         else
           echo "exe: left ~/.codex/config.toml alone — it doesn't use the \(marker) provider." >&2

@@ -53,10 +53,13 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// The SSH destination for VM-backed sessions (nil for local shells). The
     /// diff sidebar uses this to run git over SSH against the VM.
-    let sshDestination: String?
+    ///
+    /// Not fixed for the session's lifetime: a VM that renames itself takes its
+    /// hostname with it. See `adopt(vmName:)`.
+    @Published private(set) var sshDestination: String?
 
     /// The exe.dev VM backing this session, if any. Needed to delete it.
-    let vmName: String?
+    @Published private(set) var vmName: String?
 
     /// Right-sidebar sub-tabs belonging to *this* session, so switching
     /// sessions swaps the whole sidebar. The diff tab is permanent.
@@ -101,7 +104,9 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
     }
 
-    private let launch: Launch
+    /// Replaced when the VM is renamed, so a reconnect dials the host that
+    /// still exists.
+    private var launch: Launch
 
     /// The local shell's PTY, for `.localShell` sessions.
     private var process: TerminiLocalPTYProcess?
@@ -324,6 +329,33 @@ final class TerminalSession: ObservableObject, Identifiable {
     private func initialPTYSize(_ tab: TerminalTab) -> TerminiLocalPTYProcess.Size {
         guard let size = tab.controller.currentSize() else { return .default }
         return .init(columns: size.columns, rows: size.rows)
+    }
+
+    /// Follow the VM's own name. A session created without one is named by the
+    /// VM itself, from the agent's first prompt (see `AutoName`), and the SSH
+    /// host moves with the name.
+    ///
+    /// The live connection is left running: it is already established, and tmux
+    /// is still on the other end of it. Only what a *future* connection needs
+    /// changes — along with the title, when the title was the name being
+    /// replaced rather than one the user chose.
+    ///
+    /// Returns whether anything changed, so the workspace persists a real rename
+    /// and not every poll.
+    @discardableResult
+    func adopt(vmName newName: String) -> Bool {
+        guard sshDestination != nil, !newName.isEmpty, newName != vmName else { return false }
+        let previous = vmName
+        vmName = newName
+        let destination = RemoteVM.destination(forName: newName)
+        sshDestination = destination
+        if case let .ssh(_, bootstrap) = launch {
+            launch = .ssh(destination: destination, bootstrap: bootstrap)
+        }
+        if title.isEmpty || title == previous {
+            title = newName
+        }
+        return true
     }
 
     /// Re-run the launch command. Recovers a dropped SSH session without losing

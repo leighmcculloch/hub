@@ -139,12 +139,18 @@ final class SessionProvisioner: ObservableObject {
             let vmName = Bootstrap.uniqueVMName(from: sessionName, existing: taken)
             let sessionEnvironment = config.data.selectedEnvironment
             let model = config.data.model
+            // A session nobody named gets its name from the work: the VM renames
+            // itself once the agent has a prompt to name it after. A name that
+            // was typed is left alone, hostname and all.
+            let unnamed = sessionName.trimmingCharacters(in: .whitespaces).isEmpty
+            let autoNameToken = unnamed ? await renameToken() : nil
             // The model's variables come last so they win: pointing Claude Code
             // at the gateway means blanking the token the environment sets.
             let environment = EnvVar.merged([
                 config.data.globalEnvironment,
                 sessionEnvironment.environment,
                 model.map { LLMGateway.environment(for: $0) } ?? [],
+                autoNameToken.map { [EnvVar(key: AutoName.tokenVariable, value: $0)] } ?? [],
             ])
             var creating = "Creating VM \(vmName) (tags: \(tags.joined(separator: ", "))"
             creating += "; environment: \(sessionEnvironment.name)"
@@ -165,7 +171,8 @@ final class SessionProvisioner: ObservableObject {
                 repos: chosen,
                 startCommand: sessionEnvironment.startCommand,
                 gitIdentity: gitIdentity,
-                model: model
+                model: model,
+                autoName: autoNameToken != nil
             )
             phase = .done
 
@@ -175,6 +182,30 @@ final class SessionProvisioner: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             phase = .failed
+            return nil
+        }
+    }
+
+    /// The token a VM renames itself with, cached between sessions: minting it
+    /// creates a key on the account, so one is reused until it nears expiry.
+    ///
+    /// Nil when the account's token may not mint one. Auto-naming is a
+    /// convenience, so that costs the name and nothing else — the session is
+    /// created either way, with a line on the log saying what to change.
+    private func renameToken() async -> String? {
+        let cached = config.data.renameToken
+        if !cached.isEmpty, !AutoName.tokenIsStale(minted: config.data.renameTokenMinted) {
+            return cached
+        }
+        log("Minting a rename-only token, so the VM can name itself…")
+        do {
+            let token = try await exe.generateRenameToken()
+            config.data.renameToken = token
+            config.data.renameTokenMinted = Date()
+            return token
+        } catch {
+            log("Auto-naming off (\(error.localizedDescription)) — add"
+                + " `ssh-key generate-api-key` to your exe.dev token's cmds.")
             return nil
         }
     }

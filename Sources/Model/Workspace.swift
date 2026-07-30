@@ -135,6 +135,10 @@ final class Workspace: ObservableObject {
 
     /// The bootstrap run when connecting to an already-provisioned VM. Repos
     /// are already cloned, so it only re-applies the idempotent setup steps.
+    ///
+    /// Auto-naming isn't armed here — that is a decision made once, when the VM
+    /// is created, and the VM has been carrying it ever since. Its wiring is
+    /// re-applied regardless, by the bootstrap itself.
     private func reconnectBootstrap() -> String {
         let environment = config.data.selectedEnvironment
         return Bootstrap.command(
@@ -257,6 +261,37 @@ final class Workspace: ObservableObject {
         if let selected = selectedSession {
             closeSession(selected)
         }
+    }
+
+    /// Keep the sidebar and the stored workspace on the names the VMs actually
+    /// have. A session created without a name is named by its VM, from the
+    /// agent's first prompt (see `AutoName`), and nothing tells the app when.
+    ///
+    /// Runs for as long as the window is open; each pass is one cheap command
+    /// per connected VM over the connection the terminal already holds.
+    func followVMRenames() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: RemoteVM.pollInterval)
+            if Task.isCancelled { break }
+            await adoptVMRenames()
+        }
+    }
+
+    /// Ask each connected VM its name and take it. A disconnected session is
+    /// skipped: its connection is gone, so there is nothing to ask through, and
+    /// the name it last had is the best guess for reconnecting.
+    private func adoptVMRenames() async {
+        var renamed = false
+        for session in sessions where !session.isDisconnected {
+            guard let destination = session.sshDestination,
+                  let name = await RemoteVM.name(destination: destination)
+            else { continue }
+            if session.adopt(vmName: name) { renamed = true }
+        }
+        guard renamed else { return }
+        persistSessions()
+        // The sidebar's list of VMs to reopen still holds the old name.
+        await loadAvailableVMs()
     }
 
     /// Re-establish any dropped SSH sessions. Called when the app regains focus.

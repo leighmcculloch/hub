@@ -22,6 +22,7 @@ PORTABLE=(
   Sources/Config/EnvVar.swift
   Sources/Config/SessionEnvironment.swift
   Sources/Config/SessionStore.swift
+  Sources/Model/AutoName.swift
   Sources/Model/Bootstrap.swift
   Sources/Model/DiffTarget.swift
   Sources/Model/LLMGateway.swift
@@ -32,6 +33,7 @@ PORTABLE=(
   Sources/Model/TerminalOSC.swift
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift
+  Sources/Exe/RemoteVM.swift
   Sources/Git/DiffParse.swift
   Sources/Git/GitLog.swift
   Sources/Git/GitWorktree.swift

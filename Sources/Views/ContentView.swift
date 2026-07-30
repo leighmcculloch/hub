@@ -60,6 +60,11 @@ struct ContentView: View {
             await workspace.loadAvailableVMs()
             workspace.restoreSessions()
         }
+        // A VM that named itself has a new name and a new hostname; both the
+        // sidebar and the stored workspace have to follow it.
+        .task {
+            await workspace.followVMRenames()
+        }
         .onAppear {
             sessionSidebarWidth = storedSessionSidebarWidth
             diffSidebarWidth = storedDiffSidebarWidth
