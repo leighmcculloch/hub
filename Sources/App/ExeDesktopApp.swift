@@ -19,6 +19,8 @@ struct ExeDesktopAppMain: App {
                     .keyboardShortcut("t", modifiers: [.command, .control])
                 Button("Close Session") { workspace.closeSelectedSession() }
                     .keyboardShortcut("w", modifiers: .command)
+                Button("Delete Session") { workspace.deleteSelectedSession() }
+                    .keyboardShortcut("d", modifiers: .command)
                 Button("New Browser Tab") { workspace.newBrowserTab() }
                     .keyboardShortcut("b", modifiers: [.command, .shift])
                 Divider()

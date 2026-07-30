@@ -22,6 +22,12 @@ final class Workspace: ObservableObject {
     /// Whether the new-session (repo picker) sheet is presented.
     @Published var presentingNewSession: Bool = false
 
+    /// Set when the user asks to delete a session (tab ✕ or ⌘D); deleting a VM
+    /// is irreversible, so it is confirmed before `deleteSession` runs. Held on
+    /// the workspace rather than the sidebar so ⌘D can arm it from the menu and
+    /// the confirmation can present even with the sidebar hidden.
+    @Published var sessionPendingDeletion: TerminalSession?
+
     /// VMs that exist on the exe.dev account. Listed in the sidebar at launch so
     /// a previous session can be reopened; none is connected until clicked.
     @Published var availableVMs: [ExeVM] = []
@@ -261,6 +267,26 @@ final class Workspace: ObservableObject {
         if let selected = selectedSession {
             closeSession(selected)
         }
+    }
+
+    /// Arm the confirmation to delete the selected session (⌘D). A VM-backed
+    /// session is irreversible — the VM and its disk go — so it routes through
+    /// `sessionPendingDeletion` and the confirmation dialog. A local shell has
+    /// nothing to destroy, so it just closes.
+    func deleteSelectedSession() {
+        guard let selected = selectedSession else { return }
+        if selected.vmName != nil {
+            sessionPendingDeletion = selected
+        } else {
+            closeSession(selected)
+        }
+    }
+
+    /// Run the pending deletion after the confirmation dialog is accepted.
+    func confirmPendingDeletion() {
+        guard let session = sessionPendingDeletion else { return }
+        sessionPendingDeletion = nil
+        Task { await deleteSession(session) }
     }
 
     /// Keep the sidebar and the stored workspace on the names the VMs actually

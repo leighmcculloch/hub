@@ -59,6 +59,25 @@ struct ContentView: View {
         .sheet(isPresented: $workspace.presentingNewSession) {
             NewSessionSheet(workspace: workspace)
         }
+        // Deleting a session (tab ✕ or ⌘D) destroys the VM and its disk, so it
+        // is confirmed. Attached here rather than the sidebar so ⌘D still
+        // presents when the sidebar is hidden.
+        .confirmationDialog(
+            "Delete VM \(workspace.sessionPendingDeletion?.vmName ?? "")?",
+            isPresented: Binding(
+                get: { workspace.sessionPendingDeletion != nil },
+                set: { if !$0 { workspace.sessionPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete VM", role: .destructive) {
+                workspace.confirmPendingDeletion()
+            }
+            .keyboardShortcut("y", modifiers: [])
+            Button("Cancel", role: .cancel) { workspace.sessionPendingDeletion = nil }
+        } message: {
+            Text("This destroys the VM and its disk. Anything not pushed is lost.")
+        }
         // Populate the sidebar with existing VMs on open, without connecting.
         .task {
             await workspace.loadGitHubUser()

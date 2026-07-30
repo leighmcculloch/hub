@@ -5,9 +5,6 @@ import SwiftUI
 struct SessionSidebar: View {
     @ObservedObject var workspace: Workspace
 
-    /// Set when the user clicks a tab's ✕; deleting a VM is irreversible so it
-    /// is confirmed first.
-    @State private var sessionPendingDeletion: TerminalSession?
     /// Same, for a VM in the EXISTING list that has no tab open.
     @State private var vmPendingDeletion: ExeVM?
     @State private var isHoveringNewSession = false
@@ -35,24 +32,6 @@ struct SessionSidebar: View {
         .frame(maxWidth: .infinity)
         .background(.thinMaterial)
         .confirmationDialog(
-            "Delete VM \(sessionPendingDeletion?.vmName ?? "")?",
-            isPresented: Binding(
-                get: { sessionPendingDeletion != nil },
-                set: { if !$0 { sessionPendingDeletion = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete VM", role: .destructive) {
-                if let session = sessionPendingDeletion {
-                    sessionPendingDeletion = nil
-                    Task { await workspace.deleteSession(session) }
-                }
-            }
-            Button("Cancel", role: .cancel) { sessionPendingDeletion = nil }
-        } message: {
-            Text("This destroys the VM and its disk. Anything not pushed is lost.")
-        }
-        .confirmationDialog(
             "Delete VM \(vmPendingDeletion?.vm_name ?? "")?",
             isPresented: Binding(
                 get: { vmPendingDeletion != nil },
@@ -66,6 +45,7 @@ struct SessionSidebar: View {
                     Task { await workspace.deleteVM(vm) }
                 }
             }
+            .keyboardShortcut("y", modifiers: [])
             Button("Cancel", role: .cancel) { vmPendingDeletion = nil }
         } message: {
             Text("This destroys the VM and its disk. Anything not pushed is lost.")
@@ -86,7 +66,7 @@ struct SessionSidebar: View {
                     onCloseTab: { workspace.closeSession(session) },
                     onDelete: {
                         if session.vmName != nil {
-                            sessionPendingDeletion = session
+                            workspace.sessionPendingDeletion = session
                         } else {
                             // Local shell: nothing to destroy.
                             workspace.closeSession(session)
