@@ -94,12 +94,25 @@ final class SessionProvisioner: ObservableObject {
     }
 
     func loadRepos() async {
+        // Show the last fetch right away so the picker isn't blank while the
+        // network answers; the list refreshes seamlessly when this returns.
+        if repos.isEmpty, let cached = RepoCache.read() {
+            repos = cached
+        }
         loadingRepos = true
-        reposError = nil
         let result = await GitHubRepos.list()
-        repos = result.repos
-        reposError = result.error
         loadingRepos = false
+        if result.error == nil {
+            repos = result.repos
+            reposError = nil
+        } else if repos.isEmpty {
+            // Nothing cached to fall back on — show the failure.
+            reposError = result.error
+        } else {
+            // A stale list beats a blank one, so keep the cached repos and drop
+            // the error rather than wiping the picker on a transient failure.
+            reposError = nil
+        }
     }
 
     /// Existing VMs on the account, offered for reconnection.

@@ -1,6 +1,6 @@
 import Foundation
 
-struct GitHubRepo: Identifiable, Hashable {
+struct GitHubRepo: Identifiable, Hashable, Codable {
     var id: String { fullName }
     let fullName: String
     let isPrivate: Bool
@@ -73,7 +73,11 @@ enum GitHubRepos {
                 if batch.count < 100 { break }
                 page += 1
             }
-            return Result(repos: sorted(collected), error: nil)
+            let sorted = sorted(collected)
+            // Persist for the next open: the picker can render immediately from
+            // the cache and refresh from the network in the background.
+            RepoCache.write(sorted)
+            return Result(repos: sorted, error: nil)
         } catch {
             return Result(repos: [], error: "Failed to list repos: \(error.localizedDescription)")
         }

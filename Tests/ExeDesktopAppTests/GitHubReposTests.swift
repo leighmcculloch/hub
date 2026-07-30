@@ -117,6 +117,51 @@ final class GitHubReposTests: XCTestCase {
                        "583231+octocat@users.noreply.github.com")
     }
 
+    // MARK: - Cache
+
+    /// The cache is what lets the picker render immediately, so a repo written
+    /// must come back identically — including the private flag, which the row's
+    /// icon depends on.
+    func testCacheRoundTripsRepos() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("repo-cache-test.json")
+        try? FileManager.default.removeItem(at: url)
+        let original = RepoCache.fileURL
+        RepoCache.fileURL = url
+        defer {
+            RepoCache.fileURL = original
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        XCTAssertNil(RepoCache.read(), "nothing cached yet")
+
+        let repos = [
+            GitHubRepo(fullName: "anthropic/claude", isPrivate: false),
+            GitHubRepo(fullName: "octocat/secret", isPrivate: true),
+        ]
+        RepoCache.write(repos)
+
+        let read = try XCTUnwrap(RepoCache.read())
+        XCTAssertEqual(read.map(\.fullName), repos.map(\.fullName))
+        XCTAssertEqual(read.map(\.isPrivate), repos.map(\.isPrivate))
+    }
+
+    /// A half-written or corrupt cache is a miss, not a crash — the picker just
+    /// falls back to the spinner and the next fetch rewrites it.
+    func testCorruptCacheIsAMiss() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("repo-cache-corrupt.json")
+        let original = RepoCache.fileURL
+        RepoCache.fileURL = url
+        defer {
+            RepoCache.fileURL = original
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        try Data("not json".utf8).write(to: url)
+        XCTAssertNil(RepoCache.read())
+    }
+
     // MARK: - Shared message helper
 
     func testCondenseCollapsesAndTrims() {

@@ -197,6 +197,11 @@ struct NewSessionSheet: View {
             HStack(alignment: .firstTextBaseline) {
                 sectionLabel("Repositories to clone")
                 Spacer()
+                // A background refresh keeps the cached list on screen; this
+                // spinner is the only sign it's running.
+                if provisioner.loadingRepos && !provisioner.repos.isEmpty {
+                    ProgressView().controlSize(.small)
+                }
                 if chosen.isEmpty {
                     Text("none selected")
                         .font(.caption)
@@ -244,7 +249,7 @@ struct NewSessionSheet: View {
 
     @ViewBuilder
     private var repoList: some View {
-        if provisioner.loadingRepos {
+        if provisioner.loadingRepos && provisioner.repos.isEmpty {
             centered { ProgressView("Loading repositories…") }
         } else if provisioner.repos.isEmpty {
             centered { emptyRepoList }
