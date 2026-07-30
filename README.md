@@ -1,63 +1,126 @@
 # Exe Desktop App
 
-A native macOS app that embeds a terminal (**libghostty**, via
-[**Termini**](https://github.com/arach/Termini)) and provisions a cloud VM per
-tab on [**exe.dev**](https://exe.dev):
+A native macOS app for working with coding agents on ephemeral cloud VMs. Each
+session opens a fresh [**exe.dev**](https://exe.dev) VM, SSHes into it, and
+gives you a real terminal — a **libghostty** surface rendered on the GPU,
+wrapped as a SwiftUI view by [**Termini**](https://github.com/arach/Termini) —
+driving the VM's tmux from the outside. No tmux status bar, no prefix keys, no
+remote shell pretending to be your terminal: every tmux window and split pane
+is its own native tab, and the app *is* the tmux client.
 
-- **Vertical session tabs** down the left — one per session, click to switch,
-  `⌘T` for a new one, `⌘W` to close. Resizable, and hideable with `⌘S`. On
-  launch the sidebar also lists the VMs already on your exe.dev account under
-  **EXISTING**; nothing is connected until you click one.
-- **The active terminal** filling the middle, with **a terminal tab strip** above
-  it: for a VM session the app is the tmux client, so every tmux window (and
-  every pane of a split) is its own native tab. `⌥⌘T` opens another tmux window,
-  `⌥⌘W` closes the pane behind a tab, `⌥⌘←`/`⌥⌘→` move between them. Tabs appear
-  and disappear as tmux's windows do, however they were opened. Each tab keeps
-  its own terminal, alive in the background, so switching costs nothing. The
-  strip's **+** is a small dropdown: clicking it opens a terminal as before, and
-  its menu also offers **Shelley** — exe.dev's own web agent, served on the VM's
+The result is a workspace built around the loop an agentic coder actually
+lives in: spin up a VM, clone the repos you're touching, hand them to Claude
+Code or Codex, watch the diff accumulate in the sidebar, and tear it down when
+you're done — all without leaving the keyboard.
+
+```
+┌───────────┬──────────────────────────┬─────────────────┐
+│ Session   │ tmux windows as tabs     │  Changed files  │
+│ tabs      ├──────────────────────────┤  Commit log     │
+│ (⌘T/⌘W)   │   Active terminal        ├─────────────────┤
+│           │   (libghostty)           │  Diff           │
+└───────────┴──────────────────────────┴─────────────────┘
+```
+
+## What you see
+
+Three panels, all resizable and hideable:
+
+- **Left — session tabs.** One row per session, click to switch, `⌘T` for a
+  new one, `⌘W` to close. On launch the sidebar also lists the VMs already on
+  your exe.dev account under **EXISTING**; nothing is connected until you click
+  one. `⌘S` toggles the whole panel.
+- **Middle — the terminal.** A GPU-rendered libghostty surface with a **tab
+  strip** above it. For a VM session the app is the tmux client, so every tmux
+  window (and every pane of a split) is its own native tab — they appear and
+  disappear as tmux's windows do, however they were opened. Each tab keeps its
+  own terminal alive in the background, so switching costs nothing. The strip's
+  **+** is a small dropdown: clicking it opens a terminal as before, and its
+  menu also offers **Shelley** — exe.dev's own web agent, served on the VM's
   port 9999 — as a browser tab in the same strip, complete with an address bar.
   A Shelley tab isn't tmux's, so it sits after the pane tabs and survives a
   reconnect.
-- **A worktree diff sidebar** on the right. For a VM tab it lists the git repos
-  in the VM's home directory (plus any git worktrees under each repo's
-  `.claude/worktrees`), lets you pick one (or view all), browse changed
-  files, and see each file's diff — run over SSH. For a local shell it follows
-  the shell's cwd. Below the file list is **the git log for each folder shown**:
-  the commits that branch has beyond its default branch, newest first. Click one
-  to read its diff, shift-click a second to diff the whole run together, or take
+- **Right — worktree diff sidebar.** For a VM tab it lists the git repos in the
+  VM's home directory (plus any git worktrees under each repo's
+  `.claude/worktrees`), lets you pick one (or view all), browse changed files,
+  and see each file's diff — run over SSH. For a local shell it follows the
+  shell's cwd. Below the file list is the **git log for each folder shown**: the
+  commits that branch has beyond its default branch, newest first. Click one to
+  read its diff, shift-click a second to diff the whole run together, or take
   the **All N commits** row to diff the branch against `origin/main`. It
-  auto-refreshes every 3s (including the open diff), so edits appear without
-  clicking anything. Resizable, and hideable with `⌘R`.
+  auto-refreshes every 3&nbsp;s (including the open diff), so edits appear
+  without clicking anything. `⌘R` toggles the panel.
 
-## exe.dev VM per tab
+> The diff sidebar reaches VM repos by running `git` over SSH, reusing the
+> terminal's multiplexed connection (ControlMaster), so it's cheap once the tab
+> has connected.
 
-Opening a new session (`⌘T`) provisions a fresh exe.dev VM and SSHes into it:
+## Getting started
 
-1. Name the session (the name becomes the VM name) or leave it blank to have the
-   VM **name itself** — see below — then choose an **environment** and a
-   **model**, and pick GitHub repos — selected repos hoist to the top of the
-   list. Existing VMs are listed too, so a closed session can be reopened and
-   continued.
-2. For each chosen repo the app checks for an existing exe.dev GitHub
+### Prerequisites
+
+- A Mac running **macOS 14** or later.
+- The **Xcode command-line tools** (`xcode-select --install`).
+- An **exe.dev account** and an API token (see below).
+- An **SSH key** registered with exe.dev — the same one `ssh <vm>.exe.xyz` uses.
+- (Optional) the **GitHub CLI** (`gh`) or a `GITHUB_TOKEN`, so the repo picker
+  can list your repositories.
+
+### The exe.dev token
+
+Set your token in **Settings** (`⌘,`) or via the `EXE_DEV_TOKEN` environment
+variable. It is stored in
+`~/Library/Application Support/ExeDesktopApp/config.json`, never in this repo.
+
+The token needs these command permissions (`cmds`):
+
+| Command | Why |
+| --- | --- |
+| `new` | Create a VM |
+| `ls` | List existing VMs |
+| `integrations list` | Check for existing GitHub integrations |
+| `integrations add` | Create a GitHub integration |
+| `integrations attach` | Bind an integration to a tag |
+| `ssh-key generate-api-key` | Mint the rename-only token for auto-naming (optional) |
+
+### Your first session
+
+1. Press **`⌘T`** (or click **New Session** in the sidebar).
+2. **Name** the session (the name becomes the VM name) or leave it blank to let
+   the VM **name itself** — see [Sessions that name themselves](#sessions-that-name-themselves).
+3. Choose an **environment** and a **model**, and pick the **GitHub repos** you
+   want cloned in — selected repos hoist to the top of the list. Existing VMs
+   are listed too, so a closed session can be reopened and continued. Repos are
+   optional: a session with none is just a bare VM.
+4. Click **Create Session**. The app provisions the VM, and you watch the setup
+   run in the first tab.
+
+That setup, in order:
+
+1. For each chosen repo the app checks for an existing exe.dev GitHub
    integration (`integrations list`) and, if missing, creates one that acts as
    you, attached to a per-repo tag
    (`integrations add github --act-as-user --attach tag:<slug>`).
-3. It creates a VM tagged for those integrations (`new --tag <slug> --json`), so
+2. It creates a VM tagged for those integrations (`new --tag <slug> --json`), so
    the integrations bind to the VM.
-4. The app SSHes into the VM and attaches to a tmux session named `exe`,
+3. The app SSHes into the VM and attaches to a tmux session named `exe`,
    creating it if needed — as a **control-mode client** (`tmux -C`), so tmux
    talks protocol to the app instead of drawing itself into a terminal.
-5. The bootstrap runs as the command of that session's first window: seed
+4. The bootstrap runs as the command of that session's first window: seed
    `~/.claude/settings.json` (only if absent), write the Codex and pi
    configuration for the chosen model (only when one is chosen), run the
    environment's **setup script**, then `git clone` for each repo through the
-   exe.dev GitHub proxy (`https://github.int.exe.xyz/<owner>/<repo>.git`) — so
-   you watch it happen in the first tab, and it doesn't run again when you
-   reattach.
-6. Every directory in the VM's home dir is marked trusted in `~/.claude.json`
-   (merged, never clobbering existing state), so Claude Code doesn't prompt
-   per folder.
+   exe.dev GitHub proxy (`https://github.int.exe.xyz/<owner>/<repo>.git`).
+5. Every directory in the VM's home dir is marked trusted in `~/.claude.json`
+   (merged, never clobbering existing state), so Claude Code doesn't prompt per
+   folder.
+
+If an SSH session drops while the app is in the background, it reconnects
+automatically when the app regains focus — and because the panes live in tmux,
+it reattaches to the running session rather than starting over, restoring each
+pane's screen as its tab comes back.
+
+`⌃⌘T` opens a plain local shell instead (no VM), useful offline.
 
 ### Sessions that name themselves
 
@@ -66,8 +129,8 @@ first prompt Claude Code or Codex receives triggers a hook on the VM, which asks
 the exe.dev LLM gateway (`claude-haiku-4-5`, keyless from inside a VM) for a
 two-to-four-word name and calls `rename` on the exe.dev API. The tab, the VM and
 its hostname all follow — the app polls each connected VM's own
-`reflection.int.exe.xyz` name every 10s, so a rename shows up in the sidebar and
-in the stored workspace without you doing anything.
+`reflection.int.exe.xyz` name every 10&nbsp;s, so a rename shows up in the
+sidebar and in the stored workspace without you doing anything.
 
 It happens once per VM, and only for a VM created from a blank name: a name you
 typed is never replaced. The pieces on the VM are all in the home directory —
@@ -85,36 +148,26 @@ and nothing else, which is the point: an agent runs on the VM with permissions
 bypassed. If your account token may not mint one, the session is still created
 and the new-session log says so.
 
-If an SSH session drops while the app is in the background, it reconnects
-automatically when the app regains focus — and because the panes live in tmux,
-it reattaches to the running session rather than starting over, restoring each
-pane's screen as its tab comes back.
+## Settings
 
-`⌃⌘T` opens a plain local shell instead (no VM), useful offline.
+Everything below is edited in **Settings** (`⌘,`) and persisted to the JSON
+config in Application Support.
 
-### Setup
-
-- **exe.dev token** — set it in Settings (`⌘,`) or the `EXE_DEV_TOKEN`
-  environment variable. It is stored in `~/Library/Application Support/ExeDesktopApp/config.json`,
-  never in this repo. The token needs these command permissions (`cmds`):
-  `new`, `ls`, `integrations list`, `integrations add`, `integrations attach`,
-  and — for sessions that name themselves — `ssh-key generate-api-key`.
+- **exe.dev token** — described above. Leave blank to use `EXE_DEV_TOKEN`.
 - **Environments** — a named bundle of a **setup script**, a **start command**,
-  and its own environment variables, edited in Settings and chosen per session.
-  Ships with two: *Claude Code* (starts `claude`, with a blank
-  `CLAUDE_CODE_OAUTH_TOKEN` row to paste a token into) and *Codex* (starts
-  `codex`). Add your own for anything else. The setup script runs in the first
-  tmux window, before the repos are cloned. The start command follows it, and
-  both run only when the tmux session is first created — reconnecting attaches
-  instead of starting a second copy. When the start command exits the window
-  stays open at a shell; empty means just a shell. tmux itself is not
-  configurable and is required — the app is a tmux client, so the remote command
-  installs tmux first if the VM lacks it.
-- **Global environment variables** — a `KEY=VALUE` list in Settings that
-  applies whichever environment a session runs. Both lists are passed to
-  `new --env`, so they're set on the VM host itself and visible to every
-  process on it, not just the terminal's shell. Values with spaces or quotes
-  are shell-quoted for you.
+  and its own environment variables, chosen per session. Ships with two:
+  *Claude Code* (starts `claude`, with a blank `CLAUDE_CODE_OAUTH_TOKEN` row to
+  paste a token into) and *Codex* (starts `codex`). Add your own for anything
+  else. The setup script runs in the first tmux window, before the repos are
+  cloned. The start command follows it, and both run only when the tmux session
+  is first created — reconnecting attaches instead of starting a second copy.
+  When the start command exits the window stays open at a shell; empty means
+  just a shell. tmux itself is not configurable and is required — the app is a
+  tmux client, so the remote command installs tmux first if the VM lacks it.
+- **Global environment variables** — a `KEY=VALUE` list that applies whichever
+  environment a session runs. Both lists are passed to `new --env`, so they're
+  set on the VM host itself and visible to every process on it, not just the
+  terminal's shell. Values with spaces or quotes are shell-quoted for you.
 - **Model** — chosen per session from the exe.dev LLM gateway's catalogue
   (`https://exe.dev/llm-gateway-models.json`), or *Custom*, the default, which
   configures nothing and leaves the VM's own setup alone. Choosing a gateway
@@ -133,48 +186,54 @@ pane's screen as its tab comes back.
     `openai-completions`), and `defaultProvider`/`defaultModel` merged into
     `~/.pi/agent/settings.json`. Both merges leave your other providers and
     settings in place.
-- **Terminal font** — family and size in Settings; `⌘+`/`⌘-` adjust size and
-  `⌘0` resets.
+- **Terminal font** — family and size; `⌘+`/`⌘-` adjust size and `⌘0` resets.
 - **Claude settings** — the `~/.claude/settings.json` seeded onto each VM
   (dark theme, `permissions.defaultMode: bypassPermissions`, commit
   attribution off, PR attribution on, `remoteControlAtStartup: true`).
-  Editable in Settings; an
-  existing file on the VM is never overwritten.
+  Editable in Settings; an existing file on the VM is never overwritten.
 - **GitHub repo listing** — uses a token discovered from `GITHUB_TOKEN`/`GH_TOKEN`
   or the `gh` CLI (`gh auth token`). Without one, the picker still accepts a
-  manually typed `owner/repo`.
-- **SSH** — your machine needs an SSH key registered with exe.dev (the same one
-  `ssh <vm>.exe.xyz` uses).
+  manually typed `owner/repo` (or a pasted GitHub URL).
 
-> The diff sidebar reaches VM repos by running `git` over SSH, reusing the
-> terminal's multiplexed connection (ControlMaster), so it's cheap once the tab
-> has connected.
+## Keyboard shortcuts
 
-## Architecture
+| Shortcut | Action |
+| --- | --- |
+| `⌘T` | New session (provisions a VM) |
+| `⌃⌘T` | New local shell (no VM) |
+| `⌘W` | Close the selected session |
+| `⌘D` | Delete the selected session's VM (confirmed) |
+| `⌘S` | Toggle the session sidebar |
+| `⌘R` | Toggle the worktree diff sidebar |
+| `⌥⌘T` | New terminal tab (tmux window) |
+| `⌥⌘W` | Close the tab's pane |
+| `⌥⌘←` / `⌥⌘→` | Previous / next terminal tab |
+| `⌘⇧B` | New browser tab in the right sidebar |
+| `⌘⇧]` / `⌘⇧[` | Next / previous session |
+| `⌘1`…`⌘9` | Select session by number (`⌘9` = last) |
+| `⌘+` / `⌘=` | Increase font size |
+| `⌘-` | Decrease font size |
+| `⌘0` | Reset font size |
+| `⌘,` | Settings |
 
-```
-┌───────────┬──────────────────────────┬─────────────────┐
-│ Session   │ tmux windows as tabs     │  Changed files  │
-│ tabs      ├──────────────────────────┼─────────────────┤
-│ (⌘T/⌘W)   │   Active terminal        │  Commit log     │
-│           │   (libghostty)           ├─────────────────┤
-│           │                          │  Diff           │
-└───────────┴──────────────────────────┴─────────────────┘
-```
+## How it works
+
+### The terminal: libghostty wrapped by Termini
 
 SwiftUI provides the window chrome and both sidebars; the terminal itself is a
-libghostty surface — Ghostty's terminal engine, rendered on the GPU — wrapped as
-a SwiftUI view by Termini. Each tab owns a `TerminiTerminalController`, which is
-that surface's transport end: the app pumps bytes both ways through it, from a
-local PTY for a plain shell and from tmux for a VM session's panes.
+libghostty surface — Ghostty's terminal engine, rendered on the GPU — wrapped
+as a SwiftUI view by Termini. Each tab owns a `TerminiTerminalController`, which
+is that surface's transport end: the app pumps bytes both ways through it, from
+a local PTY for a plain shell and from tmux for a VM session's panes.
 
-**The tmux client is the app.** Rather than SSHing into a shell and running
-tmux, which would render tmux's own status bar and prefix keys inside one
-terminal, the remote command is `tmux -C` — [control
-mode](https://github.com/tmux/tmux/wiki/Control-Mode). tmux then speaks a line
-protocol on stdout: `%output %<pane> <escaped bytes>` for everything a pane
-writes, notifications when windows and panes come, go and get renamed, and a
-`%begin`/`%end` block per command sent back on stdin. So:
+### The tmux client is the app
+
+Rather than SSHing into a shell and running tmux, which would render tmux's own
+status bar and prefix keys inside one terminal, the remote command is
+`tmux -C` — [control mode](https://github.com/tmux/tmux/wiki/Control-Mode).
+tmux then speaks a line protocol on stdout: `%output %<pane> <escaped bytes>`
+for everything a pane writes, notifications when windows and panes come, go and
+get renamed, and a `%begin`/`%end` block per command sent back on stdin. So:
 
 - each pane's bytes are fed to that pane's own libghostty surface — one tab each;
 - keystrokes go back as `send-keys -H <hex>`, byte for byte, so typed UTF-8
@@ -183,6 +242,33 @@ writes, notifications when windows and panes come, go and get renamed, and a
   sizes the session's windows;
 - a pane the app hasn't seen is restored with `capture-pane`, because tmux
   replays nothing on attach.
+
+### How the diff follows the terminal
+
+A local shell reports its working directory via OSC 7. libghostty renders that
+sequence but doesn't report it back to the embedding app, so
+`TerminalOSCScanner` reads it (and the title, OSC 0/2) off the PTY stream on its
+way to the surface and updates the session's working directory; the diff sidebar
+then recomputes `git diff HEAD` for that directory whenever it changes. A VM
+session's panes are inside tmux, which consumes OSC 7 itself, so the path comes
+from tmux's `#{pane_current_path}` in the same pane listing that builds the
+tabs.
+
+> OSC 7 reporting requires shell integration that emits it (local shells only —
+> a VM session gets its path from tmux). macOS zsh and bash set up under
+> Terminal.app already do; if the sidebar isn't tracking `cd`, enable OSC 7 in
+> your shell profile (search "shell integration OSC 7"). Untracked directories
+> simply show "Not a git repository".
+
+### What persists
+
+The open VM tabs and which was in front are written to
+`~/Library/Application Support/ExeDesktopApp/sessions.json` and restored on the
+next launch — VMs that no longer exist are dropped, and local shells aren't
+restored (they have nothing to reconnect to). Sidebar widths are held in
+`UserDefaults`.
+
+## Source map
 
 | Area | Files |
 | --- | --- |
@@ -202,20 +288,26 @@ writes, notifications when windows and panes come, go and get renamed, and a
 | UI | `Sources/Views/` — sidebars, terminal host, resize handle, new-session sheet, settings |
 | App entry | `Sources/App/` — `@main` SwiftUI `App` + `AppDelegate` |
 
-**How the diff follows the terminal:** a local shell reports its working
-directory via OSC 7. libghostty renders that sequence but doesn't report it back
-to the embedding app, so `TerminalOSCScanner` reads it (and the title, OSC 0/2)
-off the PTY stream on its way to the surface and updates the session's
-`@Published workingDirectory`; the diff sidebar then recomputes `git diff HEAD`
-for that directory whenever it changes. A VM session's panes are inside tmux,
-which consumes OSC 7 itself, so the path comes from tmux's
-`#{pane_current_path}` in the same listing that builds the tabs.
+## Design notes
 
-> OSC 7 reporting requires shell integration that emits it (local shells only —
-> a VM session gets its path from tmux). macOS zsh and bash
-> set up under Terminal.app already do; if the sidebar isn't tracking `cd`,
-> enable OSC 7 in your shell profile (search "shell integration OSC 7"). Untracked
-> directories simply show "Not a git repository".
+A few principles the code follows, worth knowing before you change it:
+
+- **The app is the tmux client, not a terminal running tmux.** Everything about
+  the tab strip, pane restoration, and reconnect follows from this. tmux's own
+  UI never reaches the screen.
+- **Pure logic is Foundation-only, deliberately split from UI.** Most of the
+  real logic — names, quoting, the bootstrap script, the tmux parser, git and
+  diff parsing, config decoding — lives in files that import neither AppKit nor
+  SwiftUI. That is what lets the test suite run in seconds on a Linux runner,
+  and why `scripts/check-linux.sh` enforces that every such file is listed there.
+- **Bootstrap is idempotent and non-destructive.** Settings, onboarding state,
+  and trust flags are seeded only when absent and merged when present. A VM you
+  have already configured by hand is never overwritten — except the parts that
+  are unambiguously the app's to manage (the auto-naming wiring, a Codex config
+  that already names the `exe-llm` provider).
+- **The diff sidebar polls over the terminal's own SSH connection.** No second
+  connection, no separate auth — git calls and the rename-poll ride the same
+  ControlMaster socket the terminal opened.
 
 ## Building
 
@@ -252,8 +344,7 @@ split is why the suite runs in seconds off a Mac.
 
 This runs the app as a bare executable rather than a `.app` bundle, so
 `Info.plist`/entitlements aren't applied — that's fine here since the app needs
-no sandbox, and it makes itself a regular foreground app at launch. Requires the
-Xcode toolchain (`xcode-select --install`), macOS 14+.
+no sandbox, and it makes itself a regular foreground app at launch.
 
 ### Xcode project
 
@@ -263,7 +354,7 @@ proper signed `.app` bundle.
 ```sh
 brew install xcodegen
 xcodegen generate                 # creates ExeDesktopApp.xcodeproj
-open ExeDesktopApp.xcodeproj  # then press ⌘R
+open ExeDesktopApp.xcodeproj      # then press ⌘R
 ```
 
 or headless:
@@ -275,3 +366,8 @@ xcodebuild -scheme ExeDesktopApp -configuration Debug build
 In Xcode, set the target's Signing team (or "Sign to Run Locally"). The app
 disables the App Sandbox so it can spawn shells and run `git` against any
 directory.
+
+## License
+
+See the vendored Termini under `Vendor/Termini/LICENSE` for its terms. The rest
+of this repository is provided as-is.
