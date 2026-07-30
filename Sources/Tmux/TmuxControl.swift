@@ -14,6 +14,8 @@ struct TmuxPane: Equatable {
     let panesInWindow: Int
     /// Pane index within its window.
     let index: Int
+    /// True only for the pane tmux has focused at the session level: the active
+    /// pane of the session's active window. (`pane_active` alone is per-window.)
     let isActive: Bool
     let cursorX: Int
     let cursorY: Int
@@ -66,7 +68,15 @@ enum TmuxControl {
     /// What each `list-panes` row contains. The two free-text fields come last
     /// so a `|` inside a window name can't be mistaken for a separator (see
     /// `parsePanes`).
+    ///
+    /// `window_active` is needed alongside `pane_active` because `pane_active`
+    /// is per-window — every window's active pane is `1`, not just the
+    /// session's. With `list-panes -s` that would make the active pane of the
+    /// lowest-index window look like the session's focus, so a newly opened
+    /// window (which tmux makes current but appends at a higher index) would
+    /// never be recognised as the focus change it is.
     static let paneFormat = "#{window_id}|#{window_index}|#{window_panes}"
+        + "|#{window_active}"
         + "|#{pane_id}|#{pane_index}|#{pane_active}|#{cursor_x}|#{cursor_y}"
         + "|#{window_name}|#{pane_current_path}"
 
@@ -80,28 +90,32 @@ enum TmuxControl {
     /// Parse a `list-panes` reply. Rows that don't have every field are skipped
     /// rather than guessed at.
     ///
-    /// Only the *first* eight fields are positional. A window name can contain
+    /// Only the *first* nine fields are positional. A window name can contain
     /// the separator (tmux allows any name), so the trailing path is taken from
     /// the end and whatever lies between is the name — that way a stray `|`
     /// mangles one label instead of dropping the pane from the tab bar.
     static func parsePanes(_ lines: [String]) -> [TmuxPane] {
         lines.compactMap { line in
             let fields = line.components(separatedBy: "|")
-            guard fields.count >= 10,
+            guard fields.count >= 11,
                   let windowIndex = Int(fields[1]),
                   let panesInWindow = Int(fields[2]),
-                  let index = Int(fields[4]),
-                  let cursorX = Int(fields[6]),
-                  let cursorY = Int(fields[7])
+                  let index = Int(fields[5]),
+                  let cursorX = Int(fields[7]),
+                  let cursorY = Int(fields[8])
             else { return nil }
+            // `pane_active` is per-window, so only a pane that is both its
+            // window's active pane and in the session's active window is the
+            // one tmux has focused.
+            let isActive = fields[3] == "1" && fields[6] == "1"
             return TmuxPane(
-                id: fields[3],
+                id: fields[4],
                 windowID: fields[0],
                 windowIndex: windowIndex,
-                windowName: fields[8..<(fields.count - 1)].joined(separator: "|"),
+                windowName: fields[9..<(fields.count - 1)].joined(separator: "|"),
                 panesInWindow: panesInWindow,
                 index: index,
-                isActive: fields[5] == "1",
+                isActive: isActive,
                 cursorX: cursorX,
                 cursorY: cursorY,
                 currentPath: fields[fields.count - 1])

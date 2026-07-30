@@ -182,8 +182,8 @@ final class TmuxControlTests: XCTestCase {
 
     func testPanesAreParsed() {
         let panes = TmuxControl.parsePanes([
-            "@0|0|1|%0|0|1|10|2|bash|/home/user/hub",
-            "@1|1|2|%2|1|0|0|0|claude|/home/user",
+            "@0|0|1|1|%0|0|1|10|2|bash|/home/user/hub",
+            "@1|1|2|0|%2|1|0|0|0|claude|/home/user",
         ])
         XCTAssertEqual(panes.count, 2)
         XCTAssertEqual(panes[0], TmuxPane(
@@ -193,12 +193,28 @@ final class TmuxControlTests: XCTestCase {
         XCTAssertFalse(panes[1].isActive)
     }
 
+    /// `pane_active` is per-window, so a session with several windows has one
+    /// active pane per window. Only the pane in the session's active window
+    /// (`window_active` 1) is the focus — the others' `pane_active` must not
+    /// win it. This is what makes a newly opened window take focus: tmux makes
+    /// it the active window, so its pane is the one `isActive` picks out.
+    func testOnlyTheActiveWindowsPaneIsTheFocus() {
+        // Window @0 is the session's active window; @1 is not, even though its
+        // pane is that window's active pane.
+        let panes = TmuxControl.parsePanes([
+            "@0|0|1|1|%0|0|1|10|2|bash|/home/user/hub",
+            "@1|1|1|0|%2|0|1|0|0|claude|/home/user",
+        ])
+        XCTAssertEqual(panes.first { $0.isActive }?.id, "%0")
+        XCTAssertFalse(panes[1].isActive)
+    }
+
     /// A split window's tabs have to be told apart; an unsplit one shouldn't
     /// carry a pane number nobody needs.
     func testTitleNamesTheWindowAndOnlyNumbersSplits() {
         let panes = TmuxControl.parsePanes([
-            "@0|0|1|%0|0|1|0|0|bash|/home",
-            "@1|1|2|%1|1|1|0|0|vim|/home",
+            "@0|0|1|1|%0|0|1|0|0|bash|/home",
+            "@1|1|2|0|%1|1|1|0|0|vim|/home",
         ])
         XCTAssertEqual(panes[0].title, "bash")
         XCTAssertEqual(panes[1].title, "vim:1")
@@ -208,7 +224,7 @@ final class TmuxControlTests: XCTestCase {
     /// path is taken from the end and the name from what's left, which mangles
     /// one label instead of dropping the pane from the tab strip.
     func testASeparatorInTheWindowNameKeepsThePane() {
-        let panes = TmuxControl.parsePanes(["@0|0|1|%0|0|1|0|0|a|b|/home/user"])
+        let panes = TmuxControl.parsePanes(["@0|0|1|1|%0|0|1|0|0|a|b|/home/user"])
         XCTAssertEqual(panes.count, 1)
         XCTAssertEqual(panes[0].windowName, "a|b")
         XCTAssertEqual(panes[0].currentPath, "/home/user")
