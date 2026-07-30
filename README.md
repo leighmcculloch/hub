@@ -91,8 +91,10 @@ pane's screen as its tab comes back.
     `ANTHROPIC_BASE_URL=https://llm.int.exe.xyz` and `ANTHROPIC_MODEL=<id>`,
     set on the VM host.
   - **Codex** — `~/.codex/config.toml` with the gateway as the `exe-llm` model
-    provider, and the model selected. A `config.toml` that doesn't mention
-    `exe-llm` is treated as yours and left alone, with a note on the terminal.
+    provider, the model selected, and `approval_policy`/`sandbox_mode` set to
+    skip approvals and the sandbox entirely. A `config.toml` that doesn't
+    mention `exe-llm` is treated as yours and left alone, with a note on the
+    terminal.
   - **pi** — the `exe-llm` provider merged into `~/.pi/agent/models.json`
     (Anthropic models over `anthropic-messages`, everything else over
     `openai-completions`), and `defaultProvider`/`defaultModel` merged into
@@ -101,8 +103,9 @@ pane's screen as its tab comes back.
 - **Terminal font** — family and size in Settings; `⌘+`/`⌘-` adjust size and
   `⌘0` resets.
 - **Claude settings** — the `~/.claude/settings.json` seeded onto each VM
-  (dark theme, `permissions.defaultMode: auto`, commit attribution off, PR
-  attribution on, `remoteControlAtStartup: true`). Editable in Settings; an
+  (dark theme, `permissions.defaultMode: bypassPermissions`, commit
+  attribution off, PR attribution on, `remoteControlAtStartup: true`).
+  Editable in Settings; an
   existing file on the VM is never overwritten.
 - **GitHub repo listing** — uses a token discovered from `GITHUB_TOKEN`/`GH_TOKEN`
   or the `gh` CLI (`gh auth token`). Without one, the picker still accepts a

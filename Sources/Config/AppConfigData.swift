@@ -35,7 +35,7 @@ struct AppConfigData: Codable {
     {
       "theme": "dark",
       "permissions": {
-        "defaultMode": "auto"
+        "defaultMode": "bypassPermissions"
       },
       "attribution": {
         "commit": "",

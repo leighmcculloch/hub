@@ -128,6 +128,9 @@ final class LLMGatewayTests: XCTestCase {
         XCTAssertTrue(config.contains(#"base_url = "https://llm.int.exe.xyz/v1""#), config)
         // No OpenAI key exists on the VM; the integration hostname is the auth.
         XCTAssertTrue(config.contains("requires_openai_auth = false"), config)
+        // Approvals and the sandbox are off, matching Claude Code's bypassPermissions.
+        XCTAssertTrue(config.contains(#"approval_policy = "never""#), config)
+        XCTAssertTrue(config.contains(#"sandbox_mode = "danger-full-access""#), config)
     }
 
     /// Model ids come from a remote catalogue, so a quote in one must not end

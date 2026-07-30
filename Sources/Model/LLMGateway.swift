@@ -52,11 +52,15 @@ enum LLMGateway {
         ]
     }
 
-    /// `~/.codex/config.toml`: the gateway as a model provider, selected.
+    /// `~/.codex/config.toml`: the gateway as a model provider, selected, with
+    /// approvals and the sandbox turned off — the same "just run it" stance
+    /// Claude Code gets via `permissions.defaultMode: bypassPermissions`.
     static func codexConfig(for model: GatewayModel) -> String {
         """
         model = \(tomlString(model.model))
         model_provider = \(tomlString(providerName))
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
 
         [model_providers.\(providerName)]
         name = \(tomlString(providerName))
