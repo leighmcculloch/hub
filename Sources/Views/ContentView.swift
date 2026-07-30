@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The workspace layout: vertical session tabs on the left, the active terminal
@@ -50,6 +51,11 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 500)
         .navigationTitle(windowTitle)
+        // We don't use the standard macOS window tab bar — the vertical session
+        // tabs on the left and the subtabs in the terminal and right sidebar
+        // are our own. Disallow native tabbing so the system "Show Tab Bar"
+        // menu item (View menu) can't bring up the stock bar.
+        .background(DisableNativeTabBar())
         .sheet(isPresented: $workspace.presentingNewSession) {
             NewSessionSheet(workspace: workspace)
         }
@@ -148,5 +154,26 @@ private struct EmptyWorkspaceView: View {
         Button("New Session…") { workspace.presentingNewSession = true }
             .keyboardShortcut("t", modifiers: .command)
             .padding(40)
+    }
+}
+
+/// Disables macOS native window tabbing for the hosting window. A no-op view
+/// whose only job is to grab the `NSWindow` once it's attached and set
+/// `tabbingMode` to `.disallowed`, which greys out the system "Show Tab Bar"
+/// menu item. Re-applied if the view re-hosts into a different window.
+private struct DisableNativeTabBar: NSViewRepresentable {
+    func makeNSView(context: Context) -> DisableNativeTabBarView {
+        DisableNativeTabBarView()
+    }
+
+    func updateNSView(_ nsView: DisableNativeTabBarView, context: Context) {}
+}
+
+/// `viewDidMoveToWindow` fires both on attach (window present) and detach
+/// (window nil), so guard on the non-nil case and re-apply each time.
+private final class DisableNativeTabBarView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.tabbingMode = .disallowed
     }
 }
