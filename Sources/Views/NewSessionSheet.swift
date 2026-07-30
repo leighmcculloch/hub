@@ -19,6 +19,9 @@ struct NewSessionSheet: View {
     }
 
     @State private var mode: Mode = .create
+    /// Focused when the sheet opens so the repo filter is ready to type into
+    /// without an extra click.
+    @FocusState private var searchFocused: Bool
 
     init(workspace: Workspace) {
         self.workspace = workspace
@@ -120,6 +123,7 @@ struct NewSessionSheet: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
         }
+        .onAppear { searchFocused = true }
     }
 
     /// Which setup script, start command, and variables the VM gets. Edited in
@@ -233,6 +237,7 @@ struct NewSessionSheet: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("Filter repositories…", text: $provisioner.search)
                 .textFieldStyle(.plain)
+                .focused($searchFocused)
             if !provisioner.search.isEmpty {
                 Button {
                     provisioner.search = ""
