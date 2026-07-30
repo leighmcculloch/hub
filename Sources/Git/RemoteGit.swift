@@ -111,6 +111,45 @@ enum RemoteGit {
             + " \(Bootstrap.shellQuote(from)) \(Bootstrap.shellQuote(to)) 2>/dev/null"
     }
 
+    /// The files changed between `from` (exclusive) and `to`, with line counts —
+    /// the file list for a commit scope, in one round trip.
+    static func scopeFiles(destination: String, repo: String, from: String, to: String) async
+        -> GitScopeFiles
+    {
+        guard let out = await run(
+            destination: destination,
+            remoteCommand: scopeFilesCommand(repo: repo, from: from, to: to))
+        else { return GitScopeFiles() }
+        return GitScopeFiles.parse(out)
+    }
+
+    /// The trailing `exit 0` serves the same purpose as in `statusCommand`: an
+    /// unresolvable range fails the diffs, and a non-zero exit would make `run`
+    /// discard whatever did print.
+    static func scopeFilesCommand(repo: String, from: String, to: String) -> String {
+        let git = "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo)) -c diff.renames=false"
+        return GitScopeFiles.command(
+            git: git,
+            from: Bootstrap.shellQuote(from),
+            to: Bootstrap.shellQuote(to))
+            + "; exit 0"
+    }
+
+    /// The diff of one file within a commit range.
+    static func rangeFileDiff(
+        destination: String, repo: String, from: String, to: String, file: String
+    ) async -> String {
+        await run(destination: destination,
+                  remoteCommand: rangeFileDiffCommand(repo: repo, from: from, to: to, file: file))
+            ?? ""
+    }
+
+    static func rangeFileDiffCommand(repo: String, from: String, to: String, file: String) -> String {
+        "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo)) diff"
+            + " \(Bootstrap.shellQuote(from)) \(Bootstrap.shellQuote(to))"
+            + " -- \(Bootstrap.shellQuote(file)) 2>/dev/null"
+    }
+
     /// Unified diff for a single file within a repo.
     static func fileDiff(destination: String, repo: String, file: String) async -> String {
         await run(destination: destination,
@@ -139,10 +178,28 @@ enum RemoteGit {
             + " exit 0"
     }
 
-    /// Full worktree diff for a repo (vs. HEAD).
+    /// Full worktree diff for a repo (vs. HEAD), untracked files included.
+    ///
+    /// `git diff HEAD` says nothing about untracked files — the sidebar lists
+    /// them from the status, so a whole-worktree diff missing them would be
+    /// wrong. Each is appended as an addition against `/dev/null`, the same
+    /// trick as the local side and `fileDiffCommand`. The trailing `exit 0` is
+    /// load-bearing: `--no-index` exits 1 whenever the inputs differ, and a
+    /// non-zero exit makes `run` discard the output.
     static func repoDiff(destination: String, repo: String) async -> String {
-        let command = "git -C \"$HOME\"/\(Bootstrap.shellQuote(repo)) diff HEAD 2>/dev/null"
-        return await run(destination: destination, remoteCommand: command) ?? ""
+        await run(destination: destination, remoteCommand: repoDiffCommand(repo: repo)) ?? ""
+    }
+
+    /// The untracked loop reads newline-separated paths, which only a filename
+    /// containing a newline can break — the trade `read -d ''` makes is
+    /// requiring bash, and the remote shell isn't guaranteed to be one.
+    static func repoDiffCommand(repo: String) -> String {
+        let quoted = Bootstrap.shellQuote(repo)
+        return "cd \"$HOME\" && cd \(quoted) 2>/dev/null || exit 0;"
+            + " git -c core.quotePath=false -c diff.renames=false diff HEAD 2>/dev/null;"
+            + " git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null"
+            + " | while IFS= read -r f; do git diff --no-index -- /dev/null \"$f\" 2>/dev/null; done;"
+            + " exit 0"
     }
 
     /// Run one remote command, returning stdout on success (exit 0), else nil.

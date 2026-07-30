@@ -36,6 +36,7 @@ PORTABLE=(
   Sources/Exe/RemoteVM.swift
   Sources/Git/DiffParse.swift
   Sources/Git/GitLog.swift
+  Sources/Git/GitScopeFiles.swift
   Sources/Git/GitWorktree.swift
   Sources/Git/RemoteGit.swift
   Sources/GitHub/GitHubRepos.swift

@@ -197,6 +197,23 @@ enum GitWorktree {
         run(["diff", from, to], in: repoRoot) ?? ""
     }
 
+    /// The files changed between `from` (exclusive) and `to`, with line counts —
+    /// the file list for a commit scope. The two listings are joined with the
+    /// separator so the remote side's single-command output and this pair share
+    /// one parser.
+    static func scopeFiles(in repoRoot: URL, from: String, to: String) -> GitScopeFiles {
+        let noRenames = ["-c", "diff.renames=false"]
+        let nameStatus = run(noRenames + ["diff", "--name-status", from, to], in: repoRoot) ?? ""
+        let numstat = run(noRenames + ["diff", "--numstat", from, to], in: repoRoot) ?? ""
+        return GitScopeFiles.parse(
+            nameStatus + "\n" + GitScopeFiles.separator + "\n" + numstat)
+    }
+
+    /// The diff of one file within a commit range.
+    static func rangeFileDiff(in repoRoot: URL, from: String, to: String, path: String) -> String {
+        run(["diff", from, to, "--", path], in: repoRoot) ?? ""
+    }
+
     /// Untracked files have no blob in HEAD, so `git diff HEAD` omits them
     /// entirely — clicking a newly created file scrolled to nothing. Diffing
     /// each against `/dev/null` appends a normal "new file" section, which is

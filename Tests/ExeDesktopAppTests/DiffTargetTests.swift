@@ -117,15 +117,18 @@ final class DiffTargetTests: XCTestCase {
         XCTAssertFalse(target.selectsAll(repo: repo, log: log))
     }
 
-    func testFileAndCommitSelectionsDoNotCrossOver() {
-        let file = DiffTarget.file(repo: repo, path: "a.swift")
-        XCTAssertTrue(file.selects(repo: repo, path: "a.swift"))
-        XCTAssertFalse(file.selects(repo: repo, sha: "c3"))
-        XCTAssertFalse(file.selectsAll(repo: repo, log: log))
-        XCTAssertNil(file.newestSha)
+    func testWorktreeAndCommitScopesDoNotCrossOver() {
+        let worktree = DiffTarget.worktree(repo: repo)
+        XCTAssertTrue(worktree.selectsWorktree(repo: repo))
+        XCTAssertFalse(worktree.selectsWorktree(repo: "other"))
+        XCTAssertFalse(worktree.selects(repo: repo, sha: "c3"))
+        XCTAssertFalse(worktree.selectsAll(repo: repo, log: log))
+        XCTAssertNil(worktree.newestSha)
+        XCTAssertNil(worktree.commitRange)
 
         let commits = DiffTarget.commits(repo: repo, log: log, picking: 0)
-        XCTAssertFalse(commits.selects(repo: repo, path: "a.swift"))
+        XCTAssertFalse(commits.selectsWorktree(repo: repo))
+        XCTAssertEqual(commits.repo, repo)
     }
 
     // MARK: - Labels
@@ -144,7 +147,13 @@ final class DiffTargetTests: XCTestCase {
         XCTAssertTrue(label.contains("c3"), label)
     }
 
-    func testAFileHasNoCommitLabel() {
-        XCTAssertEqual(DiffTarget.file(repo: repo, path: "a.swift").label(in: log), "")
+    func testTheWorktreeScopeIsLabelled() {
+        XCTAssertEqual(DiffTarget.worktree(repo: repo).label(in: log), "Working tree")
+    }
+
+    func testACommitRangeExposesItsEndpoints() {
+        let target = DiffTarget.commits(repo: repo, log: log, picking: 1, extendingFrom: 0)
+        XCTAssertEqual(target.commitRange?.from, "c1")
+        XCTAssertEqual(target.commitRange?.to, "c3")
     }
 }

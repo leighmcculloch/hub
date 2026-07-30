@@ -1,14 +1,15 @@
 import Foundation
 
-/// What the diff sidebar's bottom pane is showing: either one changed file in
-/// the worktree, or a run of commits diffed together.
+/// What the diff sidebar's scope list has selected: either the repo's whole
+/// worktree, or a run of commits diffed together. A file picked in the files
+/// pane below is separate view state — it always belongs to the current scope.
 ///
 /// This lives apart from the view so the range arithmetic behind shift-click —
 /// which end of a run is which, and what a range is diffed against — can be
 /// tested.
 enum DiffTarget: Equatable {
-    /// One changed file in the worktree.
-    case file(repo: String, path: String)
+    /// Everything uncommitted in the worktree.
+    case worktree(repo: String)
     /// A contiguous run of commits, newest first, shown as one combined diff
     /// against `exclusiveBase` — the commit (or default-branch ref) just before
     /// the oldest of them.
@@ -43,15 +44,26 @@ enum DiffTarget: Equatable {
     }
 
     /// The newest commit in the run — the right-hand side of the range diff.
+    /// Nil for the worktree scope, which is diffed against HEAD instead.
     var newestSha: String? {
         if case let .commits(_, shas, _) = self { return shas.first }
         return nil
     }
 
-    func selects(repo: String, path: String) -> Bool {
-        if case let .file(selectedRepo, selectedPath) = self {
-            return selectedRepo == repo && selectedPath == path
+    var repo: String {
+        switch self {
+        case let .worktree(repo), let .commits(repo, _, _): return repo
         }
+    }
+
+    /// The run's endpoints for a range diff; nil for the worktree scope.
+    var commitRange: (from: String, to: String)? {
+        guard case let .commits(_, _, exclusiveBase) = self, let newest = newestSha else { return nil }
+        return (exclusiveBase, newest)
+    }
+
+    func selectsWorktree(repo: String) -> Bool {
+        if case let .worktree(selectedRepo) = self { return selectedRepo == repo }
         return false
     }
 
@@ -71,14 +83,19 @@ enum DiffTarget: Equatable {
         return false
     }
 
-    /// The diff pane's title: the subject for a single commit, the span for a
-    /// run of them.
+    /// Names the scope for the files pane's caption and the diff pane's title:
+    /// the subject for a single commit, the span for a run of them.
     func label(in log: GitLog) -> String {
-        guard case let .commits(_, shas, _) = self, let newest = shas.first else { return "" }
-        if shas.count == 1 {
-            let subject = log.commits.first { $0.sha == newest }?.subject ?? ""
-            return subject.isEmpty ? newest : "\(newest)  \(subject)"
+        switch self {
+        case .worktree:
+            return "Working tree"
+        case let .commits(_, shas, _):
+            guard let newest = shas.first else { return "" }
+            if shas.count == 1 {
+                let subject = log.commits.first { $0.sha == newest }?.subject ?? ""
+                return subject.isEmpty ? newest : "\(newest)  \(subject)"
+            }
+            return "\(shas.count) commits  \(shas[shas.count - 1])…\(newest)"
         }
-        return "\(shas.count) commits  \(shas[shas.count - 1])…\(newest)"
     }
 }

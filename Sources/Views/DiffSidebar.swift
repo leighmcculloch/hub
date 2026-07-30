@@ -1,10 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// The right-hand sidebar. For local shells it shows the git worktree diff of
-/// the terminal's current directory. For VM-backed (SSH) tabs it lists the git
-/// repos in the VM's home directory, lets you pick one, browse its changed
-/// files, and view the diff of each — all over SSH.
+/// The right-hand sidebar's diff tab, organised as scope → files → diff:
+/// pick *what* to read (a repo's working tree or a run of its commits),
+/// narrow to one of that scope's files if wanted, and read the diff below.
+///
+/// For local shells the scopes come from the git worktree of the terminal's
+/// current directory. For VM-backed (SSH) tabs they come from the git repos in
+/// the VM's home directory — pick one (or all), and everything is read over
+/// SSH.
 struct DiffSidebar: View {
     @ObservedObject var workspace: Workspace
 
@@ -41,7 +45,15 @@ private final class RemoteDiffModel: ObservableObject {
     /// Changed files, their line counts and the repo's log — one poll's answer
     /// per repo, kept together because one remote command produces all three.
     @Published var statusByRepo: [String: GitRepoStatus] = [:]
-    @Published var selection: DiffTarget?
+    /// The selected scope. Nil only while several repos are visible and the
+    /// user hasn't picked yet — one visible repo defaults to its worktree.
+    @Published var scope: DiffTarget?
+    /// A file picked within the scope; nil reads the scope's whole diff.
+    @Published var selectedFile: String?
+    /// The open commit scope's file list, fetched on selection. A worktree
+    /// scope's files are read straight out of `statusByRepo` instead.
+    @Published var commitFiles = GitScopeFiles()
+    @Published var loadingFiles = false
     @Published var diffText: String = ""
     @Published var loadingRepos = false
     @Published var loadingDiff = false
@@ -65,6 +77,19 @@ private final class RemoteDiffModel: ObservableObject {
         return repos
     }
 
+    /// The open scope's file list, whichever kind of scope it is.
+    var scopeFiles: GitScopeFiles {
+        switch scope {
+        case let .worktree(repo)?:
+            let status = statusByRepo[repo]
+            return GitScopeFiles(changes: status?.changes ?? [], stats: status?.stats ?? [:])
+        case .commits?:
+            return commitFiles
+        case nil:
+            return GitScopeFiles()
+        }
+    }
+
     /// Load once with a spinner, then keep polling until the view goes away
     /// (the enclosing `.task` cancels this).
     func pollLoop() async {
@@ -76,7 +101,7 @@ private final class RemoteDiffModel: ObservableObject {
         }
     }
 
-    /// Re-read repos, their changed files, and the open diff. Published values
+    /// Re-read repos, their changed files, and the open scope. Published values
     /// are only reassigned when they actually differ, so unchanged polls don't
     /// churn the view (and don't disturb scrolling or selection).
     func refresh(showSpinner: Bool) async {
@@ -107,45 +132,132 @@ private final class RemoteDiffModel: ObservableObject {
         for repo in visibleRepos {
             map[repo] = await RemoteGit.status(destination: destination, repo: repo)
         }
-        if map != statusByRepo { statusByRepo = map }
+        let changed = map != statusByRepo
+        if changed { statusByRepo = map }
 
-        // Keep the open diff live too. A commit range is re-read as well: its
-        // base can be a branch ref, which moves when the default branch does.
-        if let selection {
-            let text = await diff(for: selection)
-            if text != diffText { diffText = text }
+        // Default to the worktree when there's exactly one repo to mean by it.
+        var needsReload = changed
+        if scope == nil, visibleRepos.count == 1, let only = visibleRepos.first {
+            scope = .worktree(repo: only)
+            needsReload = true
+        }
+        if validateScope() { needsReload = true }
+
+        // Keep the open scope live. Re-reading is gated on the poll having
+        // changed something: a commit range's contents are fixed for as long
+        // as its commits are, and a moved base ref shows up as a changed log.
+        if needsReload {
+            await reloadScopeContent()
+            validateSelectedFile()
         }
 
         if showSpinner { loadingRepos = false }
     }
 
-    func select(_ target: DiffTarget) async {
-        selection = target
+    func selectScope(_ target: DiffTarget) async {
+        // Re-clicking the selected scope drops a file pick, back to the
+        // scope's whole diff.
+        if target == scope, selectedFile != nil {
+            selectedFile = nil
+            await reloadDiff()
+            return
+        }
+        guard target != scope else { return }
+        scope = target
+        selectedFile = nil
+        await reloadScopeContent()
+    }
+
+    func selectFile(_ path: String) async {
+        selectedFile = path
+        await reloadDiff()
+    }
+
+    /// Re-read the open scope's files (commit scopes fetch theirs) and diff.
+    private func reloadScopeContent() async {
+        guard let scope else { diffText = ""; return }
+        if let range = scope.commitRange {
+            loadingFiles = true
+            let files = await RemoteGit.scopeFiles(
+                destination: destination, repo: scope.repo, from: range.from, to: range.to)
+            if self.scope == scope { commitFiles = files }
+            loadingFiles = false
+        }
+        await reloadDiff()
+    }
+
+    private func reloadDiff() async {
+        guard let scope else { diffText = ""; return }
+        let file = selectedFile
         loadingDiff = true
-        diffText = await diff(for: target)
+        let text = await diff(for: scope, file: file)
+        // A pick made while this was in flight owns the pane now.
+        if self.scope == scope, self.selectedFile == file { diffText = text }
         loadingDiff = false
     }
 
-    private func diff(for target: DiffTarget) async -> String {
-        switch target {
-        case let .file(repo, path):
-            return await RemoteGit.fileDiff(destination: destination, repo: repo, file: path)
-        case let .commits(repo, _, exclusiveBase):
-            guard let newest = target.newestSha else { return "" }
+    private func diff(for scope: DiffTarget, file: String?) async -> String {
+        switch scope {
+        case let .worktree(repo):
+            if let file {
+                return await RemoteGit.fileDiff(destination: destination, repo: repo, file: file)
+            }
+            return await RemoteGit.repoDiff(destination: destination, repo: repo)
+        case .commits:
+            guard let range = scope.commitRange else { return "" }
+            if let file {
+                return await RemoteGit.rangeFileDiff(
+                    destination: destination, repo: scope.repo,
+                    from: range.from, to: range.to, file: file)
+            }
             return await RemoteGit.rangeDiff(
-                destination: destination, repo: repo, from: exclusiveBase, to: newest)
+                destination: destination, repo: scope.repo, from: range.from, to: range.to)
         }
+    }
+
+    /// A scope can outlive what it points at: its repo disappears, or a rebase
+    /// drops the selected commits from the log. Fall back to that repo's
+    /// worktree, or to nothing. Returns true when it changed the selection.
+    @discardableResult
+    private func validateScope() -> Bool {
+        guard let scope else {
+            if selectedFile != nil { selectedFile = nil }
+            return false
+        }
+        guard visibleRepos.contains(scope.repo) else {
+            self.scope = nil
+            selectedFile = nil
+            return true
+        }
+        if case let .commits(_, shas, _) = scope {
+            let shasInLog = Set(log(in: scope.repo).commits.map(\.sha))
+            if !shas.allSatisfy(shasInLog.contains) {
+                self.scope = .worktree(repo: scope.repo)
+                selectedFile = nil
+                return true
+            }
+        }
+        return false
+    }
+
+    /// A picked file can vanish from its scope the same way the scope can.
+    private func validateSelectedFile() {
+        guard let selectedFile,
+              !scopeFiles.changes.contains(where: { $0.path == selectedFile })
+        else { return }
+        self.selectedFile = nil
     }
 
     func changes(in repo: String) -> [GitFileChange] { statusByRepo[repo]?.changes ?? [] }
     func log(in repo: String) -> GitLog { statusByRepo[repo]?.log ?? GitLog() }
 
-    var totalChanges: Int { statusByRepo.values.reduce(0) { $0 + $1.changes.count } }
     var totalCommits: Int { statusByRepo.values.reduce(0) { $0 + $1.log.commits.count } }
 
-    /// The logs the pane shows, in the same order as the file list above.
-    var visibleLogs: [RepoLog] {
-        visibleRepos.map { RepoLog(repo: $0, log: log(in: $0)) }
+    /// The scopes the pane lists, one entry per visible repo.
+    var visibleScopes: [RepoScope] {
+        visibleRepos.map {
+            RepoScope(repo: $0, changeCount: changes(in: $0).count, log: log(in: $0))
+        }
     }
 }
 
@@ -154,7 +266,7 @@ private struct RemoteDiffView: View {
     /// Shared with the local view (and persisted) so the pane splits stay where
     /// the user put them.
     @AppStorage("diffFileListHeight") private var fileListHeight: Double = 200
-    @AppStorage("diffLogHeight") private var logHeight: Double = 160
+    @AppStorage("diffLogHeight") private var scopeListHeight: Double = 160
 
     init(destination: String) {
         _model = StateObject(wrappedValue: RemoteDiffModel(destination: destination))
@@ -164,9 +276,9 @@ private struct RemoteDiffView: View {
         // The geometry is only used to keep the draggable splits from squeezing
         // the diff out of short windows.
         GeometryReader { geometry in
-            let listRange = splitRange(in: geometry.size.height)
-            let listHeight = clamped(fileListHeight, in: listRange)
-            let logRange = splitRange(in: geometry.size.height, reserving: listHeight)
+            let scopeRange = splitRange(in: geometry.size.height)
+            let scopeHeight = clamped(scopeListHeight, in: scopeRange)
+            let fileRange = splitRange(in: geometry.size.height, reserving: scopeHeight)
 
             VStack(alignment: .leading, spacing: 0) {
                 header
@@ -179,10 +291,10 @@ private struct RemoteDiffView: View {
                 if model.repos.isEmpty {
                     noReposState
                 } else {
-                    fileList.frame(height: listHeight)
-                    SplitHandle(height: $fileListHeight, range: listRange, label: "file list")
-                    logPane.frame(height: clamped(logHeight, in: logRange))
-                    SplitHandle(height: $logHeight, range: logRange, label: "commit log")
+                    scopePane.frame(height: scopeHeight)
+                    SplitHandle(height: $scopeListHeight, range: scopeRange, label: "scope list")
+                    filesPane.frame(height: clamped(fileListHeight, in: fileRange))
+                    SplitHandle(height: $fileListHeight, range: fileRange, label: "file list")
                     diffPane
                 }
             }
@@ -240,61 +352,31 @@ private struct RemoteDiffView: View {
         .padding(.vertical, 6)
     }
 
-    @ViewBuilder
-    private var fileList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            FileListCaption(count: model.totalChanges)
-            if model.totalChanges == 0 {
-                DiffPlaceholder(
-                    text: model.loadingRepos ? "Checking for changes…" : "No changes",
-                    icon: "checkmark.circle",
-                    detail: model.selectedRepo.map { "\(RepoLabel.short($0)) is clean." }
-                        ?? "Every repo here is clean.")
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(model.visibleRepos, id: \.self) { repo in
-                            let changes = model.changes(in: repo)
-                            if !changes.isEmpty {
-                                // With one repo picked the header would just
-                                // repeat the picker, so it's only shown in
-                                // "All repos".
-                                if model.selectedRepo == nil {
-                                    RepoHeader(repo: repo, count: changes.count, noun: "changed")
-                                }
-                                ForEach(changes) { change in
-                                    Button {
-                                        Task {
-                                            await model.select(.file(repo: repo, path: change.path))
-                                        }
-                                    } label: {
-                                        FileRow(
-                                            change: change,
-                                            isSelected: model.selection?
-                                                .selects(repo: repo, path: change.path) ?? false,
-                                            stat: model.statusByRepo[repo]?.stats[change.path]
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 6)
-                }
-            }
-        }
-    }
-
-    private var logPane: some View {
-        LogPane(
-            logs: model.visibleLogs,
+    private var scopePane: some View {
+        ScopeListPane(
+            scopes: model.visibleScopes,
             showsRepoHeaders: model.selectedRepo == nil,
             totalCommits: model.totalCommits,
-            isLoading: model.loadingRepos,
-            selection: model.selection,
-            select: { target in Task { await model.select(target) } })
+            selection: model.scope,
+            select: { target in Task { await model.selectScope(target) } })
+    }
+
+    @ViewBuilder
+    private var filesPane: some View {
+        if let scope = model.scope {
+            ScopeFilesPane(
+                label: scope.label(in: model.log(in: scope.repo)),
+                files: model.scopeFiles,
+                isLoading: model.loadingFiles,
+                selectedFile: model.selectedFile,
+                showsStaging: scope.newestSha == nil,
+                select: { path in Task { await model.selectFile(path) } })
+        } else {
+            DiffPlaceholder(
+                text: "No scope selected",
+                icon: "arrow.up.doc",
+                detail: "Pick a working tree or commits above to list their files.")
+        }
     }
 
     private var noReposState: some View {
@@ -306,33 +388,42 @@ private struct RemoteDiffView: View {
 
     @ViewBuilder
     private var diffPane: some View {
-        if model.loadingDiff {
-            DiffPlaceholder(text: "Loading diff…", busy: true)
-        } else if let selection = model.selection {
-            if model.diffText.isEmpty {
+        if let scope = model.scope {
+            if model.loadingDiff, model.diffText.isEmpty {
+                DiffPlaceholder(text: "Loading diff…", busy: true)
+            } else if model.diffText.isEmpty {
                 DiffPlaceholder(
                     text: "No line changes",
                     icon: "doc",
-                    detail: selection.newestSha == nil
-                        ? "This file is new, binary, or unchanged against HEAD."
-                        : "These commits touch no text.")
+                    detail: emptyDiffDetail(for: scope))
             } else {
-                DiffTextView(diff: model.diffText, subject: subject(of: selection))
+                DiffTextView(diff: model.diffText, subject: subject(of: scope))
             }
         } else {
             DiffPlaceholder(
                 text: "Nothing selected",
                 icon: "doc.plaintext",
-                detail: "Pick a changed file or a commit above to read its diff.")
+                detail: "Pick a scope above to read its diff.")
         }
     }
 
-    private func subject(of selection: DiffTarget) -> DiffSubject {
-        switch selection {
-        case let .file(_, path):
-            return .file(path)
-        case let .commits(repo, _, _):
-            return .commits(selection.label(in: model.log(in: repo)))
+    private func emptyDiffDetail(for scope: DiffTarget) -> String {
+        let worktree = scope.newestSha == nil
+        if model.selectedFile != nil {
+            return worktree
+                ? "This file is new, binary, or unchanged against HEAD."
+                : "This file is unchanged across these commits."
+        }
+        return worktree ? "The worktree matches HEAD." : "These commits touch no text."
+    }
+
+    private func subject(of scope: DiffTarget) -> DiffSubject {
+        if let file = model.selectedFile { return .file(file) }
+        switch scope {
+        case .worktree:
+            return .worktree
+        case .commits:
+            return .commits(scope.label(in: model.log(in: scope.repo)))
         }
     }
 }
@@ -344,31 +435,35 @@ private struct LocalDiffView: View {
     @State private var state: GitWorktreeState?
     @State private var isLoading = false
     @State private var reloadToken = 0
-    /// The whole-repo diff is one document, so picking a file scrolls to it
-    /// rather than re-fetching anything.
-    @State private var focusedPath: String?
-    /// Non-nil while a run of commits is being read instead of the worktree.
-    @State private var commitSelection: DiffTarget?
+    /// The selected scope; defaults to the worktree once a repo is known.
+    @State private var scope: DiffTarget?
+    /// A file picked within the scope; nil reads the scope's whole diff.
+    @State private var selectedFile: String?
+    /// A commit scope's file list and diff, fetched on selection. The worktree
+    /// scope's arrive with the state — its whole-repo diff is one document, so
+    /// picking one of its files scrolls to it rather than re-fetching anything.
+    @State private var commitFiles = GitScopeFiles()
     @State private var commitDiff = ""
+    @State private var loadingCommitFiles = false
     @State private var loadingCommitDiff = false
     @AppStorage("diffFileListHeight") private var fileListHeight: Double = 200
-    @AppStorage("diffLogHeight") private var logHeight: Double = 160
+    @AppStorage("diffLogHeight") private var scopeListHeight: Double = 160
 
     var body: some View {
         GeometryReader { geometry in
-            let listRange = splitRange(in: geometry.size.height)
-            let listHeight = clamped(fileListHeight, in: listRange)
-            let logRange = splitRange(in: geometry.size.height, reserving: listHeight)
+            let scopeRange = splitRange(in: geometry.size.height)
+            let scopeHeight = clamped(scopeListHeight, in: scopeRange)
+            let fileRange = splitRange(in: geometry.size.height, reserving: scopeHeight)
 
             VStack(alignment: .leading, spacing: 0) {
                 header
                 Divider()
 
                 if let state {
-                    changeList(state).frame(height: listHeight)
-                    SplitHandle(height: $fileListHeight, range: listRange, label: "file list")
-                    logPane(state).frame(height: clamped(logHeight, in: logRange))
-                    SplitHandle(height: $logHeight, range: logRange, label: "commit log")
+                    scopePane(state).frame(height: scopeHeight)
+                    SplitHandle(height: $scopeListHeight, range: scopeRange, label: "scope list")
+                    filesPane(state).frame(height: clamped(fileListHeight, in: fileRange))
+                    SplitHandle(height: $fileListHeight, range: fileRange, label: "file list")
                     diffPane(state)
                 } else if isLoading {
                     DiffPlaceholder(text: "Loading…", busy: true)
@@ -429,104 +524,174 @@ private struct LocalDiffView: View {
         .padding(.vertical, 8)
     }
 
-    @ViewBuilder
-    private func changeList(_ state: GitWorktreeState) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            FileListCaption(count: state.changes.count)
-            if state.isClean {
-                DiffPlaceholder(
-                    text: "No changes",
-                    icon: "checkmark.circle",
-                    detail: "The working tree matches HEAD.")
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(state.changes) { change in
-                            Button {
-                                focusedPath = change.path
-                                // The worktree diff and a commit diff share the
-                                // pane, so picking a file takes it back.
-                                commitSelection = nil
-                            } label: {
-                                FileRow(
-                                    change: change,
-                                    isSelected: commitSelection == nil && focusedPath == change.path)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                }
-            }
-        }
-    }
-
-    private func logPane(_ state: GitWorktreeState) -> some View {
-        LogPane(
-            logs: [RepoLog(repo: state.repoRoot.lastPathComponent, log: state.log)],
+    private func scopePane(_ state: GitWorktreeState) -> some View {
+        ScopeListPane(
+            scopes: [RepoScope(
+                repo: state.repoRoot.lastPathComponent,
+                changeCount: state.changes.count,
+                log: state.log)],
             showsRepoHeaders: false,
             totalCommits: state.log.commits.count,
-            isLoading: isLoading,
-            selection: commitSelection,
-            select: { target in selectCommits(target, in: state) })
+            selection: scope,
+            select: { target in selectScope(target, in: state) })
+    }
+
+    @ViewBuilder
+    private func filesPane(_ state: GitWorktreeState) -> some View {
+        if let scope {
+            ScopeFilesPane(
+                label: scope.label(in: state.log),
+                files: scope.newestSha == nil
+                    ? GitScopeFiles(changes: state.changes)
+                    : commitFiles,
+                isLoading: loadingCommitFiles,
+                selectedFile: selectedFile,
+                showsStaging: scope.newestSha == nil,
+                select: { selectFile($0, in: state) })
+        }
     }
 
     @ViewBuilder
     private func diffPane(_ state: GitWorktreeState) -> some View {
-        if let commitSelection {
-            if loadingCommitDiff {
+        if let scope, scope.newestSha != nil {
+            // A commit scope reads its own document, fetched on selection.
+            if loadingCommitDiff, commitDiff.isEmpty {
                 DiffPlaceholder(text: "Loading diff…", busy: true)
             } else if commitDiff.isEmpty {
                 DiffPlaceholder(
                     text: "No line changes",
                     icon: "doc",
-                    detail: "These commits touch no text.")
+                    detail: selectedFile != nil
+                        ? "This file is unchanged across these commits."
+                        : "These commits touch no text.")
             } else {
                 DiffTextView(
                     diff: commitDiff,
-                    subject: .commits(commitSelection.label(in: state.log)))
+                    subject: selectedFile.map(DiffSubject.file)
+                        ?? .commits(scope.label(in: state.log)))
             }
         } else if state.isClean {
             DiffPlaceholder(
                 text: "No changes",
                 icon: "checkmark.circle",
-                detail: "Pick a commit below to read what it changed.")
+                detail: "The working tree matches HEAD — pick commits above to read what landed.")
         } else {
-            DiffTextView(diff: state.diff, subject: .worktree, scrollTarget: focusedPath)
+            DiffTextView(diff: state.diff, subject: .worktree, scrollTarget: selectedFile)
         }
     }
 
-    private func selectCommits(_ target: DiffTarget, in state: GitWorktreeState) {
-        guard case let .commits(_, _, exclusiveBase) = target,
-              let newest = target.newestSha else { return }
-        commitSelection = target
+    private func selectScope(_ target: DiffTarget, in state: GitWorktreeState) {
+        // Re-clicking the selected scope drops a file pick, back to the
+        // scope's whole diff.
+        if target == scope {
+            selectedFile = nil
+            if target.newestSha != nil { loadCommitDiffWhole(target, in: state) }
+            return
+        }
+        scope = target
+        selectedFile = nil
+        if target.newestSha != nil { loadCommitScope(target, in: state) }
+    }
+
+    private func selectFile(_ path: String, in state: GitWorktreeState) {
+        selectedFile = path
+        // A worktree file is scrolled to within the whole-repo diff; a commit
+        // file needs its own read.
+        if let scope, scope.newestSha != nil { loadCommitFileDiff(scope, file: path, in: state) }
+    }
+
+    /// Fetch a commit scope's file list and whole diff together.
+    private func loadCommitScope(_ target: DiffTarget, in state: GitWorktreeState) {
+        guard let range = target.commitRange else { return }
+        loadingCommitFiles = true
         loadingCommitDiff = true
         let root = state.repoRoot
         Task {
-            commitDiff = await Task.detached(priority: .userInitiated) {
-                GitWorktree.rangeDiff(in: root, from: exclusiveBase, to: newest)
+            async let files = Task.detached(priority: .userInitiated) {
+                GitWorktree.scopeFiles(in: root, from: range.from, to: range.to)
+            }.value
+            async let text = Task.detached(priority: .userInitiated) {
+                GitWorktree.rangeDiff(in: root, from: range.from, to: range.to)
+            }.value
+            let newFiles = await files
+            let newText = await text
+            // Reset the spinners even when a pick made mid-flight has already
+            // replaced this load — they belong to it either way.
+            loadingCommitFiles = false
+            loadingCommitDiff = false
+            guard scope == target else { return }
+            commitFiles = newFiles
+            commitDiff = newText
+        }
+    }
+
+    /// Re-fetch the scope's whole diff (a file pick was dropped).
+    private func loadCommitDiffWhole(_ target: DiffTarget, in state: GitWorktreeState) {
+        guard let range = target.commitRange else { return }
+        let root = state.repoRoot
+        Task {
+            let text = await Task.detached(priority: .userInitiated) {
+                GitWorktree.rangeDiff(in: root, from: range.from, to: range.to)
+            }.value
+            guard scope == target, selectedFile == nil else { return }
+            commitDiff = text
+        }
+    }
+
+    private func loadCommitFileDiff(_ target: DiffTarget, file: String, in state: GitWorktreeState) {
+        guard let range = target.commitRange else { return }
+        loadingCommitDiff = true
+        let root = state.repoRoot
+        Task {
+            let text = await Task.detached(priority: .userInitiated) {
+                GitWorktree.rangeFileDiff(in: root, from: range.from, to: range.to, path: file)
             }.value
             loadingCommitDiff = false
+            guard scope == target, selectedFile == file else { return }
+            commitDiff = text
         }
     }
 
     private func reload(showSpinner: Bool) async {
         guard let directory = session.workingDirectory else {
             state = nil
+            scope = nil
+            selectedFile = nil
             return
         }
         if showSpinner { isLoading = true }
         let computed = await Task.detached(priority: .userInitiated) {
             GitWorktree.state(for: directory)
         }.value
-        // Moving to another repo invalidates a commit picked in the old one.
+
+        let logChanged = computed?.log != state?.log
+        // Moving to another repo invalidates a scope picked in the old one.
         if computed?.repoRoot != state?.repoRoot {
-            commitSelection = nil
+            scope = computed.map { .worktree(repo: $0.repoRoot.lastPathComponent) }
+            selectedFile = nil
             commitDiff = ""
+            commitFiles = GitScopeFiles()
+        } else if let scope, case let .commits(_, shas, _) = scope,
+                  let log = computed?.log,
+                  !shas.allSatisfy({ sha in log.commits.contains(where: { $0.sha == sha }) }) {
+            // A rebase dropped the picked commits; fall back to the worktree.
+            self.scope = computed.map { .worktree(repo: $0.repoRoot.lastPathComponent) }
+            selectedFile = nil
         }
         // Only reassign when changed, so quiet polls don't churn the view.
         if computed != state { state = computed }
+
+        // A commit scope's contents are fixed for as long as its commits are;
+        // only a changed log can move the base ref under it.
+        if logChanged, let scope, scope.newestSha != nil, let computed {
+            loadCommitScope(scope, in: computed)
+        }
+        // A worktree file that was committed or reverted is no longer a
+        // sensible scroll target.
+        if let selectedFile, scope?.newestSha == nil,
+           let computed, !computed.changes.contains(where: { $0.path == selectedFile }) {
+            self.selectedFile = nil
+        }
         if showSpinner { isLoading = false }
     }
 }
@@ -542,29 +707,30 @@ private func clamped(_ stored: Double, in range: ClosedRange<Double>) -> CGFloat
     CGFloat(min(max(stored, range.lowerBound), range.upperBound))
 }
 
-// MARK: - Commit log
+// MARK: - Scope list
 
-/// One repo's log, as the log pane lists it.
-struct RepoLog: Identifiable {
+/// One repo's offer of scopes, as the scope pane lists it: the working tree
+/// plus the commits the repo has that its default branch doesn't.
+struct RepoScope: Identifiable {
     var id: String { repo }
     let repo: String
+    /// Changed files in the worktree — the count the working-tree row shows.
+    let changeCount: Int
     let log: GitLog
 }
 
-/// The commit log pane, below the file list: for each repo shown, the commits it
-/// has that its default branch doesn't — the branch's own work, newest first.
+/// The top pane: what a diff can be read *of*. Each repo on screen offers its
+/// working tree, an "all commits" row for the branch's whole work, and the
+/// commits themselves — newest first, stopping at the default branch.
 ///
-/// Clicking a commit shows its diff; shift-clicking a second one selects the run
-/// between them and shows their combined diff. The "all commits" row at the top
-/// of each repo is that range taken to its limit, the whole branch against the
-/// default branch.
-private struct LogPane: View {
-    let logs: [RepoLog]
-    /// Off when the picker above has already narrowed to one repo, matching how
-    /// the file list decides.
+/// Clicking a scope shows its files below and its diff at the bottom;
+/// shift-clicking a second commit selects the run between them. Clicking the
+/// selected scope again drops a file pick, back to the scope's whole diff.
+private struct ScopeListPane: View {
+    let scopes: [RepoScope]
+    /// Off when the picker above has already narrowed to one repo.
     let showsRepoHeaders: Bool
     let totalCommits: Int
-    let isLoading: Bool
     let selection: DiffTarget?
     let select: (DiffTarget) -> Void
 
@@ -575,63 +741,61 @@ private struct LogPane: View {
     /// on screen — across several they can differ, and each repo's own row says
     /// what it is measured against anyway.
     private var singleBase: String {
-        logs.count == 1 ? logs[0].log.base : ""
+        scopes.count == 1 ? scopes[0].log.base : ""
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            LogCaption(count: totalCommits, base: singleBase)
-            if totalCommits == 0 {
-                DiffPlaceholder(
-                    text: isLoading ? "Reading the log…" : "No commits ahead",
-                    icon: "clock.arrow.circlepath",
-                    detail: isLoading ? nil : emptyDetail)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(logs) { entry in
-                            if !entry.log.commits.isEmpty {
-                                repoSection(entry)
-                            }
-                        }
+            ScopeCaption(count: totalCommits, base: singleBase)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(scopes) { entry in
+                        repoSection(entry)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 6)
                 }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
             }
         }
-    }
-
-    private var emptyDetail: String {
-        singleBase.isEmpty
-            ? "Only commits a branch has beyond its default branch are listed."
-            : "This is \(singleBase), or matches it — commits already on it aren't listed."
     }
 
     @ViewBuilder
-    private func repoSection(_ entry: RepoLog) -> some View {
+    private func repoSection(_ entry: RepoScope) -> some View {
         if showsRepoHeaders {
-            RepoHeader(repo: entry.repo, count: entry.log.commits.count, noun: "commits")
+            RepoHeader(repo: entry.repo, changeCount: entry.changeCount,
+                       commitCount: entry.log.commits.count)
         }
+
         Button {
-            select(.allCommits(repo: entry.repo, log: entry.log))
+            select(.worktree(repo: entry.repo))
         } label: {
-            AllCommitsRow(
-                count: entry.log.commits.count,
-                base: entry.log.base,
-                isSelected: selection?.selectsAll(repo: entry.repo, log: entry.log) ?? false)
+            WorkingTreeRow(
+                count: entry.changeCount,
+                isSelected: selection?.selectsWorktree(repo: entry.repo) ?? false)
         }
         .buttonStyle(.plain)
 
-        ForEach(Array(entry.log.commits.enumerated()), id: \.element.id) { index, commit in
+        if !entry.log.commits.isEmpty {
             Button {
-                pick(entry, index: index)
+                select(.allCommits(repo: entry.repo, log: entry.log))
             } label: {
-                CommitRow(
-                    commit: commit,
-                    isSelected: selection?.selects(repo: entry.repo, sha: commit.sha) ?? false)
+                AllCommitsRow(
+                    count: entry.log.commits.count,
+                    base: entry.log.base,
+                    isSelected: selection?.selectsAll(repo: entry.repo, log: entry.log) ?? false)
             }
             .buttonStyle(.plain)
+
+            ForEach(Array(entry.log.commits.enumerated()), id: \.element.id) { index, commit in
+                Button {
+                    pick(entry, index: index)
+                } label: {
+                    CommitRow(
+                        commit: commit,
+                        isSelected: selection?.selects(repo: entry.repo, sha: commit.sha) ?? false)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -641,7 +805,7 @@ private struct LogPane: View {
     /// gesture: a plain `Button` doesn't report them, and every other way of
     /// getting them here costs the button's own keyboard and accessibility
     /// behaviour.
-    private func pick(_ entry: RepoLog, index: Int) {
+    private func pick(_ entry: RepoScope, index: Int) {
         let extending = NSEvent.modifierFlags.contains(.shift) && anchor?.repo == entry.repo
         if !extending { anchor = CommitAnchor(repo: entry.repo, index: index) }
         select(.commits(
@@ -655,6 +819,38 @@ private struct LogPane: View {
 private struct CommitAnchor: Equatable {
     let repo: String
     let index: Int
+}
+
+/// The row that selects a repo's uncommitted work.
+private struct WorkingTreeRow: View {
+    let count: Int
+    let isSelected: Bool
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .frame(width: 15)
+            Text("Working tree")
+                .font(.system(size: 11, weight: .medium))
+            Text(count == 1 ? "1 change" : "\(count) changes")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 5).fill(rowFill(isSelected, isHovering)))
+        .overlay(alignment: .leading) { SelectionBar(isSelected: isSelected) }
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .help(count == 0 ? "The working tree is clean" : "Diff the uncommitted changes")
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
 }
 
 /// The row that selects a repo's whole branch at once.
@@ -731,8 +927,8 @@ private struct CommitRow: View {
     }
 }
 
-/// Caption above the log, naming what the list stops at.
-private struct LogCaption: View {
+/// Caption above the scope list, naming what the commits stop at.
+private struct ScopeCaption: View {
     let count: Int
     let base: String
 
@@ -756,10 +952,76 @@ private struct LogCaption: View {
     }
 }
 
-// MARK: - File list
+// MARK: - Scope files
 
-/// A changed-file row that keeps a sense of the file structure: the directory is
-/// dimmed and the filename emphasized.
+/// The middle pane: the files of the selected scope. Picking one narrows the
+/// diff below to it; the scope's whole diff shows while nothing is picked.
+private struct ScopeFilesPane: View {
+    /// The scope's own label — "Working tree" or a commit span.
+    let label: String
+    let files: GitScopeFiles
+    let isLoading: Bool
+    let selectedFile: String?
+    /// Off for commit scopes, whose rows are committed content — the
+    /// staged/unstaged note a worktree row carries would be wrong there.
+    let showsStaging: Bool
+    let select: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            caption
+            if isLoading, files.changes.isEmpty {
+                DiffPlaceholder(text: "Listing files…", busy: true)
+            } else if files.changes.isEmpty {
+                DiffPlaceholder(
+                    text: "No changed files",
+                    icon: "checkmark.circle",
+                    detail: showsStaging
+                        ? "The working tree matches HEAD."
+                        : "These commits touch no files.")
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(files.changes) { change in
+                            Button {
+                                select(change.path)
+                            } label: {
+                                FileRow(
+                                    change: change,
+                                    isSelected: selectedFile == change.path,
+                                    stat: files.stats[change.path],
+                                    showsStaging: showsStaging)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
+                }
+            }
+        }
+    }
+
+    private var caption: some View {
+        HStack(spacing: 5) {
+            Text("Files")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+    }
+}
+
+// MARK: - Rows and badges
+
 /// Shown when the VM can't be reached. Without this a connection failure is
 /// indistinguishable from an empty home directory.
 private struct ConnectionErrorBanner: View {
@@ -822,11 +1084,15 @@ private struct LineStatLabel: View {
     }
 }
 
+/// A changed-file row that keeps a sense of the file structure: the directory is
+/// dimmed and the filename emphasized.
 private struct FileRow: View {
     let change: GitFileChange
     let isSelected: Bool
     /// Line counts, absent for untracked files (they aren't in `git diff`).
     var stat: GitLineStat? = nil
+    /// Off for commit scopes, where "staged/unstaged" is meaningless.
+    var showsStaging = true
 
     @State private var isHovering = false
 
@@ -850,10 +1116,22 @@ private struct FileRow: View {
         .overlay(alignment: .leading) { SelectionBar(isSelected: isSelected) }
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .help("\(status.label) · \(status.stagingNote) · \(change.path)")
+        .help(helpText)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(status.label), \(status.stagingNote), \(change.path)")
+        .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    private var helpText: String {
+        showsStaging
+            ? "\(status.label) · \(status.stagingNote) · \(change.path)"
+            : "\(status.label) · \(change.path)"
+    }
+
+    private var accessibilityText: String {
+        showsStaging
+            ? "\(status.label), \(status.stagingNote), \(change.path)"
+            : "\(status.label), \(change.path)"
     }
 }
 
@@ -877,12 +1155,11 @@ private struct SelectionBar: View {
     }
 }
 
-/// Names a repo above its rows, in both the file list and the log.
+/// Names a repo above its scope rows, with a sense of how much is in it.
 private struct RepoHeader: View {
     let repo: String
-    let count: Int
-    /// What the count means here — "changed" or "commits".
-    let noun: String
+    let changeCount: Int
+    let commitCount: Int
 
     var body: some View {
         HStack(spacing: 5) {
@@ -894,26 +1171,31 @@ private struct RepoHeader: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.head)
-            CountBadge(count: count)
+            Text("\(changeCount) changed · \(commitCount) commits")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 6)
         .padding(.top, 8)
         .padding(.bottom, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(RepoLabel.spoken(repo)), \(count) \(noun)")
+        .accessibilityLabel(
+            "\(RepoLabel.spoken(repo)), \(changeCount) changed files, \(commitCount) commits")
         .help(repo)
     }
 }
 
 /// A readable reading of git's two-character porcelain code, so the list can say
-/// "Modified" instead of " M" and colour the badge accordingly.
+/// "Modified" instead of " M" and colour the badge accordingly. Commit-scope
+/// rows carry a single name-status letter in the index slot.
 private struct FileStatus {
     let letter: String
     let label: String
     let color: Color
-    /// True when the change is in the index (`git add`-ed); drawn as a filled
-    /// badge, unstaged as an outlined one.
+    /// True when the change is in the index (`git add`-ed) or committed; drawn
+    /// as a filled badge, unstaged as an outlined one.
     let isStaged: Bool
 
     init(code: String) {
@@ -967,37 +1249,6 @@ private struct FileStatusBadge: View {
     }
 }
 
-/// Caption above a file list, so the size of the change set is visible without
-/// counting rows.
-private struct FileListCaption: View {
-    let count: Int
-
-    var body: some View {
-        HStack {
-            Text(count == 1 ? "1 changed file" : "\(count) changed files")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .padding(.bottom, 2)
-    }
-}
-
-private struct CountBadge: View {
-    let count: Int
-
-    var body: some View {
-        Text("\(count)")
-            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(Color.primary.opacity(0.08)))
-    }
-}
-
 /// Path with the directory dimmed so the filename stays scannable in a narrow
 /// column.
 private func structuredPath(_ path: String) -> AttributedString {
@@ -1016,15 +1267,11 @@ private func structuredPath(_ path: String) -> AttributedString {
 
 // MARK: - Diff rendering
 
-/// One rendered line of a unified diff.
-/// A scrollable unified-diff view with a line-number gutter, tinted +/- rows and
-/// styled hunk headers. The sidebar is narrow, so lines soft-wrap under the
-/// gutter rather than forcing a horizontal scroll to read the ends of lines.
 /// What a rendered diff covers. It decides the pane header, and whether the
 /// per-file header rows inside the diff are worth drawing.
 private enum DiffSubject: Equatable {
-    /// One file's worktree diff. Its per-file header would only repeat the
-    /// pane's own title.
+    /// One file's diff. Its per-file header would only repeat the pane's own
+    /// title.
     case file(String)
     /// A run of commits, already labelled for display.
     case commits(String)
@@ -1039,6 +1286,9 @@ private enum DiffSubject: Equatable {
     }
 }
 
+/// A scrollable unified-diff view with a line-number gutter, tinted +/- rows and
+/// styled hunk headers. The sidebar is narrow, so lines soft-wrap under the
+/// gutter rather than forcing a horizontal scroll to read the ends of lines.
 private struct DiffTextView: View {
     let diff: String
     var subject: DiffSubject = .worktree
@@ -1133,6 +1383,7 @@ private struct DiffStatLabel: View {
     }
 }
 
+/// One rendered line of a unified diff.
 private struct DiffRowView: View {
     let row: DiffRow
     let gutterWidth: CGFloat
