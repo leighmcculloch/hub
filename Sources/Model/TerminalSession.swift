@@ -124,6 +124,10 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// The size last reported to tmux. Every report resizes every window in the
     /// session, so an unchanged layout pass must not send one.
     private var reportedSize: (cols: Int, rows: Int)?
+    /// The pane tmux last reported as active, so a pane listing that has moved to
+    /// a different one — a new window, a split, or a `select-window` run from the
+    /// VM — is recognised as a focus change to follow, not a routine refresh.
+    private var lastActivePaneID: String?
 
     private enum PendingReply {
         case panes
@@ -208,6 +212,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         disconnectReason = nil
         pendingReplies = []
         reportedSize = nil
+        lastActivePaneID = nil
 
         switch launch {
         case .localShell:
@@ -432,6 +437,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// closed ones drop out, and the order follows tmux's windows and panes
     /// rather than the order the app happened to hear about them.
     private func apply(panes: [TmuxPane]) {
+        let priorPaneIDs = Set(tabs.compactMap { $0.paneID })
         let existing = Dictionary(tabs.compactMap { tab in tab.paneID.map { ($0, tab) } },
                                   uniquingKeysWith: { first, _ in first })
         var ordered: [TerminalTab] = []
@@ -446,12 +452,24 @@ final class TerminalSession: ObservableObject, Identifiable {
         // the panes.
         tabs = ordered + tabs.filter { $0.isBrowser }
 
+        let active = panes.first { $0.isActive }?.id
         if !tabs.contains(where: { $0.id == selectedTabID }) {
-            // A Shelley tab's pane ID is nil, so it must not stand in for a
-            // listing that named no active pane.
-            let active = panes.first { $0.isActive }?.id
+            // The selected tab dropped out of the listing — its pane was closed,
+            // or a reconnect is rebuilding the panes — so fall in behind tmux's
+            // active pane. A Shelley tab's pane ID is nil, so it must not stand
+            // in for a listing that named no active pane.
             selectedTabID = tabs.first { $0.paneID != nil && $0.paneID == active }?.id
                 ?? tabs.first?.id
+            lastActivePaneID = active
+        } else if let active, !priorPaneIDs.isEmpty, active != lastActivePaneID,
+                  let tab = tabs.first(where: { $0.paneID == active }) {
+            // tmux moved to a different active pane — a new window, a split, or a
+            // `select-window` run from the VM — so follow it: the newly current
+            // tab takes focus instead of opening in the background. Skipped on a
+            // fresh connect or reconnect (no prior panes), where the branch above
+            // — or a surviving Shelley tab — settles the selection.
+            selectedTabID = tab.id
+            lastActivePaneID = active
         }
         // tmux consumes OSC 7, so the sidebar's idea of the directory can only
         // come from here.
