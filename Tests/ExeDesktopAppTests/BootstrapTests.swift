@@ -240,6 +240,7 @@ final class BootstrapTests: XCTestCase {
             try json(at: home + "/.claude.json")["projects"] as? [String: Any])
         let entry = try XCTUnwrap(projects[home] as? [String: Any])
         XCTAssertEqual(entry["hasTrustDialogAccepted"] as? Bool, true)
+        XCTAssertNil(entry["projectOnboardingSeenCount"])
     }
 
     /// A repo cloned below the top level of $HOME must be trusted too, not
@@ -256,6 +257,7 @@ final class BootstrapTests: XCTestCase {
             try json(at: home + "/.claude.json")["projects"] as? [String: Any])
         let entry = try XCTUnwrap(projects[nested] as? [String: Any])
         XCTAssertEqual(entry["hasTrustDialogAccepted"] as? Bool, true)
+        XCTAssertNil(entry["projectOnboardingSeenCount"])
     }
 
     /// The custom API key the app injects ("implicit") must be approved in
