@@ -359,9 +359,7 @@ enum Bootstrap {
     /// and every repo cloned under it: the top-level scan covers the repos
     /// this script clones, and a depth-bounded walk picks up a repo cloned
     /// anywhere below `$HOME` too. Hidden and heavy directories are skipped
-    /// so the walk stays cheap on every reconnect. `projectOnboardingSeenCount`
-    /// is reset to null on every trusted entry so the per-project onboarding
-    /// prompt never reappears on a fresh VM or reconnect. Tolerates a missing or
+    /// so the walk stays cheap on every reconnect. Tolerates a missing or
     /// malformed file, and is a no-op if python3 isn't present.
     static let trustHomeDirectories = """
 
@@ -416,7 +414,6 @@ enum Bootstrap {
         entry = projects.setdefault(target, {})
         if isinstance(entry, dict):
             entry["hasTrustDialogAccepted"] = True
-            entry["projectOnboardingSeenCount"] = None
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
     PYEOF
