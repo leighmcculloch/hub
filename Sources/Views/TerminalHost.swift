@@ -38,12 +38,11 @@ struct TerminalHost: View {
         .onAppear { mountSelected() }
         .onChange(of: workspace.selectedSessionID) {
             mountSelected()
-            // A surface that is already mounted won't focus itself.
-            workspace.selectedSession?.selectedTab?.controller.focus()
+            focusSelected()
         }
         .onChange(of: workspace.selectedSession?.selectedTab?.id) {
             mountSelected()
-            workspace.selectedSession?.selectedTab?.controller.focus()
+            focusSelected()
         }
     }
 
@@ -55,6 +54,17 @@ struct TerminalHost: View {
     private func mountSelected() {
         guard let id = workspace.selectedSession?.selectedTab?.id else { return }
         mounted.insert(id)
+    }
+
+    /// A surface that is already mounted won't focus itself. Deferred to the
+    /// next runloop turn: selecting a session is usually a click on a sidebar
+    /// row, and that row's own button takes first responder as part of the
+    /// same click — a focus() call made synchronously here would just lose
+    /// that race.
+    private func focusSelected() {
+        DispatchQueue.main.async {
+            workspace.selectedSession?.selectedTab?.controller.focus()
+        }
     }
 
     /// Only the font is set here: it's in Settings and on ⌘+/⌘-. Colours and
