@@ -251,7 +251,7 @@ enum Bootstrap {
             for repo in repos {
                 let url = shellQuote("https://github.int.exe.xyz/\(repo).git")
                 script += """
-                if ! git clone \(url); then
+                if ! git clone --depth 1 \(url); then
                   exe_failed_clones="$exe_failed_clones "\(shellQuote(repo))
                 fi
 
