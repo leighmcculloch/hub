@@ -335,7 +335,7 @@ struct NewSessionSheet: View {
 
     private var tokenWarning: some View {
         let provider = workspace.provider
-        HStack(alignment: .top, spacing: 6) {
+        return HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
             VStack(alignment: .leading, spacing: 1) {
                 Text("No \(provider.displayName) token configured").fontWeight(.semibold)

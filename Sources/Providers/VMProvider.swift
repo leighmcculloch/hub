@@ -189,5 +189,9 @@ protocol VMProvider: AnyObject {
     /// sets env via `new --env`, so the default is "" and the bootstrap doesn't
     /// inject; sprites.dev has no host-env API, so it writes a profile the shell
     /// sources (see `SpritesProvider`).
+    func hostEnvironmentSetup(_ environment: [EnvVar]) -> String
+}
+
+extension VMProvider {
     func hostEnvironmentSetup(_ environment: [EnvVar]) -> String { "" }
 }
