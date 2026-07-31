@@ -247,6 +247,20 @@ enum Bootstrap {
         script += setupScript
         script += "\n"
 
+        // Trust $HOME and the directories already on the VM *before* the clones
+        // run, so the harness — which starts the moment this script returns —
+        // never prompts for $HOME on launch. A second pass after the clones
+        // (below) picks up the freshly cloned repos. Merges into any existing
+        // ~/.claude.json rather than replacing real state.
+        script += trustHomeDirectories
+
+        // Clone in the background so the startCommand (claude/codex) loads
+        // without waiting for the clones: this script returns as soon as the
+        // subshell is launched, and the harness starts while the repos are still
+        // coming down. `--quiet` keeps a successful clone off the harness's TUI
+        // — on a tmux pane git would otherwise stream progress right over it —
+        // so only failures surface.
+        //
         // A failed clone used to be swallowed by `|| true`, leaving the user in
         // a shell with no repo and git's error scrolled off under the setup
         // script's output. One bad repo still must not abort the rest of the
@@ -254,12 +268,17 @@ enum Bootstrap {
         //
         // The URL is quoted: repo names reach here from the picker but also from
         // the free-text "owner/repo" field, which is only checked for a slash.
+        //
+        // Trust is re-run inside the subshell after the clones so the freshly
+        // cloned repos are marked trusted too; it's idempotent, and the
+        // foreground pass above already covered $HOME before the harness began.
         if !repos.isEmpty {
+            script += "(\n"
             script += "exe_failed_clones=''\n"
             for repo in repos {
                 let url = shellQuote("https://github.int.exe.xyz/\(repo).git")
                 script += """
-                if ! git clone --depth 1 \(url); then
+                if ! git clone --depth 1 --quiet \(url); then
                   exe_failed_clones="$exe_failed_clones "\(shellQuote(repo))
                 fi
 
@@ -273,13 +292,9 @@ enum Bootstrap {
             fi
 
             """
+            script += trustHomeDirectories
+            script += ") &\n"
         }
-
-        // Mark every directory in the home dir as trusted, so Claude Code
-        // doesn't prompt per folder. Runs after the clones so the freshly
-        // cloned repos are included, and merges into any existing
-        // ~/.claude.json rather than replacing real state.
-        script += trustHomeDirectories
         return script
     }
 

@@ -214,19 +214,48 @@ final class BootstrapTests: XCTestCase {
             "git clone " + Bootstrap.shellQuote("https://github.int.exe.xyz/owner/two.git")))
     }
 
-    /// Trust is applied after cloning, or the freshly cloned directories
-    /// wouldn't exist yet to be trusted.
+    /// $HOME is trusted *before* the clones run, so the harness — which starts
+    /// the moment the bootstrap script returns — never prompts for $HOME on
+    /// launch. The first trust pass precedes the clones.
+    func testTrustRunsBeforeTheClonesSoTheHarnessDoesNotPrompt() {
+        let script = Bootstrap.script(setupScript: "", claudeSettings: "",
+                                      repos: ["owner/one"])
+        let trust = script.range(of: "hasTrustDialogAccepted")
+        let clone = script.range(of: "git clone")
+        XCTAssertNotNil(trust)
+        XCTAssertNotNil(clone)
+        if let trust, let clone {
+            XCTAssertTrue(trust.upperBound < clone.lowerBound,
+                          "a trust pass must run before the clones so $HOME is " +
+                          "trusted before the harness starts")
+        }
+    }
+
+    /// The freshly cloned directories are trusted *after* they exist: a second
+    /// trust pass runs inside the background clone subshell, after the clones.
     func testTrustStepRunsAfterTheClones() {
         let script = Bootstrap.script(setupScript: "", claudeSettings: "",
                                       repos: ["owner/one"])
         let clone = script.range(of: "git clone")
-        let trust = script.range(of: "hasTrustDialogAccepted")
+        // The post-clone pass is the last occurrence in the script.
+        let trust = script.range(of: "hasTrustDialogAccepted", options: .backwards)
         XCTAssertNotNil(clone)
         XCTAssertNotNil(trust)
         if let clone, let trust {
             XCTAssertTrue(clone.upperBound < trust.lowerBound,
-                          "trust must come after the clones")
+                          "a trust pass must come after the clones")
         }
+    }
+
+    /// Clones run in a backgrounded subshell so the startCommand (claude/codex)
+    /// loads without waiting for them, and `--quiet` keeps a successful clone
+    /// off the harness's TUI.
+    func testClonesRunInBackgroundAndQuietly() {
+        let script = Bootstrap.script(setupScript: "", claudeSettings: "",
+                                      repos: ["owner/one"])
+        XCTAssertTrue(script.contains(") &"),
+                      "clones must be wrapped in a backgrounded subshell: \(script)")
+        XCTAssertTrue(script.contains("git clone --depth 1 --quiet"), script)
     }
 
     // MARK: - Trust and API key approval
