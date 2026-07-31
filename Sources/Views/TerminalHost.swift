@@ -94,7 +94,7 @@ struct TerminalHost: View {
     /// extra config file below.
     private var appearance: TerminiTerminalAppearance {
         TerminiTerminalAppearance(
-            theme: colorScheme == .light ? .blueprint : .midnightBloom,
+            theme: colorScheme == .light ? .appLight : .midnightBloom,
             fontSize: config.data.fontSize,
             fontFamily: TerminiTerminalFontFamily(
                 name: Self.familyName(of: config.data.fontName)),
