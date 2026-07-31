@@ -188,8 +188,8 @@ config in Application Support.
     settings in place.
 - **Terminal font** — family and size; `⌘+`/`⌘-` adjust size and `⌘0` resets.
 - **Claude settings** — the `~/.claude/settings.json` seeded onto each VM
-  (dark theme, `permissions.defaultMode: bypassPermissions`, commit
-  attribution off, PR attribution on, `remoteControlAtStartup: true`).
+  (dark theme, `permissions.defaultMode: bypassPermissions`, all
+  attribution off, `remoteControlAtStartup: true`).
   Editable in Settings; an existing file on the VM is never overwritten.
 - **GitHub repo listing** — uses a token discovered from `GITHUB_TOKEN`/`GH_TOKEN`
   or the `gh` CLI (`gh auth token`). Without one, the picker still accepts a

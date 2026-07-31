@@ -48,8 +48,8 @@ struct AppConfigData: Codable {
       },
       "attribution": {
         "commit": "",
-        "pr": "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-        "sessionUrl": true
+        "pr": "",
+        "sessionUrl": false
       },
       "remoteControlAtStartup": true,
       "hasCompletedOnboarding": true,
