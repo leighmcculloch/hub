@@ -89,9 +89,9 @@ final class BrowserModel: NSObject, ObservableObject {
         controller.add(relay, contentWorld: .page, name: AutoName.messageHandlerName)
         controller.addUserScript(WKUserScript(
             source: AutoName.firstPromptCaptureScript,
-            contentWorld: .page,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true))
+            forMainFrameOnly: true,
+            inContentWorld: .page))
     }
 
     /// Called by the relay on the first message from the page. Hands the prompt
