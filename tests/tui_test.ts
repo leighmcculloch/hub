@@ -1,0 +1,194 @@
+import { assert, assertEquals } from "@std/assert";
+import {
+  center,
+  displayWidth,
+  dropCells,
+  elideHead,
+  elideMiddle,
+  fit,
+  overlay,
+  stripAnsi,
+  truncate,
+} from "../src/tui/ansi.ts";
+import { scrollToShow, TextInput, wrap } from "../src/tui/widgets.ts";
+import { InputDecoder, type KeyEvent, type MouseEvent } from "../src/tui/input.ts";
+
+const RED = "\x1b[31m";
+const RESET = "\x1b[0m";
+const encoder = new TextEncoder();
+
+Deno.test("displayWidth ignores escape sequences and counts wide characters", () => {
+  assertEquals(displayWidth(`${RED}abc${RESET}`), 3);
+  assertEquals(displayWidth("日本"), 4);
+  assertEquals(displayWidth("é"), 1); // combining accent
+  assertEquals(displayWidth("\x1b]0;title\x07x"), 1); // OSC
+});
+
+Deno.test("stripAnsi leaves only the visible text", () => {
+  assertEquals(stripAnsi(`${RED}hi${RESET}`), "hi");
+});
+
+Deno.test("truncate keeps the styling that leads up to what survives", () => {
+  const truncated = truncate(`${RED}abcdef${RESET}`, 3);
+  assertEquals(displayWidth(truncated), 3);
+  assert(truncated.includes(RED));
+  assertEquals(stripAnsi(truncated), "abc");
+});
+
+Deno.test("truncate substitutes a space for a wide character it would split", () => {
+  const truncated = truncate("日本", 1);
+  assertEquals(stripAnsi(truncated), " ");
+});
+
+Deno.test("fit pads and clips to exactly the width asked for", () => {
+  assertEquals(displayWidth(fit("ab", 5)), 5);
+  assertEquals(displayWidth(fit("abcdef", 3)), 3);
+  assertEquals(displayWidth(fit(`${RED}abcdef`, 4)), 4);
+  // A sequence left open by the content can't bleed past the segment.
+  assert(fit(`${RED}ab`, 4).endsWith(RESET));
+});
+
+Deno.test("dropCells re-opens the styling that was in force at the cut", () => {
+  const dropped = dropCells(`${RED}abcdef${RESET}`, 3);
+  assertEquals(stripAnsi(dropped), "def");
+  assert(dropped.startsWith(RED));
+});
+
+Deno.test("overlay writes a panel over a row without disturbing its width", () => {
+  const row = fit("0123456789", 10);
+  const result = overlay(row, 3, fit("XX", 2), 10);
+  assertEquals(stripAnsi(result), "012XX56789");
+  assertEquals(displayWidth(result), 10);
+});
+
+Deno.test("overlay at the right edge doesn't run past the row", () => {
+  const row = fit("0123456789", 10);
+  const result = overlay(row, 8, fit("XX", 2), 10);
+  assertEquals(stripAnsi(result), "01234567XX");
+  assertEquals(displayWidth(result), 10);
+});
+
+Deno.test("elideMiddle and elideHead keep the identifying end", () => {
+  assertEquals(elideMiddle("abcdefghij", 5), "ab…ij");
+  assertEquals(elideHead("/very/long/path/file.ts", 10), "…h/file.ts");
+  assertEquals(elideMiddle("short", 10), "short");
+});
+
+Deno.test("center pads both sides to the requested width", () => {
+  assertEquals(stripAnsi(center("ab", 6)), "  ab  ");
+  assertEquals(displayWidth(center("ab", 6)), 6);
+});
+
+Deno.test("wrap breaks on words and chops a word too long to fit", () => {
+  assertEquals(wrap("the quick brown fox", 10), ["the quick", "brown fox"]);
+  assertEquals(wrap("supercalifragilistic", 8), ["supercal", "ifragili", "stic"]);
+});
+
+Deno.test("scrollToShow keeps the selection on screen and inside the content", () => {
+  assertEquals(scrollToShow(0, 12, 10, 30), 3);
+  assertEquals(scrollToShow(5, 2, 10, 30), 2);
+  assertEquals(scrollToShow(99, 29, 10, 30), 20);
+  assertEquals(scrollToShow(0, 0, 10, 3), 0);
+});
+
+Deno.test("TextInput edits, moves and deletes", () => {
+  const input = new TextInput("hello");
+  input.handle(key("left"));
+  input.handle(key("backspace"));
+  assertEquals(input.value, "helo");
+  input.handle(key("a"));
+  assertEquals(input.value, "helao");
+  input.handle(key("a", { ctrl: true }));
+  input.handle(key("k", { ctrl: true }));
+  assertEquals(input.value, "");
+});
+
+Deno.test("TextInput ignores Alt chords so they stay app shortcuts", () => {
+  const input = new TextInput("x");
+  assertEquals(input.handle(key("t", { alt: true })), false);
+  assertEquals(input.value, "x");
+});
+
+Deno.test("the decoder reads plain keys, control chords and Alt chords", () => {
+  const decoder = new InputDecoder();
+  assertEquals(names(decoder.feed(encoder.encode("a"))), ["a"]);
+  const ctrl = decoder.feed(new Uint8Array([0x03]))[0] as KeyEvent;
+  assertEquals([ctrl.name, ctrl.ctrl], ["c", true]);
+  const alt = decoder.feed(encoder.encode("\x1bt"))[0] as KeyEvent;
+  assertEquals([alt.name, alt.alt], ["t", true]);
+});
+
+Deno.test("the decoder names the cursor and function keys", () => {
+  const decoder = new InputDecoder();
+  assertEquals(names(decoder.feed(encoder.encode("\x1b[A"))), ["up"]);
+  assertEquals(names(decoder.feed(encoder.encode("\x1b[6~"))), ["pagedown"]);
+  assertEquals(names(decoder.feed(encoder.encode("\x1bOP"))), ["f1"]);
+  const shiftTab = decoder.feed(encoder.encode("\x1b[Z"))[0] as KeyEvent;
+  assertEquals([shiftTab.name, shiftTab.shift], ["tab", true]);
+});
+
+Deno.test("the decoder reads xterm's modifier parameter", () => {
+  const decoder = new InputDecoder();
+  const event = decoder.feed(encoder.encode("\x1b[1;5C"))[0] as KeyEvent;
+  assertEquals([event.name, event.ctrl], ["right", true]);
+});
+
+Deno.test("every key event carries the bytes it came from, for the terminal", () => {
+  const decoder = new InputDecoder();
+  const event = decoder.feed(encoder.encode("\x1b[A"))[0] as KeyEvent;
+  assertEquals(new TextDecoder().decode(event.bytes), "\x1b[A");
+});
+
+Deno.test("the decoder reads SGR mouse presses, releases and the wheel", () => {
+  const decoder = new InputDecoder();
+  const down = decoder.feed(encoder.encode("\x1b[<0;10;5M"))[0] as MouseEvent;
+  assertEquals([down.kind, down.button, down.x, down.y], ["down", 0, 9, 4]);
+
+  const up = decoder.feed(encoder.encode("\x1b[<0;10;5m"))[0] as MouseEvent;
+  assertEquals(up.kind, "up");
+
+  const wheelUp = decoder.feed(encoder.encode("\x1b[<64;1;1M"))[0] as MouseEvent;
+  assertEquals([wheelUp.kind, wheelUp.button], ["wheel", -1]);
+  const wheelDown = decoder.feed(encoder.encode("\x1b[<65;1;1M"))[0] as MouseEvent;
+  assertEquals(wheelDown.button, 1);
+});
+
+Deno.test("the decoder reports pointer motion and its modifiers", () => {
+  const decoder = new InputDecoder();
+  const move = decoder.feed(encoder.encode("\x1b[<35;3;4M"))[0] as MouseEvent;
+  assertEquals([move.kind, move.x, move.y], ["move", 2, 3]);
+  const shiftClick = decoder.feed(encoder.encode("\x1b[<4;1;1M"))[0] as MouseEvent;
+  assertEquals([shiftClick.kind, shiftClick.shift], ["down", true]);
+});
+
+Deno.test("the decoder holds a sequence split across reads", () => {
+  const decoder = new InputDecoder();
+  assertEquals(decoder.feed(encoder.encode("\x1b[")).length, 0);
+  assertEquals(names(decoder.feed(encoder.encode("B"))), ["down"]);
+});
+
+Deno.test("bracketed paste arrives as one event, not as keystrokes", () => {
+  const decoder = new InputDecoder();
+  const events = decoder.feed(encoder.encode("\x1b[200~hello\nthere\x1b[201~"));
+  assertEquals(events.length, 1);
+  assertEquals(events[0].type, "paste");
+  if (events[0].type !== "paste") throw new Error("expected paste");
+  assertEquals(events[0].text, "hello\nthere");
+});
+
+Deno.test("focus in and out are reported", () => {
+  const decoder = new InputDecoder();
+  const [gained, lost] = decoder.feed(encoder.encode("\x1b[I\x1b[O"));
+  assertEquals(gained.type === "focus" && gained.focused, true);
+  assertEquals(lost.type === "focus" && lost.focused, false);
+});
+
+function key(name: string, modifiers: { ctrl?: boolean; alt?: boolean } = {}) {
+  return { name, ctrl: modifiers.ctrl ?? false, alt: modifiers.alt ?? false };
+}
+
+function names(events: ReturnType<InputDecoder["feed"]>): string[] {
+  return events.filter((event): event is KeyEvent => event.type === "key").map((event) =>
+    event.name
+  );
+}

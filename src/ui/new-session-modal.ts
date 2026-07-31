@@ -1,0 +1,533 @@
+/**
+ * The new-session flow: choose a name, environment and model, pick GitHub
+ * repos, then provision a VM and open a session on it. The second tab reopens a
+ * VM that already exists on the account.
+ */
+
+import { Color, elideHead, elideMiddle, fit, styled } from "../tui/ansi.ts";
+import { type HitMap, panel, type Rect, row as listRow, TextInput, wrap } from "../tui/widgets.ts";
+import { vmNameFrom } from "../model/bootstrap.ts";
+import { modelLabel } from "../model/llm-gateway.ts";
+import { normalizeRepo } from "../github/repo-reference.ts";
+import type { SessionProvisioner } from "../model/session-provisioner.ts";
+import type { AppConfig } from "../config/app-config.ts";
+import type { Workspace } from "../model/workspace.ts";
+
+type Field = "name" | "environment" | "model" | "search" | "repos" | "manual" | "submit";
+
+const CREATE_FIELDS: Field[] = [
+  "name",
+  "environment",
+  "model",
+  "search",
+  "repos",
+  "manual",
+  "submit",
+];
+
+export class NewSessionModal {
+  mode: "create" | "reopen" = "create";
+  private field: Field = "name";
+  private nameInput = new TextInput();
+  private searchInput = new TextInput();
+  private manualInput = new TextInput();
+  private repoIndex = 0;
+  private repoOffset = 0;
+  private vmIndex = 0;
+  private hovered: string | null = null;
+
+  constructor(
+    private workspace: Workspace,
+    private config: AppConfig,
+    readonly provisioner: SessionProvisioner,
+    private onClose: () => void,
+  ) {}
+
+  /** Kick off the loads the picker needs. Safe to call once, on open. */
+  load(): void {
+    void this.provisioner.loadModels();
+    void this.provisioner.loadRepos();
+    void this.provisioner.loadExistingVMs();
+  }
+
+  // MARK: - Rendering
+
+  render(cols: number, rows: number, hits: HitMap): { lines: string[]; rect: Rect } {
+    const width = Math.min(78, cols - 4);
+    const height = Math.min(28, rows - 2);
+    const rect: Rect = {
+      x: Math.floor((cols - width) / 2),
+      y: Math.floor((rows - height) / 2),
+      width,
+      height,
+    };
+    const inner = width - 2;
+    const body = this.provisioner.phase === "picking"
+      ? this.renderPicker(inner, height - 2, rect, hits)
+      : this.renderProgress(inner, height - 2);
+    return { lines: panel(width, height, "New Session", body, { bg: Color.panel }), rect };
+  }
+
+  private renderProgress(width: number, height: number): string[] {
+    const lines: string[] = [fit("", width, { bg: Color.panel })];
+    for (const line of this.provisioner.statusLines) {
+      for (const wrapped of wrap(line, width - 2)) {
+        lines.push(fit(` ${styled(wrapped, { fg: Color.fg, bg: Color.panel })}`, width, {
+          bg: Color.panel,
+        }));
+      }
+    }
+    if (this.provisioner.errorMessage) {
+      lines.push(fit("", width, { bg: Color.panel }));
+      for (const wrapped of wrap(this.provisioner.errorMessage, width - 2)) {
+        lines.push(fit(` ${styled(wrapped, { fg: Color.red, bg: Color.panel })}`, width, {
+          bg: Color.panel,
+        }));
+      }
+      lines.push(fit("", width, { bg: Color.panel }));
+      lines.push(
+        fit(` ${styled("Esc to close", { fg: Color.dimmer, bg: Color.panel })}`, width, {
+          bg: Color.panel,
+        }),
+      );
+    }
+    while (lines.length < height) lines.push(fit("", width, { bg: Color.panel }));
+    return lines.slice(0, height);
+  }
+
+  private renderPicker(width: number, height: number, rect: Rect, hits: HitMap): string[] {
+    const lines: string[] = [];
+    const originX = rect.x + 1;
+    const originY = rect.y + 1;
+    const put = (text: string) => lines.push(fit(text, width, { bg: Color.panel }));
+    const register = (id: string, height_ = 1) => {
+      hits.add({ x: originX, y: originY + lines.length, width, height: height_ }, id);
+    };
+
+    // Mode switch.
+    register("new.mode");
+    put(
+      ` ${this.chip("Create VM", this.mode === "create")}  ` +
+        `${this.chip("Reopen VM", this.mode === "reopen")}`,
+    );
+    put("");
+
+    if (this.mode === "reopen") {
+      return this.renderReopen(lines, width, height, originX, originY, hits);
+    }
+
+    // Name.
+    put(` ${styled("Session name", { fg: Color.dim, bg: Color.panel })}`);
+    register("new.name");
+    put(` ${this.nameInput.render(width - 2, this.field === "name", "optional")}`);
+    const typed = this.nameInput.value.trim();
+    const preview = typed
+      ? `VM name: ${vmNameFrom(typed)}`
+      : "Unnamed — the VM names itself from the agent's first prompt.";
+    put(` ${styled(elideMiddle(preview, width - 2), { fg: Color.dimmer, bg: Color.panel })}`);
+    put("");
+
+    // Environment and model, one line each so a narrow terminal still reads.
+    const environment = this.config.selectedEnvironment;
+    register("new.environment");
+    put(
+      ` ${styled("Environment", { fg: Color.dim, bg: Color.panel })}  ` +
+        this.value(environment.name || "Untitled", this.field === "environment", width - 16),
+    );
+    register("new.model");
+    const model = this.config.data.model;
+    put(
+      ` ${styled("Model      ", { fg: Color.dim, bg: Color.panel })}  ` +
+        this.value(
+          model ? modelLabel(model) : "Custom — leave the VM's own setup",
+          this.field === "model",
+          width - 16,
+        ),
+    );
+    if (this.provisioner.modelsError) {
+      put(
+        ` ${
+          styled(elideMiddle(this.provisioner.modelsError, width - 2), {
+            fg: Color.orange,
+            bg: Color.panel,
+          })
+        }`,
+      );
+    }
+    if (!this.workspace.config.effectiveToken) {
+      put(
+        ` ${
+          styled(
+            `No ${this.workspace.provider.displayName} token — set one in Settings (Alt+,) or ` +
+              this.workspace.provider.tokenEnvVar,
+            { fg: Color.orange, bg: Color.panel },
+          )
+        }`,
+      );
+    }
+    put("");
+
+    // Repositories.
+    const chosen = this.provisioner.chosenRepos;
+    put(
+      ` ${styled("Repositories to clone", { fg: Color.dim, bg: Color.panel })}  ` +
+        styled(
+          chosen.length === 0 ? "none selected" : `${chosen.length} selected`,
+          { fg: Color.dimmer, bg: Color.panel },
+        ),
+    );
+    register("new.search");
+    put(` ${this.searchInput.render(width - 2, this.field === "search", "Filter repositories…")}`);
+
+    const listTop = lines.length;
+    const listHeight = Math.max(3, height - listTop - 6);
+    const repos = this.provisioner.filteredRepos;
+    this.repoIndex = Math.min(Math.max(0, this.repoIndex), Math.max(0, repos.length - 1));
+    if (this.repoIndex < this.repoOffset) this.repoOffset = this.repoIndex;
+    if (this.repoIndex >= this.repoOffset + listHeight) {
+      this.repoOffset = this.repoIndex - listHeight + 1;
+    }
+    for (let index = 0; index < listHeight; index += 1) {
+      const repo = repos[this.repoOffset + index];
+      if (!repo) {
+        put(
+          index === 0 && repos.length === 0
+            ? ` ${
+              styled(
+                this.provisioner.loadingRepos
+                  ? "Loading repositories…"
+                  : this.provisioner.reposError ?? "No repositories found.",
+                { fg: Color.dimmer, bg: Color.panel },
+              )
+            }`
+            : "",
+        );
+        continue;
+      }
+      const id = `new.repo:${this.repoOffset + index}`;
+      hits.add({ x: originX, y: originY + lines.length, width, height: 1 }, id);
+      const checked = this.provisioner.selected.has(repo.fullName);
+      const box = checked
+        ? styled("[x]", { fg: Color.accent, bg: Color.panel })
+        : styled("[ ]", { fg: Color.dimmer, bg: Color.panel });
+      const lock = repo.isPrivate ? styled("🔒", { fg: Color.dimmer, bg: Color.panel }) : "  ";
+      const text = `${box} ${lock} ${elideMiddle(repo.fullName, Math.max(8, width - 10))}`;
+      const active = this.field === "repos" && this.repoOffset + index === this.repoIndex;
+      lines.push(
+        fit(
+          listRow(text, width, { selected: active, hovered: this.hovered === id, focused: true }),
+          width,
+          {
+            bg: Color.panel,
+          },
+        ),
+      );
+    }
+
+    // Manual entry and the action row.
+    register("new.manual");
+    put(` ${this.manualInput.render(width - 2, this.field === "manual", "owner/repo or a URL")}`);
+    if (this.manualInput.value.trim() && !normalizeRepo(this.manualInput.value)) {
+      put(
+        ` ${
+          styled("Use the owner/repo form, e.g. apple/swift.", {
+            fg: Color.orange,
+            bg: Color.panel,
+          })
+        }`,
+      );
+    }
+    register("new.submit");
+    put(
+      ` ${this.button("Create Session", this.field === "submit")}  ` +
+        styled("Esc cancels · Tab moves · Space toggles", { fg: Color.dimmer, bg: Color.panel }),
+    );
+
+    while (lines.length < height) lines.push(fit("", width, { bg: Color.panel }));
+    return lines.slice(0, height);
+  }
+
+  private renderReopen(
+    lines: string[],
+    width: number,
+    height: number,
+    originX: number,
+    originY: number,
+    hits: HitMap,
+  ): string[] {
+    const vms = this.provisioner.existingVMs;
+    lines.push(
+      fit(
+        ` ${styled("VMs on your account", { fg: Color.dim, bg: Color.panel })}  ` +
+          styled(this.provisioner.loadingVMs ? "◌" : `${vms.length}`, {
+            fg: Color.dimmer,
+            bg: Color.panel,
+          }),
+        width,
+        { bg: Color.panel },
+      ),
+    );
+    const listHeight = height - lines.length - 2;
+    this.vmIndex = Math.min(Math.max(0, this.vmIndex), Math.max(0, vms.length - 1));
+    for (let index = 0; index < listHeight; index += 1) {
+      const vm = vms[index];
+      if (!vm) {
+        lines.push(fit("", width, { bg: Color.panel }));
+        continue;
+      }
+      const id = `new.vm:${index}`;
+      hits.add({ x: originX, y: originY + lines.length, width, height: 1 }, id);
+      const running = vm.status === "running";
+      const text =
+        `${styled("•", { fg: running ? Color.green : Color.dimmer, bg: Color.panel })} ` +
+        `${elideMiddle(vm.name, Math.max(8, width - 18))} ` +
+        styled(vm.status ?? "", { fg: Color.dimmer, bg: Color.panel });
+      lines.push(
+        fit(
+          listRow(text, width, {
+            selected: index === this.vmIndex,
+            hovered: this.hovered === id,
+            focused: true,
+          }),
+          width,
+          { bg: Color.panel },
+        ),
+      );
+    }
+    lines.push(
+      fit(
+        ` ${styled("Enter opens · Esc cancels", { fg: Color.dimmer, bg: Color.panel })}`,
+        width,
+        { bg: Color.panel },
+      ),
+    );
+    while (lines.length < height) lines.push(fit("", width, { bg: Color.panel }));
+    return lines.slice(0, height);
+  }
+
+  private chip(label: string, active: boolean): string {
+    return styled(` ${label} `, {
+      fg: active ? Color.fg : Color.dim,
+      bg: active ? Color.selection : Color.panelAlt,
+      bold: active,
+    });
+  }
+
+  private button(label: string, focused: boolean): string {
+    return styled(` ${label} `, {
+      fg: Color.black,
+      bg: focused ? Color.accent : Color.dim,
+      bold: true,
+    });
+  }
+
+  private value(text: string, focused: boolean, width: number): string {
+    return styled(elideHead(text, Math.max(4, width)), {
+      fg: focused ? Color.fg : Color.dim,
+      bg: focused ? Color.selection : Color.panel,
+    });
+  }
+
+  // MARK: - Interaction
+
+  setHover(id: string | null): void {
+    this.hovered = id;
+  }
+
+  /** Returns true when the modal should close. */
+  async key(
+    event: { name: string; ctrl: boolean; alt: boolean; shift: boolean },
+  ): Promise<boolean> {
+    if (this.provisioner.phase !== "picking") {
+      // Nothing to type into while it provisions; Esc dismisses a failure.
+      return event.name === "escape";
+    }
+    if (event.name === "escape") return true;
+
+    if (this.mode === "reopen") {
+      switch (event.name) {
+        case "up":
+          this.vmIndex = Math.max(0, this.vmIndex - 1);
+          return false;
+        case "down":
+          this.vmIndex = Math.min(this.provisioner.existingVMs.length - 1, this.vmIndex + 1);
+          return false;
+        case "tab":
+          this.mode = "create";
+          return false;
+        case "enter": {
+          const vm = this.provisioner.existingVMs[this.vmIndex];
+          if (vm) {
+            this.workspace.reopen(vm);
+            return true;
+          }
+          return false;
+        }
+        default:
+          return false;
+      }
+    }
+
+    if (event.name === "tab") {
+      const index = CREATE_FIELDS.indexOf(this.field);
+      const step = event.shift ? -1 : 1;
+      this.field = CREATE_FIELDS[(index + step + CREATE_FIELDS.length) % CREATE_FIELDS.length];
+      return false;
+    }
+
+    switch (this.field) {
+      case "name":
+        if (event.name === "enter") {
+          this.field = "environment";
+          return false;
+        }
+        this.nameInput.handle(event);
+        this.provisioner.sessionName = this.nameInput.value;
+        return false;
+      case "search":
+        if (event.name === "enter") {
+          this.field = "repos";
+          return false;
+        }
+        this.searchInput.handle(event);
+        this.provisioner.search = this.searchInput.value;
+        this.repoIndex = 0;
+        return false;
+      case "manual":
+        if (event.name === "enter") {
+          this.field = "submit";
+          return false;
+        }
+        this.manualInput.handle(event);
+        this.provisioner.manualRepo = this.manualInput.value;
+        return false;
+      case "environment":
+        if (event.name === "left") this.cycleEnvironment(-1);
+        else if (event.name === "right" || event.name === "space") this.cycleEnvironment(1);
+        else if (event.name === "enter") this.field = "model";
+        return false;
+      case "model":
+        if (event.name === "left") this.cycleModel(-1);
+        else if (event.name === "right" || event.name === "space") this.cycleModel(1);
+        else if (event.name === "enter") this.field = "search";
+        return false;
+      case "repos": {
+        const repos = this.provisioner.filteredRepos;
+        if (event.name === "up") this.repoIndex = Math.max(0, this.repoIndex - 1);
+        else if (event.name === "down") {
+          this.repoIndex = Math.min(repos.length - 1, this.repoIndex + 1);
+        } else if (event.name === "space" || event.name === "enter") {
+          const repo = repos[this.repoIndex];
+          if (repo) this.provisioner.toggleRepo(repo.fullName);
+        }
+        return false;
+      }
+      case "submit":
+        if (event.name === "enter" || event.name === "space") return await this.submit();
+        return false;
+    }
+  }
+
+  /** Returns true when the modal should close. */
+  async click(id: string, _shift: boolean): Promise<boolean> {
+    if (id === "new.mode") {
+      this.mode = this.mode === "create" ? "reopen" : "create";
+      return false;
+    }
+    if (id === "new.name") {
+      this.field = "name";
+      return false;
+    }
+    if (id === "new.search") {
+      this.field = "search";
+      return false;
+    }
+    if (id === "new.manual") {
+      this.field = "manual";
+      return false;
+    }
+    if (id === "new.environment") {
+      this.field = "environment";
+      this.cycleEnvironment(1);
+      return false;
+    }
+    if (id === "new.model") {
+      this.field = "model";
+      this.cycleModel(1);
+      return false;
+    }
+    if (id === "new.submit") return await this.submit();
+    if (id.startsWith("new.repo:")) {
+      const index = Number(id.slice("new.repo:".length));
+      const repo = this.provisioner.filteredRepos[index];
+      if (repo) {
+        this.field = "repos";
+        this.repoIndex = index;
+        this.provisioner.toggleRepo(repo.fullName);
+      }
+      return false;
+    }
+    if (id.startsWith("new.vm:")) {
+      const vm = this.provisioner.existingVMs[Number(id.slice("new.vm:".length))];
+      if (vm) {
+        this.workspace.reopen(vm);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  scroll(delta: number): void {
+    if (this.mode === "reopen") {
+      this.vmIndex = Math.max(
+        0,
+        Math.min(this.provisioner.existingVMs.length - 1, this.vmIndex + delta),
+      );
+      return;
+    }
+    this.repoOffset = Math.max(0, this.repoOffset + delta);
+  }
+
+  private cycleEnvironment(step: number): void {
+    const environments = this.config.data.environments;
+    if (environments.length === 0) return;
+    const current = environments.findIndex((one) => one.id === this.config.selectedEnvironment.id);
+    const next = (current + step + environments.length) % environments.length;
+    this.config.data.selectedEnvironmentID = environments[next].id;
+    this.config.save();
+  }
+
+  private cycleModel(step: number): void {
+    // null — "Custom" — is one of the options, hence the leading slot.
+    const options = [null, ...this.provisioner.modelOptions];
+    const selected = this.config.data.model;
+    const current = options.findIndex((option) =>
+      option === null
+        ? selected === null
+        : selected !== null && option.provider === selected.provider &&
+          option.model === selected.model
+    );
+    const next = (current + step + options.length) % options.length;
+    this.config.data.model = options[next];
+    this.config.save();
+  }
+
+  private async submit(): Promise<boolean> {
+    this.provisioner.sessionName = this.nameInput.value;
+    this.provisioner.manualRepo = this.manualInput.value;
+    const result = await this.provisioner.provision(this.workspace.gitIdentity);
+    if (!result) return false; // the failure is shown in place
+    this.workspace.addSession({
+      title: result.title,
+      provider: this.workspace.provider,
+      destination: result.destination,
+      bootstrap: result.bootstrap,
+      vmName: result.vmName,
+      webURL: result.webURL,
+      autoName: result.autoName,
+    });
+    void this.workspace.loadAvailableVMs();
+    this.onClose();
+    return true;
+  }
+}
