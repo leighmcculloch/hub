@@ -1,6 +1,6 @@
 import Foundation
 
-/// A model offered by the exe.dev LLM gateway.
+/// A model offered by a provider's LLM gateway.
 struct GatewayModel: Codable, Hashable, Identifiable {
     /// The gateway's provider, e.g. `anthropic` or `fireworks`.
     var provider: String
@@ -20,34 +20,26 @@ struct GatewayModel: Codable, Hashable, Identifiable {
     }
 }
 
-/// The exe.dev LLM gateway: the model catalogue, and the configuration a
-/// selected model needs on the VM.
+/// A provider's LLM gateway: the model catalogue, and the configuration a
+/// selected model needs on the VM. Parameterised by `LLMGatewayConfig` so the
+/// same logic serves exe.dev and sprites.dev — only the base URL, provider name
+/// and catalogue URL differ.
 ///
 /// Claude Code is configured through environment variables set on the VM host;
 /// Codex and pi through files written during bootstrap. Nothing here is
 /// harness-specific beyond those three — a different tool on the VM is left to
 /// find its own credentials.
 enum LLMGateway {
-    /// The default `llm` integration is attached to every VM on the account, so
-    /// this hostname resolves without any per-VM setup.
-    static let baseURL = "https://llm.int.exe.xyz"
-
-    /// Provider name used in the Codex and pi configuration written on the VM.
-    /// Also the marker that says a config file on the VM is ours to rewrite.
-    static let providerName = "exe-llm"
-
-    static let catalogURL = URL(string: "https://exe.dev/llm-gateway-models.json")!
-
     /// Variables set on the VM host, so every process sees them.
     ///
     /// Claude Code insists on an API key even where the gateway needs none, so
     /// it gets a placeholder; the OAuth token is blanked so a token set by the
     /// session environment can't win over the gateway.
-    static func environment(for model: GatewayModel) -> [EnvVar] {
+    static func environment(for model: GatewayModel, config: LLMGatewayConfig) -> [EnvVar] {
         [
             EnvVar(key: "ANTHROPIC_API_KEY", value: "implicit"),
             EnvVar(key: "CLAUDE_CODE_OAUTH_TOKEN", value: ""),
-            EnvVar(key: "ANTHROPIC_BASE_URL", value: baseURL),
+            EnvVar(key: "ANTHROPIC_BASE_URL", value: config.baseURL),
             EnvVar(key: "ANTHROPIC_MODEL", value: model.model),
         ]
     }
@@ -55,16 +47,16 @@ enum LLMGateway {
     /// `~/.codex/config.toml`: the gateway as a model provider, selected, with
     /// approvals and the sandbox turned off — the same "just run it" stance
     /// Claude Code gets via `permissions.defaultMode: bypassPermissions`.
-    static func codexConfig(for model: GatewayModel) -> String {
+    static func codexConfig(for model: GatewayModel, config: LLMGatewayConfig) -> String {
         """
         model = \(tomlString(model.model))
-        model_provider = \(tomlString(providerName))
+        model_provider = \(tomlString(config.providerName))
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
 
-        [model_providers.\(providerName)]
-        name = \(tomlString(providerName))
-        base_url = \(tomlString("\(baseURL)/v1"))
+        [model_providers.\(config.providerName)]
+        name = \(tomlString(config.providerName))
+        base_url = \(tomlString("\(config.baseURL)/v1"))
         requires_openai_auth = false
         """
     }
@@ -75,10 +67,10 @@ enum LLMGateway {
     /// over Chat Completions, matching how the gateway routes them. The api key
     /// is the same placeholder Claude Code gets: pi hides models it believes
     /// have no credentials, and the gateway needs none.
-    static func piProvider(for model: GatewayModel) -> String {
+    static func piProvider(for model: GatewayModel, config: LLMGatewayConfig) -> String {
         json([
-            providerName: [
-                "baseUrl": "\(baseURL)/v1",
+            config.providerName: [
+                "baseUrl": "\(config.baseURL)/v1",
                 "api": model.provider == "anthropic" ? "anthropic-messages" : "openai-completions",
                 "apiKey": "implicit",
                 "models": [["id": model.model]],
@@ -88,16 +80,28 @@ enum LLMGateway {
 
     /// The keys merged into `~/.pi/agent/settings.json`, so pi starts on the
     /// chosen model rather than only offering it under `/model`.
-    static func piSettings(for model: GatewayModel) -> String {
-        json(["defaultProvider": providerName, "defaultModel": model.model])
+    static func piSettings(for model: GatewayModel, config: LLMGatewayConfig) -> String {
+        json(["defaultProvider": config.providerName, "defaultModel": model.model])
+    }
+
+    /// Bundle the env vars and Codex/pi config into a `HarnessWiring` for a
+    /// model. exe.dev's wiring in one place, used by `ExeProvider` and tests.
+    static func wiring(for model: GatewayModel, config: LLMGatewayConfig) -> HarnessWiring {
+        HarnessWiring(
+            marker: config.providerName,
+            setup: "",
+            hostEnvironment: environment(for: model, config: config),
+            codexConfig: codexConfig(for: model, config: config),
+            piProvider: piProvider(for: model, config: config),
+            piSettings: piSettings(for: model, config: config))
     }
 
     // MARK: - Catalogue
 
     /// The models on offer, or a readable reason there are none.
-    static func list() async -> (models: [GatewayModel], error: String?) {
+    static func list(config: LLMGatewayConfig) async -> (models: [GatewayModel], error: String?) {
         do {
-            let (data, response) = try await URLSession.shared.data(from: catalogURL)
+            let (data, response) = try await URLSession.shared.data(from: config.catalogURL)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode)
             else {

@@ -3,8 +3,8 @@ import Foundation
 import SwiftUI
 
 /// Top-level app state: the terminal sessions shown as vertical tabs, plus the
-/// exe.dev service used to provision VM-backed tabs. Main-actor isolated, like
-/// the sessions it owns.
+/// VM provider used to provision VM-backed tabs. Main-actor isolated, like the
+/// sessions it owns.
 @MainActor
 final class Workspace: ObservableObject {
     @Published var sessions: [TerminalSession] = []
@@ -28,9 +28,10 @@ final class Workspace: ObservableObject {
     /// the confirmation can present even with the sidebar hidden.
     @Published var sessionPendingDeletion: TerminalSession?
 
-    /// VMs that exist on the exe.dev account. Listed in the sidebar at launch so
-    /// a previous session can be reopened; none is connected until clicked.
-    @Published var availableVMs: [ExeVM] = []
+    /// VMs that exist on the active provider's account. Listed in the sidebar
+    /// at launch so a previous session can be reopened; none is connected until
+    /// clicked.
+    @Published var availableVMs: [RemoteVMRecord] = []
     @Published var loadingVMs = false
 
     /// The signed-in GitHub account, used to seed git config on new VMs.
@@ -39,7 +40,6 @@ final class Workspace: ObservableObject {
     let config = AppConfig.shared
     // Assigned only by the nonisolated init below, as `SessionProvisioner` does,
     // so init doesn't have to cross into the main actor to store them.
-    nonisolated(unsafe) let exe: ExeService
     nonisolated(unsafe) private let sessionStore: SessionStore
     /// Forwards each session's changes as a change to the workspace. A session's
     /// tabs come and go on tmux's schedule, and the terminal host — which mounts
@@ -51,9 +51,12 @@ final class Workspace: ObservableObject {
     /// isolated: `ExeClient` calls it from its request path, off the main actor.
     nonisolated init(sessionStore: SessionStore = .shared) {
         self.sessionStore = sessionStore
-        exe = ExeService(client: ExeClient(tokenProvider: { AppConfig.shared.effectiveToken }))
         // Start empty: a new tab provisions a VM, which needs the repo picker.
     }
+
+    /// The provider the app is configured to use. Computed so switching provider
+    /// in Settings takes effect without rebuilding the workspace.
+    var provider: VMProvider { config.makeProvider() }
 
     /// The VM's public HTTPS endpoint for the selected session.
     var selectedSessionWebURL: String? { selectedSession?.webURL }
@@ -86,12 +89,9 @@ final class Workspace: ObservableObject {
     }
 
     /// Known VMs that aren't already open as a tab.
-    var unopenedVMs: [ExeVM] {
+    var unopenedVMs: [RemoteVMRecord] {
         let open = Set(sessions.compactMap(\.sshDestination))
-        return availableVMs.filter { vm in
-            guard let destination = vm.ssh_dest else { return true }
-            return !open.contains(destination)
-        }
+        return availableVMs.filter { !open.contains($0.destination) }
     }
 
     /// Look up the GitHub account once, for the VM's commit identity.
@@ -109,23 +109,27 @@ final class Workspace: ObservableObject {
     func loadAvailableVMs() async {
         guard !config.effectiveToken.isEmpty else { return }
         loadingVMs = true
-        availableVMs = (try? await exe.listVMs()) ?? []
+        availableVMs = (try? await provider.listVMs()) ?? []
         loadingVMs = false
     }
 
     func makeProvisioner() -> SessionProvisioner {
-        SessionProvisioner(exe: exe, config: config)
+        SessionProvisioner(provider: provider, config: config)
     }
 
     /// Open a new tab from a provisioned launch descriptor.
     func addSession(
         title: String,
         launch: TerminalSession.Launch,
+        provider: VMProvider,
         vmName: String? = nil,
+        webURL: String? = nil,
         autoName: Bool = false,
         persist: Bool = true
     ) {
-        let session = TerminalSession(title: title, launch: launch, vmName: vmName, autoNameArmed: autoName)
+        let session = TerminalSession(
+            title: title, launch: launch, provider: provider,
+            vmName: vmName, webURL: webURL, autoNameArmed: autoName)
         sessions.append(session)
         observeSessions()
         selectedSessionID = session.id
@@ -146,15 +150,18 @@ final class Workspace: ObservableObject {
     /// Auto-naming isn't armed here — that is a decision made once, when the VM
     /// is created, and the VM has been carrying it ever since. Its wiring is
     /// re-applied regardless, by the bootstrap itself.
-    private func reconnectBootstrap() -> String {
+    private func reconnectBootstrap(provider: VMProvider) -> String {
         let environment = config.data.selectedEnvironment
+        let gateway = config.data.model.map {
+            GatewaySelection(model: $0, wiring: provider.harnessWiring(for: $0))
+        }
         return Bootstrap.command(
             setupScript: environment.setupScript,
             claudeSettings: config.data.claudeSettings,
             repos: [],
             startCommand: environment.startCommand,
             gitIdentity: gitIdentity,
-            model: config.data.model
+            gateway: gateway
         )
     }
 
@@ -163,15 +170,17 @@ final class Workspace: ObservableObject {
     func restoreSessions() {
         guard sessions.isEmpty else { return }
         let stored = sessionStore.load()
-        let known = Set(availableVMs.compactMap(\.ssh_dest))
+        let known = Set(availableVMs.map(\.destination))
         let restorable = SessionStore.restorable(
             persisted: stored.sessions, knownDestinations: known)
         guard !restorable.isEmpty else { return }
 
         for entry in restorable {
+            let provider = config.makeProvider(for: entry.provider)
             addSession(
                 title: entry.title,
-                launch: .ssh(destination: entry.destination, bootstrap: reconnectBootstrap()),
+                launch: .remote(destination: entry.destination, bootstrap: reconnectBootstrap(provider: provider)),
+                provider: provider,
                 vmName: entry.vmName,
                 persist: false
             )
@@ -189,15 +198,16 @@ final class Workspace: ObservableObject {
             sessions: sessions.compactMap { session in
                 guard let destination = session.sshDestination else { return nil }
                 return PersistedSession(
-                    destination: destination, title: session.title, vmName: session.vmName)
+                    destination: destination, title: session.title,
+                    vmName: session.vmName, provider: session.provider.id)
             },
             selected: selectedSession?.sshDestination))
     }
 
-    /// Reconnect to an existing exe.dev VM, running the same bootstrap so the
-    /// setup script and clones are re-applied idempotently.
-    func reopen(vm: ExeVM) {
-        let destination = vm.ssh_dest ?? "\(vm.vm_name ?? "").exe.xyz"
+    /// Reconnect to an existing VM, running the same bootstrap so the setup
+    /// script and clones are re-applied idempotently.
+    func reopen(vm: RemoteVMRecord) {
+        let destination = vm.destination
         guard !destination.isEmpty else { return }
         // If this VM already has a tab, just focus it.
         if let existing = sessions.first(where: { $0.sshDestination == destination }) {
@@ -205,15 +215,17 @@ final class Workspace: ObservableObject {
             return
         }
         addSession(
-            title: vm.vm_name ?? destination,
-            launch: .ssh(destination: destination, bootstrap: reconnectBootstrap()),
-            vmName: vm.vm_name
+            title: vm.name,
+            launch: .remote(destination: destination, bootstrap: reconnectBootstrap(provider: provider)),
+            provider: provider,
+            vmName: vm.name,
+            webURL: vm.webURL
         )
     }
 
     /// A plain local shell tab (no VM) — handy when offline or without a token.
     func newLocalSession() {
-        addSession(title: "Local", launch: .localShell)
+        addSession(title: "Local", launch: .localShell, provider: provider)
     }
 
     func closeSession(_ session: TerminalSession) {
@@ -228,12 +240,12 @@ final class Workspace: ObservableObject {
 
     /// Destroy a VM that has no tab open, without connecting to it first.
     /// Irreversible — the VM's disk and anything uncommitted on it are lost.
-    func deleteVM(_ vm: ExeVM) async {
-        guard let name = vm.vm_name else { return }
+    func deleteVM(_ vm: RemoteVMRecord) async {
+        let name = vm.name
         // Drop it from the sidebar immediately; the refresh below is the
         // authority if the delete actually failed.
-        availableVMs.removeAll { $0.vm_name == name }
-        try? await exe.deleteVM(name: name)
+        availableVMs.removeAll { $0.name == name }
+        try? await provider.deleteVM(name: name)
         await loadAvailableVMs()
     }
 
@@ -243,7 +255,7 @@ final class Workspace: ObservableObject {
         let name = session.vmName
         closeSession(session)
         if let name {
-            try? await exe.deleteVM(name: name)
+            try? await session.provider.deleteVM(name: name)
             await loadAvailableVMs()
         }
     }
@@ -296,9 +308,11 @@ final class Workspace: ObservableObject {
     ///
     /// Runs for as long as the window is open; each pass is one cheap command
     /// per connected VM over the connection the terminal already holds.
+    /// Providers without auto-naming (sprites.dev) are skipped — their VMs
+    /// never rename.
     func followVMRenames() async {
         while !Task.isCancelled {
-            try? await Task.sleep(for: RemoteVM.pollInterval)
+            try? await Task.sleep(for: .seconds(10))
             if Task.isCancelled { break }
             await adoptVMRenames()
         }
@@ -311,7 +325,12 @@ final class Workspace: ObservableObject {
         var renamed = false
         for session in sessions where !session.isDisconnected {
             guard let destination = session.sshDestination,
-                  let name = await RemoteVM.name(destination: destination)
+                  session.provider.supportsAutoNaming,
+                  let command = session.provider.reflectionNameCommand,
+                  let output = await RemoteGit.run(
+                      transport: session.provider.transport(forDestination: destination),
+                      remoteCommand: command),
+                  let name = session.provider.parseReflectedName(output)
             else { continue }
             if session.adopt(vmName: name) { renamed = true }
         }

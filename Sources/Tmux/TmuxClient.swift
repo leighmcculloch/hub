@@ -1,7 +1,9 @@
 import Foundation
 
-/// Runs tmux's control-mode client for one VM: an `ssh` process whose remote
-/// command is `tmux -C`, with the protocol on its standard streams.
+/// Runs tmux's control-mode client for one VM: a process whose remote command
+/// is `tmux -C`, with the protocol on its standard streams. For exe.dev that
+/// process is `ssh`; for sprites.dev it's `sprite exec` — the transport is
+/// supplied by the provider, this class only owns the byte plumbing.
 ///
 /// It owns the process and the byte plumbing only — the parsing is
 /// `TmuxControlParser`, and what the events *mean* is the session's business.
@@ -11,11 +13,12 @@ import Foundation
 final class TmuxClient {
     /// Every event from one read, in order.
     private let onEvents: ([TmuxEvent]) -> Void
-    /// The process ended. `message` is ssh's or tmux's complaint, when they made
-    /// one — a VM that is gone, or a tmux that failed to install.
+    /// The process ended. `message` is ssh's, the sprite CLI's, or tmux's
+    /// complaint, when they made one — a VM that is gone, or a tmux that failed
+    /// to install.
     private let onExit: (_ message: String?) -> Void
 
-    private let destination: String
+    private let transport: RemoteTransport
     private let remoteCommand: String
 
     private var process: Process?
@@ -25,36 +28,19 @@ final class TmuxClient {
     private let writeQueue = DispatchQueue(label: "tmux.control.write")
     private var parser = TmuxControlParser()
     private var lineBuffer = TmuxLineBuffer()
-    /// Everything ssh/tmux wrote to stderr, kept for the exit message.
+    /// Everything the transport/tmux wrote to stderr, kept for the exit message.
     private var errorOutput = Data()
 
     init(
-        destination: String,
+        transport: RemoteTransport,
         remoteCommand: String,
         onEvents: @escaping ([TmuxEvent]) -> Void,
         onExit: @escaping (String?) -> Void
     ) {
-        self.destination = destination
+        self.transport = transport
         self.remoteCommand = remoteCommand
         self.onEvents = onEvents
         self.onExit = onExit
-    }
-
-    /// SSH arguments for the control-mode client.
-    ///
-    /// No `-t`: the protocol is a byte stream on stdout, and a remote tty would
-    /// only translate it. (`tmux -CC`, the interactive spelling, insists on one
-    /// — plain `-C` is the spelling for a program driving tmux.) The
-    /// ControlMaster options are shared with `RemoteGit`, so the diff sidebar's
-    /// git calls ride on this same connection.
-    static func sshArguments(destination: String, remoteCommand: String) -> [String] {
-        RemoteGit.sshControlArgs(for: destination) + [
-            "-o", "ConnectTimeout=15",
-            "-o", "ConnectionAttempts=10", // retry while the VM finishes booting
-            "-o", "ServerAliveInterval=30",
-            destination,
-            remoteCommand,
-        ]
     }
 
     func start() {
@@ -68,10 +54,10 @@ final class TmuxClient {
         // it. Foundation's throwing write still gets SIGPIPE'd without this.
         signal(SIGPIPE, SIG_IGN)
 
+        let spec = transport.interactiveSpec(command: remoteCommand)
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = Self.sshArguments(
-            destination: destination, remoteCommand: remoteCommand)
+        process.executableURL = URL(fileURLWithPath: spec.executable)
+        process.arguments = spec.arguments
 
         let input = Pipe()
         let output = Pipe()
@@ -104,7 +90,7 @@ final class TmuxClient {
         do {
             try process.run()
         } catch {
-            onExit("Couldn't run ssh: \(error.localizedDescription)")
+            onExit("Couldn't run \(spec.executable): \(error.localizedDescription)")
             return
         }
         self.process = process
@@ -150,7 +136,7 @@ final class TmuxClient {
         let stderr = String(data: errorOutput, encoding: .utf8) ?? ""
         let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? nil
-            : RemoteGit.summarize(stderr: stderr, exitCode: exitCode)
+            : transport.summarize(stderr: stderr, exit: exitCode)
         onExit(message)
     }
 }

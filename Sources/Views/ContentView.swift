@@ -85,6 +85,11 @@ struct ContentView: View {
             await workspace.loadAvailableVMs()
             workspace.restoreSessions()
         }
+        // Switching provider in Settings changes which account's VMs are listed
+        // and how new sessions provision, so reload the EXISTING list for it.
+        .onChange(of: workspace.config.data.provider) { _, _ in
+            Task { await workspace.loadAvailableVMs() }
+        }
         // A VM that named itself has a new name and a new hostname; both the
         // sidebar and the stored workspace have to follow it.
         .task {

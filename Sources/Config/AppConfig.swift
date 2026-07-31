@@ -33,10 +33,36 @@ final class AppConfig: ObservableObject {
         data.fontSize = min(max(data.fontSize + delta, range.lowerBound), range.upperBound)
     }
 
-    /// The token to use: the configured one, or the environment fallback.
-    var effectiveToken: String {
-        if !data.exeToken.isEmpty { return data.exeToken }
-        return ProcessInfo.processInfo.environment["EXE_DEV_TOKEN"] ?? ""
+    /// The token to use for the active provider: the configured one, or the
+    /// environment fallback.
+    var effectiveToken: String { effectiveToken(for: data.provider) }
+
+    /// The token for a given provider: the configured one, or that provider's
+    /// environment fallback. Per-provider so a sprites.dev session opened while
+    /// exe.dev was active still authenticates with the sprites token.
+    func effectiveToken(for provider: VMProviderID) -> String {
+        switch provider {
+        case .exe:
+            if !data.exeToken.isEmpty { return data.exeToken }
+            return ProcessInfo.processInfo.environment["EXE_DEV_TOKEN"] ?? ""
+        case .sprites:
+            if !data.spritesToken.isEmpty { return data.spritesToken }
+            return ProcessInfo.processInfo.environment["SPRITE_TOKEN"] ?? ""
+        }
+    }
+
+    /// The provider the app is configured to use.
+    func makeProvider() -> VMProvider { makeProvider(for: data.provider) }
+
+    /// A provider instance for an id. Used for the active provider and to
+    /// reconstruct a stored session's provider on restore.
+    func makeProvider(for id: VMProviderID) -> VMProvider {
+        switch id {
+        case .exe:
+            return ExeProvider(tokenProvider: { AppConfig.shared.effectiveToken(for: .exe) })
+        case .sprites:
+            return SpritesProvider(tokenProvider: { AppConfig.shared.effectiveToken(for: .sprites) })
+        }
     }
 
     private func save() {

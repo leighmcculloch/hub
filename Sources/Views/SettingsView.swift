@@ -39,21 +39,47 @@ struct SettingsView: View {
 
     private var general: some View {
         Form {
-            Section("exe.dev") {
-                SecureField("API token", text: $config.data.exeToken, prompt: Text("exe1.…"))
-                caption("Used to create VMs and GitHub integrations. Leave blank to use the EXE_DEV_TOKEN environment variable. Stored in Application Support, never in the repo.")
-                // The env-var fallback is invisible otherwise, so confirm which
-                // source is actually in play.
-                if config.data.exeToken.isEmpty {
-                    if ProcessInfo.processInfo.environment["EXE_DEV_TOKEN"] != nil {
-                        status(ok: true, "Using EXE_DEV_TOKEN from the environment.")
-                    } else {
-                        status(ok: false, "No token configured — creating a VM will fail.")
-                    }
+            Section("Provider") {
+                Picker("Provider", selection: $config.data.provider) {
+                    Text("exe.dev").tag(VMProviderID.exe)
+                    Text("sprites.dev").tag(VMProviderID.sprites)
                 }
+                caption("Which service new sessions provision VMs on. Existing tabs keep the provider they were opened with; switching reloads the EXISTING list.")
+            }
+
+            Section(config.data.provider == .exe ? "exe.dev" : "sprites.dev") {
+                tokenField
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// The token field for the active provider, with its environment fallback
+    /// shown when the stored value is blank.
+    @ViewBuilder
+    private var tokenField: some View {
+        switch config.data.provider {
+        case .exe:
+            SecureField("API token", text: $config.data.exeToken, prompt: Text("exe1.…"))
+            caption("Used to create VMs and GitHub integrations. Leave blank to use the EXE_DEV_TOKEN environment variable. Stored in Application Support, never in the repo.")
+            if config.data.exeToken.isEmpty {
+                if ProcessInfo.processInfo.environment["EXE_DEV_TOKEN"] != nil {
+                    status(ok: true, "Using EXE_DEV_TOKEN from the environment.")
+                } else {
+                    status(ok: false, "No token configured — creating a VM will fail.")
+                }
+            }
+        case .sprites:
+            SecureField("API token", text: $config.data.spritesToken, prompt: Text("org/token-id/secret"))
+            caption("Used to create and manage sprites. Leave blank to use the SPRITE_TOKEN environment variable. Requires the `sprite` CLI to connect. Stored in Application Support, never in the repo.")
+            if config.data.spritesToken.isEmpty {
+                if ProcessInfo.processInfo.environment["SPRITE_TOKEN"] != nil {
+                    status(ok: true, "Using SPRITE_TOKEN from the environment.")
+                } else {
+                    status(ok: false, "No token configured — creating a sprite will fail.")
+                }
+            }
+        }
     }
 
     // MARK: - Terminal

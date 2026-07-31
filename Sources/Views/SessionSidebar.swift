@@ -6,7 +6,7 @@ struct SessionSidebar: View {
     @ObservedObject var workspace: Workspace
 
     /// Same, for a VM in the EXISTING list that has no tab open.
-    @State private var vmPendingDeletion: ExeVM?
+    @State private var vmPendingDeletion: RemoteVMRecord?
     @State private var isHoveringNewSession = false
 
     /// Nothing to show at all. Distinct from "still loading": during the first
@@ -32,7 +32,7 @@ struct SessionSidebar: View {
         .frame(maxWidth: .infinity)
         .background(.thinMaterial)
         .confirmationDialog(
-            "Delete VM \(vmPendingDeletion?.vm_name ?? "")?",
+            "Delete VM \(vmPendingDeletion?.name ?? "")?",
             isPresented: Binding(
                 get: { vmPendingDeletion != nil },
                 set: { if !$0 { vmPendingDeletion = nil } }
@@ -164,14 +164,14 @@ private struct SectionHeader: View {
 /// A VM that exists on the account but has no tab open. Dimmed relative to live
 /// sessions, and connects on click.
 private struct AvailableVMRow: View {
-    let vm: ExeVM
+    let vm: RemoteVMRecord
     let onOpen: () -> Void
     /// Destroy the VM without connecting to it first.
     let onDelete: () -> Void
 
     @State private var isHovering = false
 
-    private var name: String { vm.vm_name ?? vm.ssh_dest ?? "unknown" }
+    private var name: String { vm.name }
     private var isRunning: Bool { vm.status == "running" }
 
     var body: some View {

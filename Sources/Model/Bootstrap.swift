@@ -103,16 +103,20 @@ enum Bootstrap {
         setupScript: String,
         claudeSettings: String,
         repos: [String],
+        clone: CloneConfig = .exe,
         startCommand: String = "",
         gitIdentity: (name: String, email: String)? = nil,
-        model: GatewayModel? = nil,
+        gateway: GatewaySelection? = nil,
+        hostEnvironmentSetup: String = "",
         autoName: Bool = false
     ) -> String {
         let encoded = Data(script(setupScript: setupScript,
                                   claudeSettings: claudeSettings,
                                   repos: repos,
+                                  clone: clone,
                                   gitIdentity: gitIdentity,
-                                  model: model,
+                                  gateway: gateway,
+                                  hostEnvironmentSetup: hostEnvironmentSetup,
                                   autoName: autoName).utf8).base64EncodedString()
         return "printf %s '\(encoded)' | base64 -d > \(scriptPath)"
             + " && chmod +x \(scriptPath);"
@@ -125,6 +129,36 @@ enum Bootstrap {
     static let tmuxSession = "exe"
 
     static let scriptPath = "/tmp/exe-bootstrap.sh"
+
+    /// How `git clone` is run on a new VM. exe.dev clones through its
+    /// `github.int.exe.xyz` proxy, which needs no credentials in the VM;
+    /// sprites.dev clones straight from `github.com` using a token in the VM's
+    /// environment, so the clone carries an `http.extraheader` read from
+    /// `$GITHUB_TOKEN`.
+    struct CloneConfig: Equatable {
+        let urlPrefix: String
+        /// Extra `git clone` arguments (e.g. `-c "http.extraheader=…"`); empty
+        /// for exe.dev.
+        let extraConfig: String
+        let failureHint: String
+
+        static let exe = CloneConfig(
+            urlPrefix: "https://github.int.exe.xyz",
+            extraConfig: "",
+            failureHint: "check their GitHub integration on exe.dev, then clone again.")
+    }
+
+    /// exe.dev's clone proxy prefix and failure hint, kept as the defaults for
+    /// `command`/`script` so existing call sites need not pass a `CloneConfig`.
+    static let exeCloneURLPrefix = "https://github.int.exe.xyz"
+    static let exeCloneFailureHint =
+        "check their GitHub integration on exe.dev, then clone again."
+
+    /// A profile the bootstrap writes host env vars into for providers that
+    /// can't set them at create time (sprites.dev). The first window sources it
+    /// so the harness inherits the vars; for exe.dev the file is never written
+    /// and the source is a guarded no-op.
+    static let hostEnvFile = ".sprite-env.sh"
 
     /// tmux has to exist before it can be started, and it can no longer be
     /// installed by the bootstrap script — that now runs *inside* tmux. Output
@@ -168,6 +202,11 @@ enum Bootstrap {
     static func controlModeCommand(startCommand: String) -> String {
         let trimmed = startCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         var window = "\(scriptPath);"
+        // Re-source the host env profile the bootstrap just wrote, so the start
+        // command (and the shell that outlives it) inherit the provider's host
+        // environment. Guarded so it's a no-op when the file doesn't exist
+        // (exe.dev, which sets env via `new --env` instead).
+        window += " [ -f \"$HOME/\(hostEnvFile)\" ] && . \"$HOME/\(hostEnvFile)\";"
         if !trimmed.isEmpty {
             window += " \(trimmed);"
         }
@@ -191,8 +230,10 @@ enum Bootstrap {
         setupScript: String,
         claudeSettings: String,
         repos: [String],
+        clone: CloneConfig = .exe,
         gitIdentity: (name: String, email: String)? = nil,
-        model: GatewayModel? = nil,
+        gateway: GatewaySelection? = nil,
+        hostEnvironmentSetup: String = "",
         autoName: Bool = false
     ) -> String {
         var script = "#!/usr/bin/env bash\n"
@@ -230,11 +271,19 @@ enum Bootstrap {
             """
         }
 
+        // Inject host environment for providers that can't set it at create
+        // time (sprites.dev writes a profile here and sources it). exe.dev sets
+        // env via `new --env`, so this is empty and does nothing.
+        script += hostEnvironmentSetup
+
         // Point the harnesses that read a config file at the chosen gateway
         // model. Claude Code needs nothing here: it reads the ANTHROPIC_*
-        // variables set on the VM host when it was created.
-        if let model {
-            script += harnessConfig(for: model)
+        // variables set on the VM host when it was created. A provider that
+        // needs setup before the harness config is written (sprites.dev starts
+        // an LLM proxy) includes it in the wiring's `setup` fragment.
+        if let gateway {
+            script += gateway.wiring.setup
+            script += harnessConfig(for: gateway)
         }
 
         // After the harness configuration, which rewrites the very file Codex's
@@ -276,9 +325,10 @@ enum Bootstrap {
             script += "(\n"
             script += "exe_failed_clones=''\n"
             for repo in repos {
-                let url = shellQuote("https://github.int.exe.xyz/\(repo).git")
+                let url = shellQuote("\(clone.urlPrefix)/\(repo).git")
+                let extra = clone.extraConfig.isEmpty ? "" : " \(clone.extraConfig)"
                 script += """
-                if ! git clone --depth 1 --quiet \(url); then
+                if ! git clone\(extra) --depth 1 --quiet \(url); then
                   exe_failed_clones="$exe_failed_clones "\(shellQuote(repo))
                 fi
 
@@ -288,7 +338,7 @@ enum Bootstrap {
             if [ -n "$exe_failed_clones" ]; then
               echo "" >&2
               echo "exe: these repositories did not clone:$exe_failed_clones" >&2
-              echo "exe: check their GitHub integration on exe.dev, then clone again." >&2
+              echo "exe: \(clone.failureHint)" >&2
             fi
 
             """
@@ -311,11 +361,11 @@ enum Bootstrap {
     /// chosen it is the only thing in the file, and treating that as the user's
     /// work would refuse them a model ever after. Rewriting it is safe because
     /// the wiring runs again, after this, and puts its `notify` back.
-    static func harnessConfig(for model: GatewayModel) -> String {
-        let codex = Data(LLMGateway.codexConfig(for: model).utf8).base64EncodedString()
-        let provider = Data(LLMGateway.piProvider(for: model).utf8).base64EncodedString()
-        let settings = Data(LLMGateway.piSettings(for: model).utf8).base64EncodedString()
-        let marker = LLMGateway.providerName
+    static func harnessConfig(for gateway: GatewaySelection) -> String {
+        let codex = Data(gateway.wiring.codexConfig.utf8).base64EncodedString()
+        let provider = Data(gateway.wiring.piProvider.utf8).base64EncodedString()
+        let settings = Data(gateway.wiring.piSettings.utf8).base64EncodedString()
+        let marker = gateway.wiring.marker
 
         return """
 

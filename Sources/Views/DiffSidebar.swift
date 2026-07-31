@@ -16,7 +16,10 @@ struct DiffSidebar: View {
         VStack(spacing: 0) {
             if let session = workspace.selectedSession {
                 if let destination = session.sshDestination {
-                    RemoteDiffView(destination: destination).id(destination)
+                    RemoteDiffView(
+                        destination: destination,
+                        transport: session.provider.transport(forDestination: destination))
+                        .id(destination)
                 } else {
                     LocalDiffView(session: session).id(session.id)
                 }
@@ -38,6 +41,7 @@ struct DiffSidebar: View {
 @MainActor
 private final class RemoteDiffModel: ObservableObject {
     let destination: String
+    private let transport: RemoteTransport
 
     @Published var repos: [String] = []
     /// nil == all repos.
@@ -66,10 +70,12 @@ private final class RemoteDiffModel: ObservableObject {
     /// Guards against overlapping refreshes when SSH is slower than the poll.
     private var isRefreshing = false
 
-    /// Nonisolated so `RemoteDiffView.init` can construct it; only assigns a
-    /// stored property.
-    nonisolated init(destination: String) {
+    /// Nonisolated so `RemoteDiffView.init` can construct it; only assigns
+    /// stored properties. `transport` is Sendable so it can be held off the main
+    /// actor for the polling git calls.
+    nonisolated init(destination: String, transport: RemoteTransport) {
         self.destination = destination
+        self.transport = transport
     }
 
     var visibleRepos: [String] {
@@ -113,7 +119,7 @@ private final class RemoteDiffModel: ObservableObject {
 
         let discovered: [String]
         do {
-            discovered = try await RemoteGit.listRepos(destination: destination)
+            discovered = try await RemoteGit.listRepos(transport: transport)
             backoff.recordSuccess()
             if connectionError != nil { connectionError = nil }
         } catch {
@@ -130,7 +136,7 @@ private final class RemoteDiffModel: ObservableObject {
 
         var map: [String: GitRepoStatus] = [:]
         for repo in visibleRepos {
-            map[repo] = await RemoteGit.status(destination: destination, repo: repo)
+            map[repo] = await RemoteGit.status(transport: transport, repo: repo)
         }
         let changed = map != statusByRepo
         if changed { statusByRepo = map }
@@ -179,7 +185,7 @@ private final class RemoteDiffModel: ObservableObject {
         if let range = scope.commitRange {
             loadingFiles = true
             let files = await RemoteGit.scopeFiles(
-                destination: destination, repo: scope.repo, from: range.from, to: range.to)
+                transport: transport, repo: scope.repo, from: range.from, to: range.to)
             if self.scope == scope { commitFiles = files }
             loadingFiles = false
         }
@@ -200,18 +206,18 @@ private final class RemoteDiffModel: ObservableObject {
         switch scope {
         case let .worktree(repo):
             if let file {
-                return await RemoteGit.fileDiff(destination: destination, repo: repo, file: file)
+                return await RemoteGit.fileDiff(transport: transport, repo: repo, file: file)
             }
-            return await RemoteGit.repoDiff(destination: destination, repo: repo)
+            return await RemoteGit.repoDiff(transport: transport, repo: repo)
         case .commits:
             guard let range = scope.commitRange else { return "" }
             if let file {
                 return await RemoteGit.rangeFileDiff(
-                    destination: destination, repo: scope.repo,
+                    transport: transport, repo: scope.repo,
                     from: range.from, to: range.to, file: file)
             }
             return await RemoteGit.rangeDiff(
-                destination: destination, repo: scope.repo, from: range.from, to: range.to)
+                transport: transport, repo: scope.repo, from: range.from, to: range.to)
         }
     }
 
@@ -268,8 +274,8 @@ private struct RemoteDiffView: View {
     @AppStorage("diffFileListHeight") private var fileListHeight: Double = 200
     @AppStorage("diffLogHeight") private var scopeListHeight: Double = 160
 
-    init(destination: String) {
-        _model = StateObject(wrappedValue: RemoteDiffModel(destination: destination))
+    init(destination: String, transport: RemoteTransport) {
+        _model = StateObject(wrappedValue: RemoteDiffModel(destination: destination, transport: transport))
     }
 
     var body: some View {

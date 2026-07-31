@@ -1,7 +1,7 @@
 # Exe Desktop App
 
 A native macOS app for working with coding agents on ephemeral cloud VMs. Each
-session opens a fresh [**exe.dev**](https://exe.dev) VM, SSHes into it, and
+session opens a fresh VM on **exe.dev** or **sprites.dev**, connects to it, and
 gives you a real terminal — a **libghostty** surface rendered on the GPU,
 wrapped as a SwiftUI view by [**Termini**](https://github.com/arach/Termini) —
 driving the VM's tmux from the outside. No tmux status bar, no prefix keys, no
@@ -61,18 +61,32 @@ Three panels, all resizable and hideable:
 
 - A Mac running **macOS 14** or later.
 - The **Xcode command-line tools** (`xcode-select --install`).
-- An **exe.dev account** and an API token (see below).
-- An **SSH key** registered with exe.dev — the same one `ssh <vm>.exe.xyz` uses.
+- A **VM provider account** and API token — either [exe.dev](https://exe.dev) or
+  [sprites.dev](https://sprites.dev) (chosen in Settings; see below).
+- For **exe.dev**: an **SSH key** registered with exe.dev — the same one
+  `ssh <vm>.exe.xyz` uses.
+- For **sprites.dev**: the **`sprite` CLI** installed locally — the app drives
+  sprites through `sprite exec` the way it drives exe.dev VMs through `ssh`.
 - (Optional) the **GitHub CLI** (`gh`) or a `GITHUB_TOKEN`, so the repo picker
-  can list your repositories.
+  can list your repositories. exe.dev brokers private-repo cloning itself;
+  sprites.dev clones with this token from github.com.
 
-### The exe.dev token
+### The VM provider and token
 
-Set your token in **Settings** (`⌘,`) or via the `EXE_DEV_TOKEN` environment
-variable. It is stored in
-`~/Library/Application Support/ExeDesktopApp/config.json`, never in this repo.
+Choose a provider in **Settings** (`⌘,`): **exe.dev** or **sprites.dev**. New
+sessions provision on the chosen provider; existing tabs keep the provider they
+were opened with, and switching reloads the **EXISTING** list.
 
-The token needs these command permissions (`cmds`):
+Set the active provider's token in **Settings** or via an environment variable;
+it is stored in `~/Library/Application Support/ExeDesktopApp/config.json`, never
+in this repo.
+
+| Provider | Env var | Notes |
+| --- | --- | --- |
+| exe.dev | `EXE_DEV_TOKEN` | SSHes into `<vm>.exe.xyz`; brokers GitHub via `github.int.exe.xyz`. |
+| sprites.dev | `SPRITE_TOKEN` | Reaches sprites through the `sprite` CLI (`sprite exec`); clones from github.com with your GitHub token. |
+
+The exe.dev token needs these command permissions (`cmds`):
 
 | Command | Why |
 | --- | --- |
@@ -148,6 +162,10 @@ and nothing else, which is the point: an agent runs on the VM with permissions
 bypassed. If your account token may not mint one, the session is still created
 and the new-session log says so.
 
+> Auto-naming is exe.dev-only: sprites.dev has no `rename` API, so a sprites
+> session left unnamed gets a generated name it keeps. Shelley (the web agent on
+> port 9999) is exe.dev-only too; the sprites terminal strip has no Shelley tab.
+
 ## Settings
 
 Everything below is edited in **Settings** (`⌘,`) and persisted to the JSON
@@ -165,13 +183,17 @@ config in Application Support.
   just a shell. tmux itself is not configurable and is required — the app is a
   tmux client, so the remote command installs tmux first if the VM lacks it.
 - **Global environment variables** — a `KEY=VALUE` list that applies whichever
-  environment a session runs. Both lists are passed to `new --env`, so they're
-  set on the VM host itself and visible to every process on it, not just the
-  terminal's shell. Values with spaces or quotes are shell-quoted for you.
-- **Model** — chosen per session from the exe.dev LLM gateway's catalogue
-  (`https://exe.dev/llm-gateway-models.json`), or *Custom*, the default, which
-  configures nothing and leaves the VM's own setup alone. Choosing a gateway
-  model configures three harnesses and nothing else:
+  environment a session runs. On exe.dev both lists are passed to `new --env`,
+  so they're set on the VM host itself and visible to every process on it; on
+  sprites.dev (which has no host-env API) the bootstrap writes them into
+  `~/.sprite-env.sh` and sources it from the shell profile, so the harness and
+  later shells see them. Values with spaces or quotes are shell-quoted for you.
+- **Model** — chosen per session from the active provider's LLM gateway
+  catalogue, or *Custom*, the default, which configures nothing and leaves the
+  VM's own setup alone. exe.dev's catalogue is
+  `https://exe.dev/llm-gateway-models.json`; sprites.dev's is OpenRouter's
+  (`https://openrouter.ai/api/v1/models`). Choosing a gateway model configures
+  three harnesses and nothing else:
   - **Claude Code** — `ANTHROPIC_API_KEY=implicit`,
     `CLAUDE_CODE_OAUTH_TOKEN=` (blanked, so it can't win over the gateway),
     `ANTHROPIC_BASE_URL=https://llm.int.exe.xyz` and `ANTHROPIC_MODEL=<id>`,
@@ -186,6 +208,15 @@ config in Application Support.
     `openai-completions`), and `defaultProvider`/`defaultModel` merged into
     `~/.pi/agent/settings.json`. Both merges leave your other providers and
     settings in place.
+
+  On sprites.dev the gateway is the OpenRouter connector, reached through a
+  small translation proxy the bootstrap installs and starts on the sprite
+  (`~/.sprite-llm-proxy.py`, listening on `127.0.0.1:8787`). The harnesses point
+  at that proxy; it discovers the connector's gateway URL from inside the sprite
+  and translates Anthropic Messages ↔ OpenAI Chat Completions for Claude Code,
+  passing OpenAI through for Codex and pi. The provider name written into the
+  Codex/pi config is `sprites-llm`.
+
 - **Terminal font** — family and size; `⌘+`/`⌘-` adjust size and `⌘0` resets.
 - **Claude settings** — the `~/.claude/settings.json` seeded onto each VM
   (dark theme, `permissions.defaultMode: bypassPermissions`, all
@@ -276,7 +307,9 @@ restored (they have nothing to reconnect to). Sidebar widths are held in
 | Terminal session | `Sources/Model/TerminalSession.swift` — a local shell, or a tmux session whose panes are `TerminalTab`s |
 | Terminal output | `Sources/Model/TerminalOSC.swift` — reads the title and cwd out of a local shell's byte stream |
 | Provisioning | `Sources/Model/SessionProvisioner.swift` — repo pick → integration → VM → SSH bootstrap |
-| exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create), `RemoteVM` (what a VM says its name is now) |
+| VM providers | `Sources/Providers/` — `VMProvider` (the seam), `ExeProvider`/`SSHTransport` (exe.dev over `ssh`), `SpritesProvider`/`SpritesClient`/`SpritesCLITransport` (sprites.dev REST + `sprite exec`) |
+| exe.dev API | `Sources/Exe/` — `ExeClient` (HTTPS `/exec`), `ExeService` (integrations, VM create) |
+| sprites.dev LLM proxy | `Sources/Model/SpriteLLMProxy.swift` — the on-sprite Anthropic↔OpenAI translation proxy |
 | GitHub | `Sources/GitHub/GitHubRepos.swift` — lists accessible repos for the picker |
 | Config | `Sources/Config/` — persisted token, font, env vars, environments (`AppConfig`, `EnvVar`, `SessionEnvironment`) |
 | Bootstrap | `Sources/Model/Bootstrap.swift` — VM naming + the remote bootstrap script |

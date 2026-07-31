@@ -20,9 +20,10 @@ final class TerminalSession: ObservableObject, Identifiable {
     enum Launch {
         /// A local login shell (the plain terminal, no tmux).
         case localShell
-        /// SSH into `destination` and run `bootstrap` as the remote command:
-        /// the tmux control-mode client, which brings up the session's panes.
-        case ssh(destination: String, bootstrap: String)
+        /// Run `bootstrap` on a VM over the provider's transport: `ssh` for
+        /// exe.dev, `sprite exec` for sprites.dev. The bootstrap is the tmux
+        /// control-mode client, which brings up the session's panes.
+        case remote(destination: String, bootstrap: String)
     }
 
     /// `nonisolated` so `Identifiable` is satisfied off the main actor too.
@@ -52,14 +53,26 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     /// The SSH destination for VM-backed sessions (nil for local shells). The
-    /// diff sidebar uses this to run git over SSH against the VM.
+    /// diff sidebar uses this to run git over the VM's transport.
     ///
     /// Not fixed for the session's lifetime: a VM that renames itself takes its
     /// hostname with it. See `adopt(vmName:)`.
     @Published private(set) var sshDestination: String?
 
+    /// The provider backing this session — exe.dev or sprites.dev. Drives the
+    /// transport, the web/Shelley URLs, and whether rename polling applies.
+    /// `nonisolated(unsafe)` because `VMProvider` is a non-Sendable class held
+    /// by this main-actor model, read only from the main actor.
+    nonisolated(unsafe) let provider: VMProvider
+
     /// The exe.dev VM backing this session, if any. Needed to delete it.
     @Published private(set) var vmName: String?
+
+    /// The VM's public web URL — the landing page for a new browser tab in this
+    /// session. Stored from the VM record at creation rather than derived from
+    /// the destination, because a sprites.dev URL carries an org id the
+    /// destination alone doesn't.
+    @Published private(set) var webURL: String?
 
     /// True for a session created without a name, whose VM was armed to name
     /// itself from the agent's first prompt. Set once, at creation; a reconnect
@@ -71,16 +84,11 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published var sidebarTabs: [SidebarTab] = [SidebarTab(kind: .diff, title: "Diff")]
     @Published var selectedSidebarTabID: SidebarTab.ID?
 
-    /// The VM's public HTTPS endpoint — its SSH host over https. The landing
-    /// page for a new browser tab in this session.
-    var webURL: String? {
-        sshDestination.map { "https://\($0)" }
-    }
-
     /// Shelley — exe.dev's own web agent — which the default VM image serves on
-    /// port 9999. nil for a local shell, which has no VM to serve it.
+    /// port 9999. nil for a local shell or a provider that doesn't serve one.
     var shelleyURL: String? {
-        sshDestination.map { "https://\($0):9999/" }
+        guard let destination = sshDestination else { return nil }
+        return provider.shelleyURL(forDestination: destination)
     }
 
     var selectedSidebarTab: SidebarTab? {
@@ -89,7 +97,7 @@ final class TerminalSession: ObservableObject, Identifiable {
 
     /// Open a browser sub-tab pointed at this session's instance by default.
     func newBrowserTab() {
-        let address = webURL ?? "https://exe.dev"
+        let address = webURL ?? provider.defaultBrowserURL
         let browser = BrowserModel(initialAddress: address)
         let host = BrowserModel.url(from: address)?.host ?? "Browser"
         let tab = SidebarTab(kind: .browser, title: host, browser: browser)
@@ -142,15 +150,25 @@ final class TerminalSession: ObservableObject, Identifiable {
         case ignored
     }
 
-    init(title: String = "Terminal", launch: Launch = .localShell, vmName: String? = nil, autoNameArmed: Bool = false) {
+    init(
+        title: String = "Terminal",
+        launch: Launch = .localShell,
+        provider: VMProvider,
+        vmName: String? = nil,
+        webURL: String? = nil,
+        autoNameArmed: Bool = false
+    ) {
         self.title = title
         self.launch = launch
+        self.provider = provider
         self.vmName = vmName
         self.autoNameArmed = autoNameArmed
-        if case let .ssh(destination, _) = launch {
+        if case let .remote(destination, _) = launch {
             sshDestination = destination
+            self.webURL = webURL ?? provider.webURL(forDestination: destination)
         } else {
             sshDestination = nil
+            self.webURL = nil
         }
 
         start()
@@ -183,11 +201,12 @@ final class TerminalSession: ObservableObject, Identifiable {
     /// hook triggers, since Shelley has no hook of its own.
     func newShelleyTab() {
         guard let address = shelleyURL, let destination = sshDestination else { return }
-        // `destination` is captured by value so the closure need not reach into
-        // this main-actor model from WebKit's callback — no `self` to keep
-        // alive, no actor to cross.
+        let transport = provider.transport(forDestination: destination)
+        // `destination` and `transport` are captured by value so the closure
+        // need not reach into this main-actor model from WebKit's callback — no
+        // `self` to keep alive, no actor to cross.
         let onFirstPrompt: ((String) -> Void)? = autoNameArmed
-            ? { prompt in Self.feedRenameScript(destination: destination, prompt: prompt) }
+            ? { prompt in Self.feedRenameScript(transport: transport, prompt: prompt) }
             : nil
         let tab = TerminalTab(
             paneID: nil, title: "Shelley",
@@ -197,14 +216,14 @@ final class TerminalSession: ObservableObject, Identifiable {
     }
 
     /// Feed a Shelley prompt to the on-VM rename script over the terminal's own
-    /// multiplexed SSH connection — the same `{"prompt": …}` payload Claude
-    /// Code's hook and Codex's notify deliver. Fire-and-forget: the script forks
-    /// and detaches, so this returns at once and never holds up the UI, and its
-    /// armed/marker gates still decide whether a rename actually happens.
-    private nonisolated static func feedRenameScript(destination: String, prompt: String) {
+    /// transport — the same `{"prompt": …}` payload Claude Code's hook and
+    /// Codex's notify deliver. Fire-and-forget: the script forks and detaches,
+    /// so this returns at once and never holds up the UI, and its armed/marker
+    /// gates still decide whether a rename actually happens.
+    private nonisolated static func feedRenameScript(transport: RemoteTransport, prompt: String) {
         Task {
             _ = await RemoteGit.run(
-                destination: destination,
+                transport: transport,
                 remoteCommand: AutoName.renameCommand(prompt: prompt))
         }
     }
@@ -248,7 +267,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         case .localShell:
             startLocalShell()
 
-        case let .ssh(destination, bootstrap):
+        case let .remote(destination, bootstrap):
             // Pane tabs are rebuilt from the pane listing rather than reused: on
             // a reconnect the panes have moved on without us, and each tab
             // restores its pane's screen as it reappears. Shelley tabs aren't
@@ -258,7 +277,7 @@ final class TerminalSession: ObservableObject, Identifiable {
                 selectedTabID = nil
             }
             let client = TmuxClient(
-                destination: destination,
+                transport: provider.transport(forDestination: destination),
                 remoteCommand: bootstrap,
                 onEvents: { [weak self] events in
                     // Delivered on the main queue by the client, so this stays
@@ -382,10 +401,11 @@ final class TerminalSession: ObservableObject, Identifiable {
         guard sshDestination != nil, !newName.isEmpty, newName != vmName else { return false }
         let previous = vmName
         vmName = newName
-        let destination = RemoteVM.destination(forName: newName)
+        let destination = provider.destination(forVMName: newName)
         sshDestination = destination
-        if case let .ssh(_, bootstrap) = launch {
-            launch = .ssh(destination: destination, bootstrap: bootstrap)
+        webURL = provider.webURL(forDestination: destination)
+        if case let .remote(_, bootstrap) = launch {
+            launch = .remote(destination: destination, bootstrap: bootstrap)
         }
         if title.isEmpty || title == previous {
             title = newName

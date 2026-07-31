@@ -11,7 +11,7 @@ final class RemoteGitErrorTests: XCTestCase {
         Warning: Permanently added 'vm.exe.xyz' (ED25519) to the list of known hosts.
         Permission denied (publickey).
         """
-        XCTAssertEqual(RemoteGit.summarize(stderr: stderr, exitCode: 255),
+        XCTAssertEqual(SSHTransport.summarize(stderr: stderr, exitCode: 255),
                        "Permission denied (publickey).")
     }
 
@@ -23,7 +23,7 @@ final class RemoteGitErrorTests: XCTestCase {
         motd: welcome to the machine
         ssh: connect to host vm.exe.xyz port 22: Connection refused
         """
-        XCTAssertTrue(RemoteGit.summarize(stderr: stderr, exitCode: 255)
+        XCTAssertTrue(SSHTransport.summarize(stderr: stderr, exitCode: 255)
             .contains("Connection refused"))
     }
 
@@ -35,7 +35,7 @@ final class RemoteGitErrorTests: XCTestCase {
             "ssh: connect to host x port 22: No route to host",
         ]
         for stderr in cases {
-            XCTAssertEqual(RemoteGit.summarize(stderr: stderr, exitCode: 255), stderr,
+            XCTAssertEqual(SSHTransport.summarize(stderr: stderr, exitCode: 255), stderr,
                            "should surface: \(stderr)")
         }
     }
@@ -43,9 +43,9 @@ final class RemoteGitErrorTests: XCTestCase {
     /// A command can fail with nothing on stderr; the status is better than a
     /// blank banner.
     func testFallsBackToTheExitStatusWhenStderrIsEmpty() {
-        XCTAssertEqual(RemoteGit.summarize(stderr: "", exitCode: 255),
+        XCTAssertEqual(SSHTransport.summarize(stderr: "", exitCode: 255),
                        "ssh exited with status 255")
-        XCTAssertEqual(RemoteGit.summarize(stderr: "   \n\n", exitCode: 1),
+        XCTAssertEqual(SSHTransport.summarize(stderr: "   \n\n", exitCode: 1),
                        "ssh exited with status 1")
     }
 
@@ -53,14 +53,14 @@ final class RemoteGitErrorTests: XCTestCase {
     /// through to the generic status.
     func testUsesTheLastLineForUnrecognisedErrors() {
         let stderr = "some preamble\nbash: git: command not found"
-        XCTAssertEqual(RemoteGit.summarize(stderr: stderr, exitCode: 127),
+        XCTAssertEqual(SSHTransport.summarize(stderr: stderr, exitCode: 127),
                        "bash: git: command not found")
     }
 
     /// Remote programs emit bare carriage returns; leaving them in would put
     /// line breaks inside a banner meant to be one line.
     func testTreatsCarriageReturnsAsLineBreaks() {
-        let summary = RemoteGit.summarize(stderr: "first\rPermission denied (publickey).\r",
+        let summary = SSHTransport.summarize(stderr: "first\rPermission denied (publickey).\r",
                                           exitCode: 255)
         XCTAssertEqual(summary, "Permission denied (publickey).")
         XCTAssertFalse(summary.contains("\r"))
@@ -69,7 +69,7 @@ final class RemoteGitErrorTests: XCTestCase {
     /// The summary is held in published state and re-compared every poll, so a
     /// pathological line must not be kept whole.
     func testCapsAnAbsurdlyLongLine() {
-        let summary = RemoteGit.summarize(stderr: String(repeating: "x", count: 100_000),
+        let summary = SSHTransport.summarize(stderr: String(repeating: "x", count: 100_000),
                                           exitCode: 1)
         XCTAssertLessThanOrEqual(summary.count, 301)
         XCTAssertTrue(summary.hasSuffix("…"))
@@ -79,7 +79,7 @@ final class RemoteGitErrorTests: XCTestCase {
     /// must still come through.
     func testDoesNotSwallowEverythingWhenOnlyWarningsArePresent() {
         let stderr = "Warning: Permanently added 'x' (ED25519) to the list of known hosts."
-        XCTAssertEqual(RemoteGit.summarize(stderr: stderr, exitCode: 255),
+        XCTAssertEqual(SSHTransport.summarize(stderr: stderr, exitCode: 255),
                        "ssh exited with status 255")
     }
 }

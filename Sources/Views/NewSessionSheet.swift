@@ -57,7 +57,7 @@ struct NewSessionSheet: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("New VM Session")
                 .font(.headline)
-            Text("Each tab provisions an exe.dev VM and clones the selected repos into its home directory.")
+            Text("Each tab provisions a \(workspace.provider.displayName) VM and clones the selected repos into its home directory.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -170,7 +170,7 @@ struct NewSessionSheet: View {
                 Section("Custom") {
                     Text("Custom — leave the VM's own setup").tag(GatewayModel?.none)
                 }
-                Section("exe.dev LLM Gateway") {
+                Section("\(workspace.provider.displayName) LLM Gateway") {
                     ForEach(provisioner.modelOptions) { model in
                         Text(model.label).tag(GatewayModel?.some(model))
                     }
@@ -334,11 +334,12 @@ struct NewSessionSheet: View {
     }
 
     private var tokenWarning: some View {
+        let provider = workspace.provider
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
             VStack(alignment: .leading, spacing: 1) {
-                Text("No exe.dev token configured").fontWeight(.semibold)
-                Text("Set one in Settings (⌘,) or supply EXE_DEV_TOKEN. Creating a VM will fail without it.")
+                Text("No \(provider.displayName) token configured").fontWeight(.semibold)
+                Text("Set one in Settings (⌘,) or supply \(provider.tokenEnvVar). Creating a VM will fail without it.")
             }
             Spacer(minLength: 0)
         }
@@ -392,14 +393,14 @@ struct NewSessionSheet: View {
         .padding(.bottom, 10)
     }
 
-    private func vmRow(_ vm: ExeVM) -> some View {
+    private func vmRow(_ vm: RemoteVMRecord) -> some View {
         let running = vm.status == "running"
         return HStack(spacing: 8) {
             Circle()
                 .fill(running ? Color.green : Color.secondary)
                 .frame(width: 7, height: 7)
             VStack(alignment: .leading, spacing: 1) {
-                Text(vm.vm_name ?? vm.ssh_dest ?? "unknown")
+                Text(vm.name)
                 Text(vmSubtitle(vm))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -413,13 +414,10 @@ struct NewSessionSheet: View {
         .padding(.vertical, 2)
     }
 
-    /// Status and region on one dim line, so the VM name stays the only
-    /// full-strength text in the row.
-    private func vmSubtitle(_ vm: ExeVM) -> String {
-        var parts: [String] = []
-        if let status = vm.status, !status.isEmpty { parts.append(status) }
-        if let region = vm.region, !region.isEmpty { parts.append(region) }
-        return parts.isEmpty ? "unknown status" : parts.joined(separator: " · ")
+    /// Status on one dim line, so the VM name stays the only full-strength text
+    /// in the row.
+    private func vmSubtitle(_ vm: RemoteVMRecord) -> String {
+        vm.status?.isEmpty == false ? vm.status! : "unknown status"
     }
 
     // MARK: - Progress / failure
@@ -529,8 +527,10 @@ struct NewSessionSheet: View {
 
     @MainActor
     private func create() async {
-        if let (launch, title, vmName, autoName) = await provisioner.provision(gitIdentity: workspace.gitIdentity) {
-            workspace.addSession(title: title, launch: launch, vmName: vmName, autoName: autoName)
+        if let (launch, title, vmName, webURL, autoName) = await provisioner.provision(gitIdentity: workspace.gitIdentity) {
+            workspace.addSession(
+                title: title, launch: launch, provider: workspace.provider,
+                vmName: vmName, webURL: webURL, autoName: autoName)
             dismiss()
         }
     }

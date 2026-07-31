@@ -132,6 +132,13 @@ final class BootstrapTests: XCTestCase {
 
     // MARK: - Shell quoting
 
+    /// An exe.dev `GatewaySelection` for a model, wiring included. Tests build
+    /// selections through this so they stay in step with the wiring shape.
+    private func gateway(_ provider: String, _ model: String) -> GatewaySelection {
+        let model = GatewayModel(provider: provider, model: model)
+        return GatewaySelection(model: model, wiring: LLMGateway.wiring(for: model, config: .exe))
+    }
+
     func testShellQuoteWrapsAndEscapes() {
         XCTAssertEqual(Bootstrap.shellQuote("claude"), "'claude'")
         XCTAssertEqual(Bootstrap.shellQuote("hello world"), "'hello world'")
@@ -388,7 +395,7 @@ final class BootstrapTests: XCTestCase {
     func testAGatewayModelConfiguresCodexAndPi() throws {
         let script = Bootstrap.script(
             setupScript: "", claudeSettings: "", repos: [],
-            model: GatewayModel(provider: "openai", model: "gpt-5.5"))
+            gateway: gateway("openai", "gpt-5.5"))
 
         XCTAssertTrue(script.contains("$HOME/.codex/config.toml"))
         XCTAssertTrue(script.contains("~/.pi/agent"))
@@ -405,10 +412,11 @@ final class BootstrapTests: XCTestCase {
     func testTheGeneratedConfigFilesAreWritten() throws {
         let model = GatewayModel(provider: "anthropic", model: "claude-opus-5")
         let home = try runInFreshHome(Bootstrap.script(
-            setupScript: "", claudeSettings: "", repos: [], model: model))
+            setupScript: "", claudeSettings: "", repos: [],
+            gateway: GatewaySelection(model: model, wiring: LLMGateway.wiring(for: model, config: .exe))))
 
         XCTAssertEqual(try text(at: home + "/.codex/config.toml"),
-                       LLMGateway.codexConfig(for: model))
+                       LLMGateway.codexConfig(for: model, config: .exe))
 
         let models = try json(at: home + "/.pi/agent/models.json")
         let providers = try XCTUnwrap(models["providers"] as? [String: Any])
@@ -423,10 +431,10 @@ final class BootstrapTests: XCTestCase {
     func testChangingTheModelRewritesTheConfiguration() throws {
         let home = try runInFreshHome(Bootstrap.script(
             setupScript: "", claudeSettings: "", repos: [],
-            model: GatewayModel(provider: "openai", model: "gpt-5.5")))
+            gateway: gateway("openai", "gpt-5.5")))
         _ = try runScript(Bootstrap.script(
             setupScript: "", claudeSettings: "", repos: [],
-            model: GatewayModel(provider: "openai", model: "gpt-5.6-sol")),
+            gateway: gateway("openai", "gpt-5.6-sol")),
             gitExitCode: 0, home: home)
 
         XCTAssertTrue(try text(at: home + "/.codex/config.toml").contains("gpt-5.6-sol"))
@@ -447,7 +455,7 @@ final class BootstrapTests: XCTestCase {
 
         _ = try runScript(Bootstrap.script(
             setupScript: "", claudeSettings: "", repos: [],
-            model: GatewayModel(provider: "openai", model: "gpt-5.5")),
+            gateway: gateway("openai", "gpt-5.5")),
             gitExitCode: 0, home: home)
 
         let providers = try XCTUnwrap(
@@ -468,7 +476,7 @@ final class BootstrapTests: XCTestCase {
 
         let output = try runScript(Bootstrap.script(
             setupScript: "", claudeSettings: "", repos: [],
-            model: GatewayModel(provider: "anthropic", model: "claude-opus-5")),
+            gateway: gateway("anthropic", "claude-opus-5")),
             gitExitCode: 0, home: home)
 
         XCTAssertEqual(try text(at: home + "/.codex/config.toml"), existing)
@@ -525,7 +533,7 @@ final class BootstrapTests: XCTestCase {
             setupScript: "", claudeSettings: "", repos: [], autoName: true))
         _ = try runScript(Bootstrap.script(
             setupScript: "", claudeSettings: "", repos: [],
-            model: GatewayModel(provider: "anthropic", model: "claude-opus-5")),
+            gateway: gateway("anthropic", "claude-opus-5")),
             gitExitCode: 0, home: home)
 
         let codex = try text(at: home + "/.codex/config.toml")

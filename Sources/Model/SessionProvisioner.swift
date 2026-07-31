@@ -1,9 +1,9 @@
 import Combine
 import Foundation
 
-/// Drives the new-tab flow: pick repos, ensure their exe.dev GitHub
-/// integrations, create a VM tagged for those integrations, and produce the SSH
-/// launch descriptor that clones the repos on connect.
+/// Drives the new-tab flow: pick repos, ensure their GitHub access, create a
+/// VM tagged for those integrations, and produce the SSH launch descriptor that
+/// clones the repos on connect.
 @MainActor
 final class SessionProvisioner: ObservableObject {
     enum Phase: Equatable {
@@ -19,7 +19,7 @@ final class SessionProvisioner: ObservableObject {
     @Published var sessionName = ""
 
     // Existing VMs that can be reopened.
-    @Published var existingVMs: [ExeVM] = []
+    @Published var existingVMs: [RemoteVMRecord] = []
     @Published var loadingVMs = false
 
     // Model picker state. The catalogue is remote, so it can be slow or absent;
@@ -44,13 +44,13 @@ final class SessionProvisioner: ObservableObject {
     // and read only from main-actor methods afterwards. Marked nonisolated so
     // that init doesn't have to cross into the main actor to store them (an
     // error under the Swift 6 language mode).
-    nonisolated(unsafe) private let exe: ExeService
+    nonisolated(unsafe) private let provider: VMProvider
     nonisolated(unsafe) private let config: AppConfig
 
     /// Nonisolated so it can be constructed from plain (non-main-actor) contexts
     /// like `Workspace.makeProvisioner()`; it only assigns stored properties.
-    nonisolated init(exe: ExeService, config: AppConfig) {
-        self.exe = exe
+    nonisolated init(provider: VMProvider, config: AppConfig) {
+        self.provider = provider
         self.config = config
     }
 
@@ -87,7 +87,7 @@ final class SessionProvisioner: ObservableObject {
 
     func loadModels() async {
         loadingModels = true
-        let result = await LLMGateway.list()
+        let result = await provider.listModels()
         models = result.models
         modelsError = result.error
         loadingModels = false
@@ -118,7 +118,7 @@ final class SessionProvisioner: ObservableObject {
     /// Existing VMs on the account, offered for reconnection.
     func loadExistingVMs() async {
         loadingVMs = true
-        existingVMs = (try? await exe.listVMs()) ?? []
+        existingVMs = (try? await provider.listVMs()) ?? []
         loadingVMs = false
     }
 
@@ -127,7 +127,7 @@ final class SessionProvisioner: ObservableObject {
     /// `gitIdentity` seeds the VM's commit identity. Repos are optional — a
     /// session with none is just a bare VM.
     func provision(gitIdentity: (name: String, email: String)? = nil) async
-        -> (launch: TerminalSession.Launch, title: String, vmName: String, autoName: Bool)?
+        -> (launch: TerminalSession.Launch, title: String, vmName: String, webURL: String?, autoName: Bool)?
     {
         let chosen = chosenRepos
 
@@ -136,33 +136,32 @@ final class SessionProvisioner: ObservableObject {
         errorMessage = nil
 
         do {
-            log("Listing existing integrations…")
-            let existing = try await exe.listIntegrations()
-
-            var tags: [String] = []
-            for repo in chosen {
-                log("Ensuring GitHub integration for \(repo)…")
-                tags.append(try await exe.ensureGithubIntegration(repo: repo, existing: existing))
-            }
+            log("Preparing GitHub access for \(chosen.count) repo\(chosen.count == 1 ? "" : "s")…")
+            let setup = try await provider.prepareGitHub(repos: chosen)
+            let tags = setup.tags
 
             // Re-read the VM list rather than trusting `existingVMs`, which is
             // only populated while the reconnect list is on screen. A failed
             // lookup just means no names to avoid.
-            let taken = Set((try? await exe.listVMs())?.compactMap(\.vm_name) ?? [])
+            let taken = Set((try? await provider.listVMs())?.map(\.name) ?? [])
             let vmName = Bootstrap.uniqueVMName(from: sessionName, existing: taken)
             let sessionEnvironment = config.data.selectedEnvironment
             let model = config.data.model
+            let gateway = model.map { GatewaySelection(model: $0, wiring: provider.harnessWiring(for: $0)) }
             // A session nobody named gets its name from the work: the VM renames
             // itself once the agent has a prompt to name it after. A name that
-            // was typed is left alone, hostname and all.
+            // was typed is left alone, hostname and all. Providers without
+            // auto-naming never arm, so an unnamed sprites session keeps its
+            // generated name.
             let unnamed = sessionName.trimmingCharacters(in: .whitespaces).isEmpty
-            let autoNameToken = unnamed ? await renameToken() : nil
+            let autoNameToken = (unnamed && provider.supportsAutoNaming) ? await renameToken() : nil
             // The model's variables come last so they win: pointing Claude Code
             // at the gateway means blanking the token the environment sets.
             let environment = EnvVar.merged([
                 config.data.globalEnvironment,
                 sessionEnvironment.environment,
-                model.map { LLMGateway.environment(for: $0) } ?? [],
+                setup.cloneEnvironment,
+                gateway.map { $0.wiring.hostEnvironment } ?? [],
                 autoNameToken.map { [EnvVar(key: AutoName.tokenVariable, value: $0)] } ?? [],
             ])
             var creating = "Creating VM \(vmName) (tags: \(tags.joined(separator: ", "))"
@@ -174,24 +173,27 @@ final class SessionProvisioner: ObservableObject {
                 creating += "; env: \(environment.map(\.key).joined(separator: ", "))"
             }
             log(creating + ")…")
-            let vm = try await exe.createVM(name: vmName, tags: tags, environment: environment)
-            let destination = vm.ssh_dest ?? "\(vmName).exe.xyz"
+            let vm = try await provider.createVM(name: vmName, tags: tags, environment: environment)
+            let destination = vm.destination
 
-            log("VM ready at \(destination). Opening SSH session…")
+            log("VM ready at \(destination). Opening session…")
             let bootstrap = Bootstrap.command(
                 setupScript: sessionEnvironment.setupScript,
                 claudeSettings: config.data.claudeSettings,
                 repos: chosen,
+                clone: setup.clone,
                 startCommand: sessionEnvironment.startCommand,
                 gitIdentity: gitIdentity,
-                model: model,
+                gateway: gateway,
+                hostEnvironmentSetup: provider.hostEnvironmentSetup(environment),
                 autoName: autoNameToken != nil
             )
             phase = .done
 
             let trimmedName = sessionName.trimmingCharacters(in: .whitespaces)
             let title = !trimmedName.isEmpty ? trimmedName : vmName
-            return (.ssh(destination: destination, bootstrap: bootstrap), title, vmName, autoNameToken != nil)
+            return (.remote(destination: destination, bootstrap: bootstrap),
+                    title, vmName, vm.webURL, autoNameToken != nil)
         } catch {
             errorMessage = error.localizedDescription
             phase = .failed
@@ -212,7 +214,7 @@ final class SessionProvisioner: ObservableObject {
         }
         log("Minting a rename-only token, so the VM can name itself…")
         do {
-            let token = try await exe.generateRenameToken()
+            let token = try await provider.generateRenameToken()
             config.data.renameToken = token
             config.data.renameTokenMinted = Date()
             return token

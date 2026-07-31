@@ -99,7 +99,7 @@ final class LLMGatewayTests: XCTestCase {
     func testClaudeCodeVariablesPointAtTheGateway() {
         let model = GatewayModel(provider: "anthropic", model: "claude-opus-5")
         let variables = Dictionary(
-            uniqueKeysWithValues: LLMGateway.environment(for: model).map { ($0.key, $0.value) })
+            uniqueKeysWithValues: LLMGateway.environment(for: model, config: .exe).map { ($0.key, $0.value) })
 
         XCTAssertEqual(variables["ANTHROPIC_API_KEY"], "implicit")
         XCTAssertEqual(variables["CLAUDE_CODE_OAUTH_TOKEN"], "")
@@ -111,7 +111,7 @@ final class LLMGatewayTests: XCTestCase {
     /// id, not the label the picker shows.
     func testTheModelVariableIsTheGatewayID() {
         let model = GatewayModel(provider: "fireworks", model: "accounts/fireworks/models/glm-5p2")
-        let variables = LLMGateway.environment(for: model)
+        let variables = LLMGateway.environment(for: model, config: .exe)
         XCTAssertEqual(variables.first { $0.key == "ANTHROPIC_MODEL" }?.value,
                        "accounts/fireworks/models/glm-5p2")
     }
@@ -120,7 +120,7 @@ final class LLMGatewayTests: XCTestCase {
 
     func testCodexConfigSelectsTheGatewayProvider() {
         let config = LLMGateway.codexConfig(
-            for: GatewayModel(provider: "openai", model: "gpt-5.5"))
+            for: GatewayModel(provider: "openai", model: "gpt-5.5"), config: .exe)
 
         XCTAssertTrue(config.contains(#"model = "gpt-5.5""#), config)
         XCTAssertTrue(config.contains(#"model_provider = "exe-llm""#), config)
@@ -137,7 +137,7 @@ final class LLMGatewayTests: XCTestCase {
     /// the TOML string and leave a file Codex can't parse.
     func testCodexConfigEscapesTheModelID() {
         let config = LLMGateway.codexConfig(
-            for: GatewayModel(provider: "x", model: #"we"ird\"#))
+            for: GatewayModel(provider: "x", model: #"we"ird\"#), config: .exe)
         XCTAssertTrue(config.contains(#"model = "we\"ird\\""#), config)
     }
 
@@ -167,7 +167,7 @@ final class LLMGatewayTests: XCTestCase {
     func testPiSettingsSelectTheModel() throws {
         let settings = try XCTUnwrap(try JSONSerialization.jsonObject(
             with: Data(LLMGateway.piSettings(
-                for: GatewayModel(provider: "anthropic", model: "claude-opus-5")).utf8))
+                for: GatewayModel(provider: "anthropic", model: "claude-opus-5"), config: .exe).utf8))
             as? [String: Any])
 
         XCTAssertEqual(settings["defaultProvider"] as? String, "exe-llm")
@@ -177,14 +177,15 @@ final class LLMGatewayTests: XCTestCase {
     /// Both pi files are merged into JSON on the VM, so they have to parse.
     func testPiConfigIsValidJSON() throws {
         let model = GatewayModel(provider: "anthropic", model: "claude-opus-5")
-        for text in [LLMGateway.piProvider(for: model), LLMGateway.piSettings(for: model)] {
+        for text in [LLMGateway.piProvider(for: model, config: .exe),
+                     LLMGateway.piSettings(for: model, config: .exe)] {
             XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(text.utf8)), text)
         }
     }
 
     private func piProvider(for model: GatewayModel) throws -> [String: Any] {
         let object = try JSONSerialization.jsonObject(
-            with: Data(LLMGateway.piProvider(for: model).utf8))
+            with: Data(LLMGateway.piProvider(for: model, config: .exe).utf8))
         let providers = try XCTUnwrap(object as? [String: Any])
         return try XCTUnwrap(providers["exe-llm"] as? [String: Any])
     }

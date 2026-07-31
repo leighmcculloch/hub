@@ -5,6 +5,26 @@ struct PersistedSession: Codable, Equatable {
     var destination: String
     var title: String
     var vmName: String?
+    /// Which provider the tab ran on, so restore reconstructs the right
+    /// transport. Defaults to exe.dev for files written before this existed.
+    var provider: VMProviderID = .exe
+
+    init(destination: String, title: String, vmName: String?, provider: VMProviderID = .exe) {
+        self.destination = destination
+        self.title = title
+        self.vmName = vmName
+        self.provider = provider
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        destination = try container.decode(String.self, forKey: .destination)
+        title = try container.decode(String.self, forKey: .title)
+        vmName = try container.decodeIfPresent(String.self, forKey: .vmName)
+        // A file written before providers existed has no `provider` key; it's an
+        // exe.dev session.
+        provider = try container.decodeIfPresent(VMProviderID.self, forKey: .provider) ?? .exe
+    }
 }
 
 /// The workspace as written to disk: which tabs were open, and which was

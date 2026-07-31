@@ -6,6 +6,14 @@ struct AppConfigData: Codable {
     /// or supplied via the `EXE_DEV_TOKEN` environment variable.
     var exeToken: String = ""
 
+    /// Which VM provider the app provisions and lists. Defaults to exe.dev so a
+    /// config written before sprites.dev existed upgrades unchanged.
+    var provider: VMProviderID = .exe
+
+    /// sprites.dev HTTPS API bearer token. Kept out of source; entered in
+    /// Settings or supplied via the `SPRITE_TOKEN` environment variable.
+    var spritesToken: String = ""
+
     /// A `rename`-only exe.dev token, handed to VMs that name themselves from
     /// the agent's first prompt (see `AutoName`). Minted on demand rather than
     /// entered, and cached here so one key on the account serves every session.
@@ -92,6 +100,8 @@ struct AppConfigData: Codable {
         }
 
         exeToken = value(.exeToken, defaults.exeToken)
+        provider = value(.provider, defaults.provider)
+        spritesToken = value(.spritesToken, defaults.spritesToken)
         renameToken = value(.renameToken, defaults.renameToken)
         renameTokenMinted = value(.renameTokenMinted, defaults.renameTokenMinted)
         // An empty list would leave nothing to select or edit, so it's treated

@@ -1,30 +1,15 @@
 import Foundation
 
-/// Runs `git` over SSH against an exe.dev VM, so the diff sidebar can inspect
-/// the repos cloned into the VM's home directory.
+/// Runs `git` over the session's transport against a VM, so the diff sidebar
+/// can inspect the repos cloned into the VM's home directory.
 ///
-/// All calls reuse a single multiplexed SSH connection (ControlMaster). The
-/// terminal session opens the connection with the same `ControlPath`, so these
-/// per-command SSH invocations are cheap after the terminal has connected.
+/// All calls reuse a single multiplexed connection when the transport is SSH
+/// (ControlMaster); other transports open a fresh command each call. The
+/// terminal session and these one-shots share the transport, so the work rides
+/// on whatever connection the terminal already holds.
 enum RemoteGit {
-    /// SSH options that enable connection multiplexing for `destination`. Shared
-    /// with `TerminalSession`'s interactive SSH so they use one connection.
-    static func sshControlArgs(for destination: String) -> [String] {
-        [
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ControlMaster=auto",
-            "-o", "ControlPath=\(controlPath(for: destination))",
-            "-o", "ControlPersist=120",
-        ]
-    }
-
-    private static func controlPath(for destination: String) -> String {
-        let safe = destination.replacingOccurrences(of: "/", with: "_")
-        return "\(NSHomeDirectory())/.ssh/cm-\(safe).sock"
-    }
-
     /// Home-relative directories under `$HOME` (depth ≤ 2) that are git repos.
-    static func listRepos(destination: String) async throws -> [String] {
+    static func listRepos(transport: RemoteTransport) async throws -> [String] {
         // Two passes: repos checked out directly in the home dir, plus every
         // worktree under a repo's `.claude/worktrees`. The second is targeted
         // rather than a deeper `-maxdepth`, which would also drag in incidental
@@ -34,16 +19,15 @@ enum RemoteGit {
             + " find . -maxdepth 2 -name .git 2>/dev/null;"
             + " find . -maxdepth 5 -path './*/.claude/worktrees/*/.git' 2>/dev/null;"
             + " } | sed 's|/\\.git$||;s|^\\./||' | grep -v '^\\.$' | sort -u"
-        let out = try await runOrThrow(destination: destination, remoteCommand: command)
+        let out = try await runOrThrow(transport: transport, remoteCommand: command)
         return out.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
     /// Changed files, their line counts, and the repo's log, in one round trip:
     /// the three are concatenated with separators rather than run as separate
-    /// SSH commands, so neither the counts nor the log multiplied the per-poll
-    /// cost.
-    static func status(destination: String, repo: String) async -> GitRepoStatus {
-        guard let out = await run(destination: destination,
+    /// commands, so neither the counts nor the log multiplied the per-poll cost.
+    static func status(transport: RemoteTransport, repo: String) async -> GitRepoStatus {
+        guard let out = await run(transport: transport,
                                   remoteCommand: statusCommand(repo: repo)) else {
             return GitRepoStatus()
         }
@@ -98,8 +82,8 @@ enum RemoteGit {
 
     /// The combined diff of a run of commits: everything between `from`
     /// (exclusive) and `to` (inclusive).
-    static func rangeDiff(destination: String, repo: String, from: String, to: String) async -> String {
-        await run(destination: destination,
+    static func rangeDiff(transport: RemoteTransport, repo: String, from: String, to: String) async -> String {
+        await run(transport: transport,
                   remoteCommand: rangeDiffCommand(repo: repo, from: from, to: to)) ?? ""
     }
 
@@ -113,11 +97,11 @@ enum RemoteGit {
 
     /// The files changed between `from` (exclusive) and `to`, with line counts —
     /// the file list for a commit scope, in one round trip.
-    static func scopeFiles(destination: String, repo: String, from: String, to: String) async
+    static func scopeFiles(transport: RemoteTransport, repo: String, from: String, to: String) async
         -> GitScopeFiles
     {
         guard let out = await run(
-            destination: destination,
+            transport: transport,
             remoteCommand: scopeFilesCommand(repo: repo, from: from, to: to))
         else { return GitScopeFiles() }
         return GitScopeFiles.parse(out)
@@ -137,9 +121,9 @@ enum RemoteGit {
 
     /// The diff of one file within a commit range.
     static func rangeFileDiff(
-        destination: String, repo: String, from: String, to: String, file: String
+        transport: RemoteTransport, repo: String, from: String, to: String, file: String
     ) async -> String {
-        await run(destination: destination,
+        await run(transport: transport,
                   remoteCommand: rangeFileDiffCommand(repo: repo, from: from, to: to, file: file))
             ?? ""
     }
@@ -151,8 +135,8 @@ enum RemoteGit {
     }
 
     /// Unified diff for a single file within a repo.
-    static func fileDiff(destination: String, repo: String, file: String) async -> String {
-        await run(destination: destination,
+    static func fileDiff(transport: RemoteTransport, repo: String, file: String) async -> String {
+        await run(transport: transport,
                   remoteCommand: fileDiffCommand(repo: repo, file: file)) ?? ""
     }
 
@@ -186,8 +170,8 @@ enum RemoteGit {
     /// trick as the local side and `fileDiffCommand`. The trailing `exit 0` is
     /// load-bearing: `--no-index` exits 1 whenever the inputs differ, and a
     /// non-zero exit makes `run` discard the output.
-    static func repoDiff(destination: String, repo: String) async -> String {
-        await run(destination: destination, remoteCommand: repoDiffCommand(repo: repo)) ?? ""
+    static func repoDiff(transport: RemoteTransport, repo: String) async -> String {
+        await run(transport: transport, remoteCommand: repoDiffCommand(repo: repo)) ?? ""
     }
 
     /// The untracked loop reads newline-separated paths, which only a filename
@@ -205,21 +189,21 @@ enum RemoteGit {
     /// Run one remote command, returning stdout on success (exit 0), else nil.
     ///
     /// Not private because this is the app's one way of running something on a
-    /// VM over the terminal's connection; `RemoteVM` asks the VM its name with
-    /// it.
-    static func run(destination: String, remoteCommand: String) async -> String? {
-        try? await runOrThrow(destination: destination, remoteCommand: remoteCommand)
+    /// VM over the terminal's connection; the rename poll asks the VM its name
+    /// with it.
+    static func run(transport: RemoteTransport, remoteCommand: String) async -> String? {
+        try? await runOrThrow(transport: transport, remoteCommand: remoteCommand)
     }
 
     /// Same, but surfacing *why* it failed. The distinction matters: an
     /// unreachable VM and an empty home directory both produce no output, and
     /// showing "no repos" for a connection failure is actively misleading.
-    private static func runOrThrow(destination: String, remoteCommand: String) async throws -> String {
+    private static func runOrThrow(transport: RemoteTransport, remoteCommand: String) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = sshControlArgs(for: destination)
-                + ["-o", "ConnectTimeout=15", "-o", "BatchMode=yes", destination, remoteCommand]
+            let spec = transport.oneshotSpec(command: remoteCommand)
+            process.executableURL = URL(fileURLWithPath: spec.executable)
+            process.arguments = spec.arguments
 
             let stdout = Pipe()
             let stderr = Pipe()
@@ -230,7 +214,7 @@ enum RemoteGit {
                 try process.run()
             } catch {
                 continuation.resume(throwing: RemoteGitError(
-                    message: "Couldn't run ssh: \(error.localizedDescription)"))
+                    message: "Couldn't run \(spec.executable): \(error.localizedDescription)"))
                 return
             }
 
@@ -243,37 +227,11 @@ enum RemoteGit {
                 continuation.resume(returning: String(data: outData, encoding: .utf8) ?? "")
             } else {
                 continuation.resume(throwing: RemoteGitError(
-                    message: summarize(stderr: String(data: errData, encoding: .utf8) ?? "",
-                                       exitCode: process.terminationStatus)))
+                    message: transport.summarize(
+                        stderr: String(data: errData, encoding: .utf8) ?? "",
+                        exit: process.terminationStatus)))
             }
         }
-    }
-
-    /// Condenses ssh's stderr into one line fit for the sidebar. ssh is chatty
-    /// (banners, "Warning: Permanently added…"), so the informative line is
-    /// picked out rather than showing the first one.
-    /// Longest summary kept. The banner only shows a few lines, and this string
-    /// is re-compared on every poll, so an unbounded one isn't worth holding.
-    private static let maxSummaryLength = 300
-
-    static func summarize(stderr: String, exitCode: Int32) -> String {
-        // Split on CR as well as LF: ssh and remote programs emit bare carriage
-        // returns, which would otherwise leave line breaks inside the summary.
-        let lines = stderr
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("Warning: Permanently added") }
-            .map { $0.count > maxSummaryLength ? String($0.prefix(maxSummaryLength)) + "…" : $0 }
-
-        let notable = ["Permission denied", "Could not resolve", "Connection refused",
-                       "Connection timed out", "Connection closed", "No route to host",
-                       "Host key verification failed", "Operation timed out"]
-        if let match = lines.first(where: { line in
-            notable.contains { line.localizedCaseInsensitiveContains($0) }
-        }) {
-            return match
-        }
-        return lines.last ?? "ssh exited with status \(exitCode)"
     }
 }
 

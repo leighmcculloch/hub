@@ -103,6 +103,11 @@ enum GitHubRepos {
             + MessageText.tokenHint(for: status, setting: "GITHUB_TOKEN, or run `gh auth login`")
     }
 
+    /// The GitHub token the app discovered, for providers that clone from
+    /// github.com with it (sprites.dev). exe.dev brokers GitHub access itself,
+    /// so it doesn't need this.
+    static func currentToken() async -> String? { await discoverToken() }
+
     /// The authenticated user, or nil when no token is available.
     static func currentUser() async -> GitHubUser? {
         guard let token = await discoverToken() else { return nil }

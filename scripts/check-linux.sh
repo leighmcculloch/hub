@@ -26,6 +26,7 @@ PORTABLE=(
   Sources/Model/Bootstrap.swift
   Sources/Model/DiffTarget.swift
   Sources/Model/LLMGateway.swift
+  Sources/Model/SpriteLLMProxy.swift
   Sources/Model/MessageText.swift
   Sources/Model/PollBackoff.swift
   Sources/Model/RepoLabel.swift
@@ -33,13 +34,19 @@ PORTABLE=(
   Sources/Model/TerminalOSC.swift
   Sources/Exe/ExeClient.swift
   Sources/Exe/ExeService.swift
-  Sources/Exe/RemoteVM.swift
+  Sources/Providers/ExeProvider.swift
+  Sources/Providers/SSHTransport.swift
+  Sources/Providers/SpritesCLITransport.swift
+  Sources/Providers/SpritesClient.swift
+  Sources/Providers/SpritesProvider.swift
+  Sources/Providers/VMProvider.swift
   Sources/Git/DiffParse.swift
   Sources/Git/GitLog.swift
   Sources/Git/GitScopeFiles.swift
   Sources/Git/GitWorktree.swift
   Sources/Git/RemoteGit.swift
   Sources/GitHub/GitHubRepos.swift
+  Sources/GitHub/RepoCache.swift
   Sources/GitHub/RepoReference.swift
   Sources/Tmux/TmuxClient.swift
   Sources/Tmux/TmuxControl.swift
