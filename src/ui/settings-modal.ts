@@ -7,9 +7,23 @@
  */
 
 import { Color, elideHead, fit, styled } from "../tui/ansi.ts";
-import { type HitMap, panel, type Rect, row as listRow, TextInput } from "../tui/widgets.ts";
+import {
+  dropdown,
+  type HitMap,
+  panel,
+  type Rect,
+  row as listRow,
+  TextInput,
+} from "../tui/widgets.ts";
+import { SelectPopup } from "./select-popup.ts";
 import type { AppConfig } from "../config/app-config.ts";
 import type { EnvVar } from "../config/env-var.ts";
+
+/**
+ * The label column every row shares, so values line up and the caret lands in
+ * the right place. Wide enough for the longest label plus a separating space.
+ */
+const LABEL_WIDTH = 18;
 
 type Row =
   | { kind: "heading"; text: string }
@@ -27,8 +41,17 @@ export class SettingsModal {
   private editing: TextInput | null = null;
   private rows: Row[] = [];
   private hovered: string | null = null;
+  private caret: { x: number; y: number } | null = null;
 
-  constructor(private config: AppConfig) {}
+  constructor(
+    private config: AppConfig,
+    private onOpenPopup: (popup: SelectPopup) => void,
+  ) {}
+
+  /** Where the caret goes this frame, or null when nothing is being edited. */
+  cursorPosition(): { x: number; y: number } | null {
+    return this.caret;
+  }
 
   render(cols: number, rows: number, hits: HitMap): { lines: string[]; rect: Rect } {
     const width = Math.min(74, cols - 4);
@@ -47,6 +70,12 @@ export class SettingsModal {
   private renderRows(width: number, height: number, rect: Rect, hits: HitMap): string[] {
     this.rows = this.buildRows();
     this.selection = Math.min(Math.max(0, this.selection), this.rows.length - 1);
+    // Headings aren't selectable, and the list opens on one, so step off it.
+    while (this.rows[this.selection]?.kind === "heading" && this.selection < this.rows.length - 1) {
+      this.selection += 1;
+    }
+    // Recomputed every frame: only the row being edited carries the caret.
+    this.caret = null;
 
     const listHeight = height - 1;
     if (this.selection < this.offset) this.offset = this.selection;
@@ -78,6 +107,14 @@ export class SettingsModal {
       const id = `settings.row:${this.offset + index}`;
       hits.add({ x: rect.x + 1, y: rect.y + 1 + index, width, height: 1 }, id);
       const active = this.offset + index === this.selection;
+      if (active && this.editing) {
+        // The value column starts after the row's selection bar and its label.
+        const fieldWidth = width - 2 - LABEL_WIDTH;
+        this.caret = {
+          x: rect.x + 2 + LABEL_WIDTH + this.editing.cursorOffset(fieldWidth),
+          y: rect.y + 1 + index,
+        };
+      }
       lines.push(
         fit(
           listRow(this.rowText(entry, width - 2, active), width, {
@@ -125,27 +162,22 @@ export class SettingsModal {
   }
 
   private rowText(entry: Row, width: number, active: boolean): string {
-    const label = (text: string) => styled(text.padEnd(16), { fg: Color.dim });
+    const label = (text: string) => styled(text.padEnd(LABEL_WIDTH), { fg: Color.dim });
     const editing = active && this.editing !== null;
+    const field = width - LABEL_WIDTH;
+    const hovered = this.hovered !== null && active;
 
     switch (entry.kind) {
-      case "provider": {
-        const exe = this.config.data.provider === "exe";
+      case "provider":
         return label("Provider") +
-          styled(" exe.dev ", {
-            fg: exe ? Color.fg : Color.dimmer,
-            bg: exe ? Color.selection : undefined,
-            bold: exe,
-          }) +
-          styled(" sprites.dev ", {
-            fg: exe ? Color.dimmer : Color.fg,
-            bg: exe ? undefined : Color.selection,
-            bold: !exe,
-          });
-      }
+          dropdown(
+            this.config.data.provider === "exe" ? "exe.dev" : "sprites.dev",
+            field,
+            { focused: active, hovered },
+          );
       case "token": {
         const name = entry.provider === "exe" ? "exe.dev token" : "sprites.dev token";
-        if (editing) return label(name) + this.editing!.render(width - 16, true);
+        if (editing) return label(name) + this.editing!.render(field, true);
         const stored = entry.provider === "exe"
           ? this.config.data.exeToken
           : this.config.data.spritesToken;
@@ -155,41 +187,44 @@ export class SettingsModal {
           : effective
           ? styled(`from the environment (${mask(effective)})`, { fg: Color.dimmer })
           : styled("not set", { fg: Color.orange });
-        return label(name) + shown;
+        return label(name) + ` ${shown}`;
       }
       case "environment":
         return label("Session env") +
-          styled(this.config.selectedEnvironment.name || "Untitled", { fg: Color.fg });
+          dropdown(this.config.selectedEnvironment.name || "Untitled", field, {
+            focused: active,
+            hovered,
+          });
       case "startCommand":
-        if (editing) return label("Start command") + this.editing!.render(width - 16, true);
-        return label("Start command") +
+        if (editing) return label("Start command") + this.editing!.render(field, true);
+        return label("Start command") + " " +
           styled(
             elideHead(
               this.config.selectedEnvironment.startCommand || "(a plain shell)",
-              width - 17,
+              field - 1,
             ),
             { fg: Color.fg },
           );
       case "setupScript":
-        if (editing) return label("Setup script") + this.editing!.render(width - 16, true);
-        return label("Setup script") +
+        if (editing) return label("Setup script") + this.editing!.render(field, true);
+        return label("Setup script") + " " +
           styled(
             elideHead(
               oneLine(this.config.selectedEnvironment.setupScript) || "(none)",
-              width - 17,
+              field - 1,
             ),
             { fg: Color.fg },
           );
       case "envVar": {
         const variable = this.config.data.globalEnvironment[entry.index];
-        if (editing) return label(variable.key || "(new)") + this.editing!.render(width - 16, true);
-        return label(variable.key || "(unnamed)") +
-          styled(elideHead(variable.value ? mask(variable.value) : "(empty)", width - 17), {
+        if (editing) return label(variable.key || "(new)") + this.editing!.render(field, true);
+        return label(variable.key || "(unnamed)") + " " +
+          styled(elideHead(variable.value ? mask(variable.value) : "(empty)", field - 1), {
             fg: variable.value ? Color.fg : Color.dimmer,
           });
       }
       case "addEnvVar":
-        if (editing) return label("New variable") + this.editing!.render(width - 16, true);
+        if (editing) return label("New variable") + this.editing!.render(field, true);
         return styled(" + Add variable", { fg: Color.accent });
       case "heading":
         return "";
@@ -225,9 +260,8 @@ export class SettingsModal {
         this.move(1);
         return false;
       case "space":
-        this.toggle();
-        return false;
       case "enter":
+        // A dropdown row opens its list; anything else starts editing.
         this.beginEdit();
         return false;
       case "delete":
@@ -243,10 +277,8 @@ export class SettingsModal {
     if (!id.startsWith("settings.row:")) return false;
     const index = Number(id.slice("settings.row:".length));
     if (index === this.selection) {
-      const entry = this.rows[index];
-      // A second click on a toggle flips it; on a field it starts editing.
-      if (entry?.kind === "provider" || entry?.kind === "environment") this.toggle();
-      else this.beginEdit();
+      // A second click on the row opens its list, or starts editing its value.
+      this.beginEdit();
     } else {
       this.selection = index;
       this.editing = null;
@@ -268,22 +300,46 @@ export class SettingsModal {
     this.editing = null;
   }
 
-  private toggle(): void {
+  /** Open the list behind whichever dropdown the selection is on. */
+  private openList(): void {
     const entry = this.rows[this.selection];
-    if (!entry) return;
-    if (entry.kind === "provider") {
-      this.config.data.provider = this.config.data.provider === "exe" ? "sprites" : "exe";
-      this.config.save();
+    if (entry?.kind === "provider") {
+      this.onOpenPopup(
+        new SelectPopup(
+          "Provider",
+          [
+            { label: "exe.dev", detail: "ssh to <name>.exe.xyz" },
+            { label: "sprites.dev", detail: "the sprite CLI" },
+          ],
+          this.config.data.provider === "exe" ? 0 : 1,
+          (index) => {
+            this.config.data.provider = index === 0 ? "exe" : "sprites";
+            this.config.save();
+          },
+        ),
+      );
       return;
     }
-    if (entry.kind === "environment") {
+    if (entry?.kind === "environment") {
       const environments = this.config.data.environments;
       if (environments.length === 0) return;
       const current = environments.findIndex((one) =>
         one.id === this.config.selectedEnvironment.id
       );
-      this.config.data.selectedEnvironmentID = environments[(current + 1) % environments.length].id;
-      this.config.save();
+      this.onOpenPopup(
+        new SelectPopup(
+          "Session environment",
+          environments.map((environment) => ({
+            label: environment.name || "Untitled",
+            detail: environment.startCommand || "a plain shell",
+          })),
+          Math.max(0, current),
+          (index) => {
+            this.config.data.selectedEnvironmentID = environments[index].id;
+            this.config.save();
+          },
+        ),
+      );
     }
   }
 
@@ -313,7 +369,8 @@ export class SettingsModal {
         this.editing = new TextInput("KEY=value");
         return;
       default:
-        this.toggle();
+        // provider and environment: dropdowns, which open their list instead.
+        this.openList();
     }
   }
 

@@ -62,7 +62,6 @@ export const Color = {
   dim: "244",
   dimmer: "240",
   accent: "39",
-  accentDim: "24",
   green: "35",
   red: "167",
   orange: "179",
@@ -71,7 +70,14 @@ export const Color = {
   blue: "75",
   panel: "235",
   panelAlt: "236",
+  /** A selected row in the pane that has the keyboard. */
   selection: "24",
+  /** The same row in a pane that doesn't — dimmer, so focus is legible. */
+  selectionDim: "23",
+  /** A selected row under the pointer. Distinct from both of the above, or
+   * hovering something already selected would look like nothing happened. */
+  selectionHover: "25",
+  /** Anything interactive under the pointer. */
   hover: "237",
   border: "238",
   black: "232",

@@ -177,8 +177,10 @@ export function row(
   width: number,
   state: { selected?: boolean; hovered?: boolean; focused?: boolean },
 ): string {
+  // Hover wins over selection, so pointing at the row you are already on still
+  // shows that it responds.
   const background = state.selected
-    ? (state.focused ? Color.selection : Color.accentDim)
+    ? (state.hovered ? Color.selectionHover : state.focused ? Color.selection : Color.selectionDim)
     : state.hovered
     ? Color.hover
     : undefined;
@@ -188,6 +190,62 @@ export function row(
   return fit(`${bar}${fit(content, Math.max(0, width - 1), { bg: background })}`, width, {
     bg: background,
   });
+}
+
+/**
+ * A clickable chip or button.
+ *
+ * Every interactive element that isn't a list row goes through this, so hover
+ * looks the same everywhere: the pointer landing on something that responds
+ * always tints it, whether it is a tab, a divider handle or a dropdown.
+ */
+export function control(
+  label: string,
+  state: { focused?: boolean; hovered?: boolean; active?: boolean; danger?: boolean } = {},
+): string {
+  if (state.danger) {
+    return styled(label, {
+      fg: Color.black,
+      bg: state.hovered ? Color.orange : Color.red,
+      bold: true,
+    });
+  }
+  if (state.focused) {
+    return styled(label, { fg: Color.black, bg: Color.accent, bold: true });
+  }
+  if (state.active) {
+    return styled(label, {
+      fg: Color.fg,
+      bg: state.hovered ? Color.selectionHover : Color.selection,
+      bold: true,
+    });
+  }
+  return styled(label, {
+    fg: state.hovered ? Color.fg : Color.dim,
+    bg: state.hovered ? Color.hover : undefined,
+  });
+}
+
+/**
+ * A dropdown's closed state: the current value plus the marker that says it
+ * opens a list. Tinted on hover and on focus like every other control.
+ */
+export function dropdown(
+  value: string,
+  width: number,
+  state: { focused?: boolean; hovered?: boolean } = {},
+): string {
+  const background = state.focused ? Color.selection : state.hovered ? Color.hover : Color.panelAlt;
+  const inner = Math.max(1, width - 3);
+  return fit(
+    ` ${styled(elideHead(value, inner), { fg: Color.fg, bg: background })}` +
+      styled(" ▾", {
+        fg: state.focused || state.hovered ? Color.accent : Color.dim,
+        bg: background,
+      }),
+    width,
+    { bg: background },
+  );
 }
 
 /** Centred placeholder text for an empty pane. */
@@ -336,34 +394,45 @@ export class TextInput {
     this.cursor += text.length;
   }
 
+  /** The leading space every field is drawn with, so the cursor lines up. */
+  private static readonly GUTTER = 1;
+
+  /** How wide the editable window is inside a field of `width` cells. */
+  private static innerWidth(width: number): number {
+    return Math.max(1, width - 2);
+  }
+
   /**
-   * The field as one line, with the cursor drawn in reverse video when focused
-   * and the value scrolled so the cursor is always visible.
+   * Where the caret sits, as a cell offset from the field's left edge.
+   *
+   * The renderer places the terminal's own cursor here, so a focused field
+   * carries a real blinking caret rather than a painted stand-in — including
+   * when the field is empty and showing its hint.
    */
-  render(width: number, focused: boolean, hint = ""): string {
-    const inner = Math.max(1, width - 2);
-    const background = focused ? Color.panelAlt : Color.panel;
+  cursorOffset(width: number): number {
+    const inner = TextInput.innerWidth(width);
+    const start = Math.max(0, this.cursor - inner + 1);
+    return TextInput.GUTTER + (this.cursor - start);
+  }
+
+  /**
+   * The field as one line, scrolled so the caret is always inside it.
+   *
+   * A focused field is tinted and keeps its hint visible when empty; the caret
+   * itself is the terminal's, positioned by `cursorOffset`.
+   */
+  render(width: number, focused: boolean, hint = "", hovered = false): string {
+    const inner = TextInput.innerWidth(width);
+    const background = focused ? Color.panelAlt : hovered ? Color.hover : Color.panel;
     if (!this.value && hint) {
       return fit(
         ` ${styled(elideHead(hint, inner), { fg: Color.dimmer, bg: background })}`,
         width,
-        {
-          bg: background,
-        },
+        { bg: background },
       );
     }
     const start = Math.max(0, this.cursor - inner + 1);
     const window = this.value.slice(start, start + inner);
-    const offset = this.cursor - start;
-    if (!focused) {
-      return fit(` ${styled(window, { fg: Color.fg, bg: background })}`, width, { bg: background });
-    }
-    const before = window.slice(0, offset);
-    const at = window.slice(offset, offset + 1) || " ";
-    const after = window.slice(offset + 1);
-    const body = styled(before, { fg: Color.fg, bg: background }) +
-      styled(at, { fg: Color.black, bg: Color.accent }) +
-      styled(after, { fg: Color.fg, bg: background });
-    return fit(` ${body}`, width, { bg: background });
+    return fit(` ${styled(window, { fg: Color.fg, bg: background })}`, width, { bg: background });
   }
 }

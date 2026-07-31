@@ -75,11 +75,21 @@ export class SessionSidebar {
 
     lines.push(rule(width));
     hits.add({ x: rect.x, y: rect.y + rect.height - 1, width, height: 1 }, "sidebar.new");
+    const newHovered = this.hovered === "sidebar.new";
     lines.push(
       fit(
-        ` ${styled("+ New Session", { fg: Color.accent, bold: true })}` +
-          `${" ".repeat(Math.max(1, width - 20))}${styled("Alt+T", { fg: Color.dimmer })}`,
+        ` ${
+          styled("+ New Session", {
+            fg: Color.accent,
+            bold: true,
+            bg: newHovered ? Color.hover : undefined,
+          })
+        }` +
+          `${" ".repeat(Math.max(1, width - 20))}${
+            styled("Alt+T", { fg: Color.dimmer, bg: newHovered ? Color.hover : undefined })
+          }`,
         width,
+        { bg: newHovered ? Color.hover : undefined },
       ),
     );
     return lines.slice(0, rect.height);

@@ -8,7 +8,7 @@
  */
 
 import { Color, fit, styled } from "../tui/ansi.ts";
-import { type HitMap, placeholder, type Rect, rule, wrap } from "../tui/widgets.ts";
+import { control, type HitMap, placeholder, type Rect, rule, wrap } from "../tui/widgets.ts";
 import { tabDisplayName, type TerminalSession } from "../model/terminal-session.ts";
 
 export interface TerminalGeometry {
@@ -105,8 +105,10 @@ export class TerminalPane {
         : chip;
       x += label.length;
     }
-    const trailing = ` ${styled("+", { fg: Color.dimmer })} `;
     hits.add({ x, y: rect.y, width: 3, height: 1 }, "terminal.newTab");
+    const trailing = control(" + ", {
+      hovered: this.hovered === "terminal.newTab",
+    });
     return fit(bar + trailing, width);
   }
 

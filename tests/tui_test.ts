@@ -10,7 +10,14 @@ import {
   stripAnsi,
   truncate,
 } from "../src/tui/ansi.ts";
-import { scrollToShow, TextInput, wrap } from "../src/tui/widgets.ts";
+import {
+  control,
+  dropdown,
+  row as listRow,
+  scrollToShow,
+  TextInput,
+  wrap,
+} from "../src/tui/widgets.ts";
 import { InputDecoder, type KeyEvent, type MouseEvent } from "../src/tui/input.ts";
 
 const RED = "\x1b[31m";
@@ -192,3 +199,42 @@ function names(events: ReturnType<InputDecoder["feed"]>): string[] {
     event.name
   );
 }
+
+Deno.test("a focused field keeps its hint, so the caret has a field to sit in", () => {
+  const input = new TextInput("");
+  assertEquals(stripAnsi(input.render(20, true, "optional")).trim(), "optional");
+  assertEquals(displayWidth(input.render(20, true, "optional")), 20);
+});
+
+Deno.test("the caret offset follows the cursor through the field", () => {
+  const input = new TextInput("abc");
+  assertEquals(input.cursorOffset(20), 4); // one gutter cell, then three typed
+  input.handle({ name: "home", ctrl: false, alt: false });
+  assertEquals(input.cursorOffset(20), 1);
+  input.handle({ name: "right", ctrl: false, alt: false });
+  assertEquals(input.cursorOffset(20), 2);
+});
+
+Deno.test("a value longer than the field scrolls, keeping the caret inside it", () => {
+  const input = new TextInput("x".repeat(50));
+  const offset = input.cursorOffset(10);
+  assert(offset >= 1 && offset < 10, `caret at ${offset} is outside a 10-cell field`);
+});
+
+Deno.test("hover tints every kind of control differently from resting", () => {
+  assert(control(" Go ", { hovered: true }) !== control(" Go ", {}));
+  assert(control(" Go ", { active: true, hovered: true }) !== control(" Go ", { active: true }));
+  assert(control(" Go ", { danger: true, hovered: true }) !== control(" Go ", { danger: true }));
+  assert(dropdown("v", 12, { hovered: true }) !== dropdown("v", 12, {}));
+});
+
+Deno.test("a selected row still shows hover, and unfocused selection is dimmer", () => {
+  const selected = listRow("a", 10, { selected: true, focused: true });
+  assert(listRow("a", 10, { selected: true, focused: true, hovered: true }) !== selected);
+  assert(listRow("a", 10, { selected: true, focused: false }) !== selected);
+  assert(listRow("a", 10, { hovered: true }) !== listRow("a", 10, {}));
+});
+
+Deno.test("a dropdown says it opens a list", () => {
+  assertEquals(stripAnsi(dropdown("exe.dev", 20, {})).includes("▾"), true);
+});

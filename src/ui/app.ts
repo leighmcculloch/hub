@@ -20,6 +20,8 @@ import { DiffSidebar } from "./diff-sidebar.ts";
 import { NewSessionModal } from "./new-session-modal.ts";
 import { SettingsModal } from "./settings-modal.ts";
 import { ConfirmModal, HelpModal } from "./overlays.ts";
+import { SelectPopup } from "./select-popup.ts";
+import { isWorktree, shortRepoLabel } from "../model/repo-label.ts";
 
 type Focus = "sessions" | "terminal" | "diff";
 
@@ -44,6 +46,10 @@ export class App {
   private settings: SettingsModal | null = null;
   private confirm: ConfirmModal | null = null;
   private help = false;
+  /** The list a dropdown opened; drawn over whatever opened it. */
+  private popup: SelectPopup | null = null;
+  /** The hit region under the pointer, so anything clickable can tint. */
+  private hovered: string | null = null;
 
   private focus: Focus = "terminal";
   private sidebarWidth = 26;
@@ -176,9 +182,12 @@ export class App {
     }
     composed.push(this.statusBar(cols));
 
-    const overlay = this.renderOverlay(cols, rows);
-    const cursor = this.cursor(overlay !== null);
-    this.screen.render(overlay ? this.applyOverlay(composed, overlay, cols) : composed, cursor);
+    const overlays = this.renderOverlay(cols, rows);
+    const cursor = this.cursor(overlays.length > 0);
+    this.screen.render(
+      overlays.length > 0 ? this.applyOverlays(composed, overlays, cols) : composed,
+      cursor,
+    );
   }
 
   /** Where the three panes go, given the terminal's size and what's shown. */
@@ -213,9 +222,15 @@ export class App {
     return { left, middle, right };
   }
 
+  /**
+   * The draggable rule between two panes. Tinted under the pointer so it reads
+   * as a handle rather than a border.
+   */
   private divider(x: number, y: number, which: "left" | "right"): string {
-    this.hits.add({ x, y, width: 1, height: 1 }, `divider.${which}`);
-    return styled("│", { fg: Color.border });
+    const id = `divider.${which}`;
+    this.hits.add({ x, y, width: 1, height: 1 }, id);
+    const active = this.hovered === id || this.dragging === which;
+    return styled(active ? "┃" : "│", { fg: active ? Color.accent : Color.border });
   }
 
   private statusBar(cols: number): string {
@@ -233,33 +248,50 @@ export class App {
     return fit(`${left}${middle}${" ".repeat(gap)}${right}`, cols, { bg: Color.panel });
   }
 
-  private renderOverlay(cols: number, rows: number): { lines: string[]; rect: Rect } | null {
-    if (this.confirm) return this.confirm.render(cols, rows, this.hits);
-    if (this.help) return new HelpModal().render(cols, rows, this.hits);
-    if (this.settings) return this.settings.render(cols, rows, this.hits);
-    if (this.newSession) return this.newSession.render(cols, rows, this.hits);
-    return null;
+  /**
+   * Overlays, innermost last: a dropdown opened from a modal is drawn over it,
+   * and each layer is registered after the one below so it takes the clicks.
+   */
+  private renderOverlay(cols: number, rows: number): Array<{ lines: string[]; rect: Rect }> {
+    const layers: Array<{ lines: string[]; rect: Rect }> = [];
+    if (this.settings) layers.push(this.settings.render(cols, rows, this.hits));
+    if (this.newSession) layers.push(this.newSession.render(cols, rows, this.hits));
+    if (this.help) layers.push(new HelpModal().render(cols, rows, this.hits));
+    if (this.confirm) layers.push(this.confirm.render(cols, rows, this.hits, this.hovered));
+    if (this.popup) layers.push(this.popup.render(cols, rows, this.hits));
+    return layers;
   }
 
-  private applyOverlay(
+  private applyOverlays(
     rows: string[],
-    overlay: { lines: string[]; rect: Rect },
+    overlays: Array<{ lines: string[]; rect: Rect }>,
     cols: number,
   ): string[] {
     const composed = [...rows];
-    for (let index = 0; index < overlay.lines.length; index += 1) {
-      const y = overlay.rect.y + index;
-      if (y < 0 || y >= composed.length) continue;
-      composed[y] = overlayRow(composed[y], overlay.rect.x, overlay.lines[index], cols);
+    for (const overlay of overlays) {
+      for (let index = 0; index < overlay.lines.length; index += 1) {
+        const y = overlay.rect.y + index;
+        if (y < 0 || y >= composed.length) continue;
+        composed[y] = overlayRow(composed[y], overlay.rect.x, overlay.lines[index], cols);
+      }
     }
     return composed;
   }
 
   /**
-   * The real cursor sits where tmux says the pane's cursor is, but only when
-   * the terminal has focus — otherwise it would look like typing goes there.
+   * Where the caret goes: the focused text field of whatever overlay is on top,
+   * else the pane's own cursor as tmux reports it.
+   *
+   * A field that has the keyboard always carries the terminal's real caret, so
+   * it blinks where the next character will land — including an empty field
+   * that is still showing its hint.
    */
   private cursor(modalOpen: boolean): { x: number; y: number; visible: boolean } {
+    const field = this.popup?.cursorPosition() ??
+      (this.confirm || this.help ? null : this.settings?.cursorPosition()) ??
+      (this.confirm || this.help || this.settings ? null : this.newSession?.cursorPosition());
+    if (field) return { x: field.x, y: field.y, visible: true };
+
     const session = this.workspace.selectedSession;
     const tab = session?.selectedTab;
     if (modalOpen || this.focus !== "terminal" || !tab || !tab.cursor.visible) {
@@ -326,6 +358,10 @@ export class App {
   private async handleKey(event: KeyEvent): Promise<void> {
     // Overlays take the keyboard whole, so a modal's text field can hold
     // characters that would otherwise be shortcuts.
+    if (this.popup) {
+      if (this.popup.key(event)) this.popup = null;
+      return;
+    }
     if (this.confirm) {
       if (this.confirm.key(event.name)) this.confirm = null;
       return;
@@ -409,7 +445,7 @@ export class App {
         this.cycleFocus(1);
         return true;
       case ",":
-        this.settings = new SettingsModal(this.config);
+        this.settings = new SettingsModal(this.config, (popup) => this.openPopup(popup));
         return true;
       case "q":
         this.quit();
@@ -463,6 +499,27 @@ export class App {
     }
   }
 
+  /**
+   * Record what the pointer is over and tell every pane, so hover tinting is
+   * decided in one place rather than each component tracking the mouse.
+   */
+  private setHover(id: string | null): void {
+    if (this.hovered === id) return;
+    this.hovered = id;
+    this.sessions.setHover(id);
+    this.diff.setHover(id);
+    this.terminal.setHover(id);
+    this.newSession?.setHover(id);
+    this.settings?.setHover(id);
+    this.popup?.setHover(id);
+  }
+
+  /** Open a dropdown's list over whatever is on screen. */
+  private openPopup(popup: SelectPopup): void {
+    this.popup = popup;
+    this.requestRender();
+  }
+
   private cycleFocus(step: number): void {
     const order: Focus[] = ["sessions", "terminal", "diff"];
     const available = order.filter((one) =>
@@ -482,12 +539,7 @@ export class App {
         this.applyDrag(event);
         return;
       }
-      // Hover highlighting, so rows respond before they're clicked.
-      this.sessions.setHover(region?.id ?? null);
-      this.diff.setHover(region?.id ?? null);
-      this.terminal.setHover(region?.id ?? null);
-      this.newSession?.setHover(region?.id ?? null);
-      this.settings?.setHover(region?.id ?? null);
+      this.setHover(region?.id ?? null);
       return;
     }
 
@@ -505,11 +557,15 @@ export class App {
 
     // A modal swallows clicks outside it, so the thing behind can't be driven
     // while something is asking a question.
+    if (this.popup) {
+      if (region?.id.startsWith("popup.") && this.popup.click(region.id)) this.popup = null;
+      return;
+    }
     if (this.confirm) {
-      if (region?.id === "confirm.row") {
-        // The left half is the destructive button, the right half cancels.
-        const inConfirm = event.x - region.rect.x < region.rect.width / 3;
-        if (inConfirm) this.confirm.key("y");
+      if (region?.id === "confirm.accept") {
+        this.confirm.key("y");
+        this.confirm = null;
+      } else if (region?.id === "confirm.cancel") {
         this.confirm = null;
       }
       return;
@@ -572,8 +628,31 @@ export class App {
 
     if (id.startsWith("diff.")) {
       this.focus = "diff";
+      if (id === "diff.repo") {
+        this.openRepoPopup();
+        return;
+      }
       await this.diff.click(id, event.shift);
     }
+  }
+
+  /** The repo filter's list: every repo on the VM, plus "All repos". */
+  private openRepoPopup(): void {
+    const repos = this.diff.repos;
+    if (repos.length === 0) return;
+    const options = [
+      { label: "All repos", detail: `${repos.length} in ~` },
+      ...repos.map((repo) => ({
+        label: shortRepoLabel(repo),
+        detail: isWorktree(repo) ? "worktree" : undefined,
+      })),
+    ];
+    const current = this.diff.selectedRepo === null ? 0 : repos.indexOf(this.diff.selectedRepo) + 1;
+    this.openPopup(
+      new SelectPopup("Repository", options, Math.max(0, current), (index) => {
+        this.diff.selectRepo(index === 0 ? null : repos[index - 1]);
+      }),
+    );
   }
 
   private applyDrag(event: MouseEvent): void {
@@ -600,6 +679,10 @@ export class App {
   }
 
   private wheel(id: string | null, delta: number): void {
+    if (this.popup) {
+      this.popup.scroll(delta);
+      return;
+    }
     if (this.newSession) {
       this.newSession.scroll(delta);
       return;
@@ -689,6 +772,7 @@ export class App {
       () => {
         this.newSession = null;
       },
+      (popup) => this.openPopup(popup),
     );
     modal.load();
     this.newSession = modal;

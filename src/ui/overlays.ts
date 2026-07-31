@@ -3,7 +3,7 @@
  */
 
 import { center, Color, fit, styled } from "../tui/ansi.ts";
-import { type HitMap, panel, type Rect, wrap } from "../tui/widgets.ts";
+import { control, type HitMap, panel, type Rect, wrap } from "../tui/widgets.ts";
 
 /**
  * Deleting a VM destroys its disk, so it is confirmed. Held as its own overlay
@@ -18,7 +18,12 @@ export class ConfirmModal {
     readonly onConfirm: () => void,
   ) {}
 
-  render(cols: number, rows: number, hits: HitMap): { lines: string[]; rect: Rect } {
+  render(
+    cols: number,
+    rows: number,
+    hits: HitMap,
+    hovered: string | null = null,
+  ): { lines: string[]; rect: Rect } {
     const width = Math.min(60, cols - 4);
     const body = wrap(this.detail, width - 4);
     const height = body.length + 6;
@@ -37,23 +42,26 @@ export class ConfirmModal {
     }
     lines.push(fit("", inner, { bg: Color.panel }));
 
-    const confirm = styled(` ${this.confirmLabel} `, {
-      fg: Color.black,
-      bg: Color.red,
-      bold: true,
-    });
-    const cancel = styled(" Cancel ", { fg: Color.fg, bg: Color.panelAlt });
+    // Each button gets its own region, so the pointer can tell them apart and
+    // hover shows which one a click would land on.
+    const acceptLabel = ` ${this.confirmLabel} `;
+    const cancelLabel = " Cancel ";
+    const buttonRow = rect.y + 1 + lines.length;
     hits.add(
-      { x: rect.x + 1, y: rect.y + 1 + lines.length, width: inner, height: 1 },
-      "confirm.row",
+      { x: rect.x + 2, y: buttonRow, width: acceptLabel.length, height: 1 },
+      "confirm.accept",
+    );
+    hits.add(
+      { x: rect.x + 4 + acceptLabel.length, y: buttonRow, width: cancelLabel.length, height: 1 },
+      "confirm.cancel",
     );
     lines.push(
       fit(
-        ` ${confirm}  ${cancel}   ${styled("y / Esc", { fg: Color.dimmer, bg: Color.panel })}`,
+        ` ${control(acceptLabel, { danger: true, hovered: hovered === "confirm.accept" })}  ` +
+          `${control(cancelLabel, { active: true, hovered: hovered === "confirm.cancel" })}   ` +
+          styled("y / Esc", { fg: Color.dimmer, bg: Color.panel }),
         inner,
-        {
-          bg: Color.panel,
-        },
+        { bg: Color.panel },
       ),
     );
 

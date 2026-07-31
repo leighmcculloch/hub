@@ -87,6 +87,15 @@ reach the program running in the terminal untouched.
 
 The mouse works throughout: click to select, drag the dividers between panes and
 the splits inside the diff sidebar, and use the wheel to scroll any list.
+Anything that responds to a click tints under the pointer, so it is always
+visible what is interactive and what is just text.
+
+Every field marked `▾` is a dropdown. Clicking it — or pressing Enter on it —
+opens the full list rather than stepping to the next value, so you can see what
+the options are; type to filter it, which is what makes the model catalogue
+usable. The arrow keys still step through the values without opening the list.
+A text field that has the keyboard shows a caret where the next character will
+land.
 
 There is no built-in browser. `Alt+O` hands the current VM's URL to your system
 browser instead, which is the one thing a terminal can't do for itself.

@@ -4,11 +4,21 @@
  * VM that already exists on the account.
  */
 
-import { Color, elideHead, elideMiddle, fit, styled } from "../tui/ansi.ts";
-import { type HitMap, panel, type Rect, row as listRow, TextInput, wrap } from "../tui/widgets.ts";
+import { Color, elideMiddle, fit, styled } from "../tui/ansi.ts";
+import {
+  control,
+  dropdown,
+  type HitMap,
+  panel,
+  type Rect,
+  row as listRow,
+  TextInput,
+  wrap,
+} from "../tui/widgets.ts";
 import { vmNameFrom } from "../model/bootstrap.ts";
 import { modelLabel } from "../model/llm-gateway.ts";
 import { normalizeRepo } from "../github/repo-reference.ts";
+import { SelectPopup } from "./select-popup.ts";
 import type { SessionProvisioner } from "../model/session-provisioner.ts";
 import type { AppConfig } from "../config/app-config.ts";
 import type { Workspace } from "../model/workspace.ts";
@@ -35,12 +45,14 @@ export class NewSessionModal {
   private repoOffset = 0;
   private vmIndex = 0;
   private hovered: string | null = null;
+  private caret: { x: number; y: number } | null = null;
 
   constructor(
     private workspace: Workspace,
     private config: AppConfig,
     readonly provisioner: SessionProvisioner,
     private onClose: () => void,
+    private onOpenPopup: (popup: SelectPopup) => void,
   ) {}
 
   /** Kick off the loads the picker needs. Safe to call once, on open. */
@@ -97,6 +109,8 @@ export class NewSessionModal {
 
   private renderPicker(width: number, height: number, rect: Rect, hits: HitMap): string[] {
     const lines: string[] = [];
+    // Recomputed every frame: the focused field, and so the caret, moves.
+    this.caret = null;
     const originX = rect.x + 1;
     const originY = rect.y + 1;
     const put = (text: string) => lines.push(fit(text, width, { bg: Color.panel }));
@@ -104,11 +118,22 @@ export class NewSessionModal {
       hits.add({ x: originX, y: originY + lines.length, width, height: height_ }, id);
     };
 
-    // Mode switch.
-    register("new.mode");
+    // Mode switch. Both chips live on one line, so each claims its own span of
+    // it rather than the whole row.
+    hits.add({ x: originX + 1, y: originY + lines.length, width: 11, height: 1 }, "new.create");
+    hits.add({ x: originX + 14, y: originY + lines.length, width: 11, height: 1 }, "new.reopen");
     put(
-      ` ${this.chip("Create VM", this.mode === "create")}  ` +
-        `${this.chip("Reopen VM", this.mode === "reopen")}`,
+      ` ${
+        control(" Create VM ", {
+          active: this.mode === "create",
+          hovered: this.hovered === "new.create",
+        })
+      }  ${
+        control(" Reopen VM ", {
+          active: this.mode === "reopen",
+          hovered: this.hovered === "new.reopen",
+        })
+      }`,
     );
     put("");
 
@@ -119,7 +144,17 @@ export class NewSessionModal {
     // Name.
     put(` ${styled("Session name", { fg: Color.dim, bg: Color.panel })}`);
     register("new.name");
-    put(` ${this.nameInput.render(width - 2, this.field === "name", "optional")}`);
+    this.placeCaret("name", this.nameInput, originX + 1, originY + lines.length, width - 2);
+    put(
+      ` ${
+        this.nameInput.render(
+          width - 2,
+          this.field === "name",
+          "optional",
+          this.hovered === "new.name",
+        )
+      }`,
+    );
     const typed = this.nameInput.value.trim();
     const preview = typed
       ? `VM name: ${vmNameFrom(typed)}`
@@ -127,22 +162,24 @@ export class NewSessionModal {
     put(` ${styled(elideMiddle(preview, width - 2), { fg: Color.dimmer, bg: Color.panel })}`);
     put("");
 
-    // Environment and model, one line each so a narrow terminal still reads.
+    // Environment and model: dropdowns, so their whole lists are one click away.
     const environment = this.config.selectedEnvironment;
     register("new.environment");
     put(
-      ` ${styled("Environment", { fg: Color.dim, bg: Color.panel })}  ` +
-        this.value(environment.name || "Untitled", this.field === "environment", width - 16),
+      ` ${styled("Environment", { fg: Color.dim, bg: Color.panel })} ` +
+        dropdown(environment.name || "Untitled", width - 14, {
+          focused: this.field === "environment",
+          hovered: this.hovered === "new.environment",
+        }),
     );
     register("new.model");
     const model = this.config.data.model;
     put(
-      ` ${styled("Model      ", { fg: Color.dim, bg: Color.panel })}  ` +
-        this.value(
-          model ? modelLabel(model) : "Custom — leave the VM's own setup",
-          this.field === "model",
-          width - 16,
-        ),
+      ` ${styled("Model      ", { fg: Color.dim, bg: Color.panel })} ` +
+        dropdown(model ? modelLabel(model) : "Custom — the VM's own setup", width - 14, {
+          focused: this.field === "model",
+          hovered: this.hovered === "new.model",
+        }),
     );
     if (this.provisioner.modelsError) {
       put(
@@ -177,7 +214,17 @@ export class NewSessionModal {
         ),
     );
     register("new.search");
-    put(` ${this.searchInput.render(width - 2, this.field === "search", "Filter repositories…")}`);
+    this.placeCaret("search", this.searchInput, originX + 1, originY + lines.length, width - 2);
+    put(
+      ` ${
+        this.searchInput.render(
+          width - 2,
+          this.field === "search",
+          "Filter repositories…",
+          this.hovered === "new.search",
+        )
+      }`,
+    );
 
     const listTop = lines.length;
     const listHeight = Math.max(3, height - listTop - 6);
@@ -226,7 +273,17 @@ export class NewSessionModal {
 
     // Manual entry and the action row.
     register("new.manual");
-    put(` ${this.manualInput.render(width - 2, this.field === "manual", "owner/repo or a URL")}`);
+    this.placeCaret("manual", this.manualInput, originX + 1, originY + lines.length, width - 2);
+    put(
+      ` ${
+        this.manualInput.render(
+          width - 2,
+          this.field === "manual",
+          "owner/repo or a URL",
+          this.hovered === "new.manual",
+        )
+      }`,
+    );
     if (this.manualInput.value.trim() && !normalizeRepo(this.manualInput.value)) {
       put(
         ` ${
@@ -237,9 +294,15 @@ export class NewSessionModal {
         }`,
       );
     }
-    register("new.submit");
+    hits.add({ x: originX + 1, y: originY + lines.length, width: 16, height: 1 }, "new.submit");
     put(
-      ` ${this.button("Create Session", this.field === "submit")}  ` +
+      ` ${
+        control(" Create Session ", {
+          focused: this.field === "submit",
+          hovered: this.hovered === "new.submit",
+          active: true,
+        })
+      }  ` +
         styled("Esc cancels · Tab moves · Space toggles", { fg: Color.dimmer, bg: Color.panel }),
     );
 
@@ -305,27 +368,18 @@ export class NewSessionModal {
     return lines.slice(0, height);
   }
 
-  private chip(label: string, active: boolean): string {
-    return styled(` ${label} `, {
-      fg: active ? Color.fg : Color.dim,
-      bg: active ? Color.selection : Color.panelAlt,
-      bold: active,
-    });
+  /**
+   * Note where the caret belongs while laying a field out, so the app can put
+   * the terminal's own cursor there once the frame is composed.
+   */
+  private placeCaret(field: Field, input: TextInput, x: number, y: number, width: number): void {
+    if (this.field !== field) return;
+    this.caret = { x: x + input.cursorOffset(width), y };
   }
 
-  private button(label: string, focused: boolean): string {
-    return styled(` ${label} `, {
-      fg: Color.black,
-      bg: focused ? Color.accent : Color.dim,
-      bold: true,
-    });
-  }
-
-  private value(text: string, focused: boolean, width: number): string {
-    return styled(elideHead(text, Math.max(4, width)), {
-      fg: focused ? Color.fg : Color.dim,
-      bg: focused ? Color.selection : Color.panel,
-    });
+  /** Where the caret goes this frame, or null when no field has the keyboard. */
+  cursorPosition(): { x: number; y: number } | null {
+    return this.caret;
   }
 
   // MARK: - Interaction
@@ -402,14 +456,17 @@ export class NewSessionModal {
         this.provisioner.manualRepo = this.manualInput.value;
         return false;
       case "environment":
-        if (event.name === "left") this.cycleEnvironment(-1);
-        else if (event.name === "right" || event.name === "space") this.cycleEnvironment(1);
-        else if (event.name === "enter") this.field = "model";
+        // Enter and Space open the list; the arrows step without opening it.
+        if (event.name === "enter" || event.name === "space" || event.name === "down") {
+          this.openEnvironmentPopup();
+        } else if (event.name === "left") this.stepEnvironment(-1);
+        else if (event.name === "right") this.stepEnvironment(1);
         return false;
       case "model":
-        if (event.name === "left") this.cycleModel(-1);
-        else if (event.name === "right" || event.name === "space") this.cycleModel(1);
-        else if (event.name === "enter") this.field = "search";
+        if (event.name === "enter" || event.name === "space" || event.name === "down") {
+          this.openModelPopup();
+        } else if (event.name === "left") this.stepModel(-1);
+        else if (event.name === "right") this.stepModel(1);
         return false;
       case "repos": {
         const repos = this.provisioner.filteredRepos;
@@ -430,8 +487,8 @@ export class NewSessionModal {
 
   /** Returns true when the modal should close. */
   async click(id: string, _shift: boolean): Promise<boolean> {
-    if (id === "new.mode") {
-      this.mode = this.mode === "create" ? "reopen" : "create";
+    if (id === "new.create" || id === "new.reopen") {
+      this.mode = id === "new.create" ? "create" : "reopen";
       return false;
     }
     if (id === "new.name") {
@@ -448,12 +505,12 @@ export class NewSessionModal {
     }
     if (id === "new.environment") {
       this.field = "environment";
-      this.cycleEnvironment(1);
+      this.openEnvironmentPopup();
       return false;
     }
     if (id === "new.model") {
       this.field = "model";
-      this.cycleModel(1);
+      this.openModelPopup();
       return false;
     }
     if (id === "new.submit") return await this.submit();
@@ -488,7 +545,8 @@ export class NewSessionModal {
     this.repoOffset = Math.max(0, this.repoOffset + delta);
   }
 
-  private cycleEnvironment(step: number): void {
+  /** Step the environment without opening its list, for the arrow keys. */
+  private stepEnvironment(step: number): void {
     const environments = this.config.data.environments;
     if (environments.length === 0) return;
     const current = environments.findIndex((one) => one.id === this.config.selectedEnvironment.id);
@@ -497,7 +555,46 @@ export class NewSessionModal {
     this.config.save();
   }
 
-  private cycleModel(step: number): void {
+  /** Step the model without opening its list. */
+  private stepModel(step: number): void {
+    const options = [null, ...this.provisioner.modelOptions];
+    const selected = this.config.data.model;
+    const current = options.findIndex((option) =>
+      option === null
+        ? selected === null
+        : selected !== null && option.provider === selected.provider &&
+          option.model === selected.model
+    );
+    this.config.data.model = options[(current + step + options.length) % options.length];
+    this.config.save();
+  }
+
+  /** The environment list, as a dropdown rather than a value to step through. */
+  private openEnvironmentPopup(): void {
+    const environments = this.config.data.environments;
+    if (environments.length === 0) return;
+    const current = environments.findIndex((one) => one.id === this.config.selectedEnvironment.id);
+    this.onOpenPopup(
+      new SelectPopup(
+        "Environment",
+        environments.map((environment) => ({
+          label: environment.name || "Untitled",
+          detail: environment.startCommand || "a plain shell",
+        })),
+        Math.max(0, current),
+        (index) => {
+          this.config.data.selectedEnvironmentID = environments[index].id;
+          this.config.save();
+        },
+      ),
+    );
+  }
+
+  /**
+   * The model list. The catalogue runs to hundreds of entries, which is exactly
+   * why this is a filterable popup and not a value you arrow through.
+   */
+  private openModelPopup(): void {
     // null — "Custom" — is one of the options, hence the leading slot.
     const options = [null, ...this.provisioner.modelOptions];
     const selected = this.config.data.model;
@@ -507,9 +604,21 @@ export class NewSessionModal {
         : selected !== null && option.provider === selected.provider &&
           option.model === selected.model
     );
-    const next = (current + step + options.length) % options.length;
-    this.config.data.model = options[next];
-    this.config.save();
+    this.onOpenPopup(
+      new SelectPopup(
+        "Model",
+        options.map((option) =>
+          option === null
+            ? { label: "Custom", detail: "leave the VM's own setup" }
+            : { label: modelLabel(option), detail: option.model }
+        ),
+        Math.max(0, current),
+        (index) => {
+          this.config.data.model = options[index];
+          this.config.save();
+        },
+      ),
+    );
   }
 
   private async submit(): Promise<boolean> {

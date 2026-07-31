@@ -9,6 +9,7 @@
 
 import { Color, displayWidth, elideHead, elideMiddle, fit, styled } from "../tui/ansi.ts";
 import {
+  dropdown,
   type HitMap,
   placeholder,
   type Rect,
@@ -349,16 +350,21 @@ export class DiffSidebar {
     await this.reloadDiff();
   }
 
-  /** Cycle the repo filter: all repos, then each repo in turn. */
+  /** Narrow to one repo, or to all of them with null. */
+  selectRepo(repo: string | null): void {
+    if (repo === this.selectedRepo) return;
+    this.selectedRepo = repo;
+    this.scope = null;
+    this.selectedFile = null;
+    void this.refresh(true);
+  }
+
+  /** Step through the repo filter without opening its list. */
   cycleRepo(step: number): void {
     if (this.repos.length === 0) return;
     const options: Array<string | null> = [null, ...this.repos];
     const current = options.indexOf(this.selectedRepo);
-    const next = (current + step + options.length) % options.length;
-    this.selectedRepo = options[next];
-    this.scope = null;
-    this.selectedFile = null;
-    void this.refresh(true);
+    this.selectRepo(options[(current + step + options.length) % options.length]);
   }
 
   // MARK: - Rendering
@@ -387,16 +393,13 @@ export class DiffSidebar {
     );
     lines.push(fit(` ${styled(elideMiddle(destination, width - 2), { fg: Color.dim })}`, width));
 
-    // Repo filter, clickable.
+    // The repo filter: a dropdown, so the whole list is one click away.
     const label = this.selectedRepo === null ? "All repos" : shortRepoLabel(this.selectedRepo);
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.repo");
     lines.push(
-      fit(
-        ` ${styled("▾", { fg: Color.accent })} ${
-          styled(elideHead(label, width - 12), { fg: Color.fg })
-        } ${styled(`(${this.repos.length})`, { fg: Color.dimmer })}`,
-        width,
-      ),
+      dropdown(`${label}  ${this.repos.length}`, width, {
+        hovered: this.hoverRow === "diff.repo",
+      }),
     );
 
     if (this.connectionError) {
@@ -434,17 +437,27 @@ export class DiffSidebar {
     const scopeTop = rect.y + lines.length;
     lines.push(...this.renderScopes(rect, scopeTop, scopeHeight, hits, focused));
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.splitScope");
-    lines.push(rule(width));
+    lines.push(this.splitHandle(width, "diff.splitScope"));
 
     const filesTop = rect.y + lines.length;
     lines.push(...this.renderFiles(rect, filesTop, filesHeight, hits, focused));
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.splitFiles");
-    lines.push(rule(width));
+    lines.push(this.splitHandle(width, "diff.splitFiles"));
 
     const diffTop = rect.y + lines.length;
     lines.push(...this.renderDiff(rect, diffTop, diffHeight, hits));
 
     return pad(lines, rect.height, width);
+  }
+
+  /**
+   * The rule between two of the stacked panes. It drags, so it says so under
+   * the pointer rather than looking like a plain border.
+   */
+  private splitHandle(width: number, id: string): string {
+    if (this.hoverRow !== id) return rule(width);
+    const grip = "─".repeat(Math.max(0, Math.floor((width - 4) / 2)));
+    return fit(styled(`${grip}════${grip}`, { fg: Color.accent }), width);
   }
 
   /**
@@ -704,12 +717,11 @@ export class DiffSidebar {
     this.hoverRow = id;
   }
 
-  /** Handle a click on a region this sidebar registered. */
+  /**
+   * Handle a click on a region this sidebar registered. `diff.repo` is not one
+   * of them: it opens a dropdown, which only the app can draw over everything.
+   */
   async click(id: string, shift: boolean): Promise<void> {
-    if (id === "diff.repo") {
-      this.cycleRepo(1);
-      return;
-    }
     if (id.startsWith("diff.scope:")) {
       const index = Number(id.slice("diff.scope:".length));
       this.scopeSelection = index;
@@ -813,7 +825,7 @@ function renderDiffRow(
         ` ${styled(diffRow.text, { fg: Color.accent, bold: true })}` +
           (diffRow.detail ? ` ${styled(diffRow.detail, { fg: Color.dimmer })}` : ""),
         width,
-        { bg: Color.accentDim },
+        { bg: Color.selectionDim },
       );
     case "meta":
       return fit(` ${styled(diffRow.text, { fg: Color.dimmer })}`, width);
