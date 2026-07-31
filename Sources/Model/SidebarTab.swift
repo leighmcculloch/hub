@@ -91,7 +91,7 @@ final class BrowserModel: NSObject, ObservableObject {
             source: AutoName.firstPromptCaptureScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true,
-            inContentWorld: .page))
+            in: .page))
     }
 
     /// Called by the relay on the first message from the page. Hands the prompt
