@@ -161,3 +161,28 @@ Deno.test("the diff sidebar's lists and diff pane take the arrow keys", async ()
   assertEquals(await sidebar.key(diffKey("pagedown", false)), true);
   assertEquals(await sidebar.key(diffKey("home", false)), true);
 });
+
+Deno.test("the diff pane's search claims Esc, but only while it has the keyboard", async () => {
+  const sidebar = new DiffSidebar(() => {});
+  sidebar.part = "diff";
+  assert(!sidebar.searchActive, "nothing is being searched yet");
+  assertEquals(await sidebar.key(diffKey("/", false)), true);
+  assert(sidebar.searchActive, "the field is open, so Esc belongs here");
+
+  // Tabbing on to the file list hands Esc back to the app, even though the
+  // query is still highlighting matches behind it.
+  sidebar.part = "files";
+  assert(!sidebar.searchActive);
+
+  sidebar.part = "diff";
+  assertEquals(await sidebar.key(diffKey("escape", false)), true);
+  assert(!sidebar.searchActive, "Esc dropped the search");
+});
+
+Deno.test("y asks the app to copy, from every part of the diff pane", async () => {
+  const sidebar = new DiffSidebar(() => {});
+  for (const part of ["repo", "scope", "files", "diff"] as const) {
+    sidebar.part = part;
+    assertEquals(await sidebar.key(diffKey("y", false)), "copy");
+  }
+});

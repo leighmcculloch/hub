@@ -183,7 +183,9 @@ export class DiffSidebar {
    * rather than jumping straight back to the terminal.
    */
   get searchActive(): boolean {
-    return this.searching || this.query.length > 0;
+    // Only while the diff itself has the keyboard: with the keyboard on the
+    // file list, a query still highlighted is not a reason to swallow Esc.
+    return this.part === "diff" && (this.searching || this.query.length > 0);
   }
 
   /** Where the search caret should sit this frame, if it is showing. */

@@ -170,6 +170,8 @@ export class TerminalSession {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** When the next automatic attempt is due, as epoch milliseconds. */
   private retryAt: number | null = null;
+  /** Set by `stop`, so a late exit can't bring a closed session back. */
+  private closed = false;
 
   constructor(
     options: {
@@ -242,6 +244,7 @@ export class TerminalSession {
   // MARK: - Lifecycle
 
   start(): void {
+    this.closed = false;
     this.isDisconnected = false;
     this.disconnectReason = null;
     this.pendingReplies = [];
@@ -304,7 +307,9 @@ export class TerminalSession {
    * pressing a key for it is work the app can do.
    */
   private scheduleRetry(): void {
-    if (this.retryTimer !== null) return;
+    // The transport's exit can land after the tab was closed; retrying then
+    // would dial back out to a VM nobody is looking at any more.
+    if (this.closed || this.retryTimer !== null) return;
     const delay = this.retryBackoff.delay;
     this.retryBackoff.recordFailure();
     this.retryAt = Date.now() + delay;
@@ -316,6 +321,7 @@ export class TerminalSession {
   }
 
   stop(): void {
+    this.closed = true;
     if (this.captureTimer !== null) clearTimeout(this.captureTimer);
     this.captureTimer = null;
     // A closed session must not resurrect itself.
