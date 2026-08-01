@@ -64,11 +64,26 @@ session has connected.
 
 ## Keys
 
-Every shortcut is `Alt`-based, so plain keystrokes — Ctrl chords, arrows, Tab —
-reach the program running in the terminal untouched.
+The whole interface is reachable from the keyboard. `Tab` and `Shift+Tab` walk
+a focus ring through every control — the session list, the New Session button,
+the tab strip, the repo dropdown, the scope and file lists, the diff — and the
+arrow keys move within whichever one has the keyboard.
+
+The terminal pane is the single exception, and it has to be: while you are
+typing in it, every key belongs to the program running there, `Tab` included —
+a shell without tab completion is not a shell. `Alt+F` steps out of it, `Enter`
+on the tab strip (or a click) steps back in, and the status bar always says
+which of the two you are in.
+
+Everything else is an `Alt` chord, for the same reason.
 
 | Key | |
 | --- | --- |
+| `Tab` / `Shift+Tab` | Move between controls |
+| `↑ ↓ ← →` | Move within the focused control |
+| `Enter` | Activate; on the tab strip, start typing |
+| `Alt+F` | Leave the terminal |
+| `Esc` | Back to typing in the terminal |
 | `Alt+T` | New session on a fresh VM |
 | `Alt+L` | New local shell |
 | `Alt+W` | Close the session (leaves the VM running) |
@@ -80,7 +95,6 @@ reach the program running in the terminal untouched.
 | `Alt+N` | New tmux window in this session |
 | `Alt+←` / `Alt+→` | Previous / next terminal tab |
 | `Alt+K` | Reconnect a dropped session |
-| `Alt+F` / `Tab` | Move focus between the panes |
 | `Alt+,` | Settings |
 | `F1` | Key map |
 | `Alt+Q` | Quit |

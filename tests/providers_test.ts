@@ -5,6 +5,8 @@ import { recordFromExeVM } from "../src/providers/exe-provider.ts";
 import { recordFromSprite, spritesCloneConfig } from "../src/providers/sprites-provider.ts";
 import { SSHTransport, summarizeSSH } from "../src/providers/ssh-transport.ts";
 import { SpritesCLITransport } from "../src/providers/sprites-cli-transport.ts";
+import { LocalTransport } from "../src/providers/local-transport.ts";
+import { afterMarker, markedCommand, OUTPUT_MARKER } from "../src/git/remote-git.ts";
 import { condense, tokenHint } from "../src/model/message-text.ts";
 import {
   codexConfig,
@@ -243,4 +245,34 @@ Deno.test("renameCommand carries the prompt through a login shell as JSON", () =
   assertStringIncludes(command, "python3");
   // The quotes and newline survive as JSON escapes rather than breaking out.
   assertStringIncludes(command, '\\"hi\\"');
+});
+
+Deno.test("the local transport never runs a login shell", () => {
+  const transport = new LocalTransport();
+  for (const spec of [transport.interactiveSpec("tmux -C"), transport.oneshotSpec("git status")]) {
+    // A profile that prints would land on stdout ahead of the real output —
+    // corrupting tmux's control protocol, and inventing repos in the sidebar.
+    assert(!spec.arguments.includes("-l"), `login shell in ${spec.arguments.join(" ")}`);
+    assertEquals(spec.executable, "/bin/sh");
+    assertEquals(spec.arguments[0], "-c");
+  }
+});
+
+Deno.test("a one-shot's output starts after the marker it prints", () => {
+  const command = markedCommand("git status");
+  assertStringIncludes(command, OUTPUT_MARKER);
+  assertStringIncludes(command, "git status");
+
+  const noisy = `== welcome ==\nnvm: using v22\n${OUTPUT_MARKER}\nreal output\n`;
+  assertEquals(afterMarker(noisy), "real output\n");
+});
+
+Deno.test("output with no marker is kept whole rather than discarded", () => {
+  assertEquals(afterMarker("plain output\n"), "plain output\n");
+  assertEquals(afterMarker(""), "");
+});
+
+Deno.test("only the first marker splits, so output containing one survives", () => {
+  const output = `${OUTPUT_MARKER}\nfirst\n${OUTPUT_MARKER}\nsecond\n`;
+  assertEquals(afterMarker(output), `first\n${OUTPUT_MARKER}\nsecond\n`);
 });

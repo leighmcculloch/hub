@@ -24,14 +24,39 @@ type SidebarRow =
   | { kind: "session"; session: TerminalSession }
   | { kind: "vm"; vm: RemoteVMRecord };
 
+/** The stops Tab visits inside this pane, in order. */
+const PARTS = ["list", "new"] as const;
+type Part = typeof PARTS[number];
+
 export class SessionSidebar {
   /** The row the keyboard is on, as an index into the flattened list. */
   selection = 0;
+  /** Which control inside the pane has the keyboard. */
+  part: Part = "list";
   private offset = 0;
   private rows: SidebarRow[] = [];
   private hovered: string | null = null;
 
   constructor(private workspace: Workspace) {}
+
+  focusFirst(): void {
+    this.part = PARTS[0];
+  }
+
+  focusLast(): void {
+    this.part = PARTS[PARTS.length - 1];
+  }
+
+  /**
+   * Move to the next control in the pane. False when there isn't one, which is
+   * the app's cue to move on to the next pane.
+   */
+  advance(step: number): boolean {
+    const next = PARTS.indexOf(this.part) + step;
+    if (next < 0 || next >= PARTS.length) return false;
+    this.part = PARTS[next];
+    return true;
+  }
 
   render(rect: Rect, hits: HitMap, focused: boolean): string[] {
     const width = rect.width;
@@ -60,12 +85,16 @@ export class SessionSidebar {
         }
         const id = `sidebar.row:${this.offset + index}`;
         hits.add({ x: rect.x, y: rect.y + index, width, height: 1 }, id);
+        const listFocused = focused && this.part === "list";
+        // The row the keyboard is on is marked even when it isn't the open
+        // session, so arrowing through the list is visible.
+        const onCursor = listFocused && this.offset + index === this.selection;
         lines.push(
           fit(
             listRow(this.rowText(entry, width - 2), width - 1, {
-              selected: this.isSelected(entry),
+              selected: this.isSelected(entry) || onCursor,
               hovered: this.hovered === id,
-              focused,
+              focused: listFocused,
             }) + bar[index],
             width,
           ),
@@ -75,21 +104,20 @@ export class SessionSidebar {
 
     lines.push(rule(width));
     hits.add({ x: rect.x, y: rect.y + rect.height - 1, width, height: 1 }, "sidebar.new");
-    const newHovered = this.hovered === "sidebar.new";
+    const newFocused = focused && this.part === "new";
+    const background = newFocused
+      ? Color.selection
+      : this.hovered === "sidebar.new"
+      ? Color.hover
+      : undefined;
     lines.push(
       fit(
-        ` ${
-          styled("+ New Session", {
-            fg: Color.accent,
-            bold: true,
-            bg: newHovered ? Color.hover : undefined,
-          })
-        }` +
+        ` ${styled("+ New Session", { fg: Color.accent, bold: true, bg: background })}` +
           `${" ".repeat(Math.max(1, width - 20))}${
-            styled("Alt+T", { fg: Color.dimmer, bg: newHovered ? Color.hover : undefined })
+            styled("Alt+T", { fg: Color.dimmer, bg: background })
           }`,
         width,
-        { bg: newHovered ? Color.hover : undefined },
+        { bg: background },
       ),
     );
     return lines.slice(0, rect.height);
@@ -145,6 +173,45 @@ export class SessionSidebar {
   /** The row the keyboard selection is on. */
   get current(): SidebarRow | null {
     return this.rows[this.selection] ?? null;
+  }
+
+  /**
+   * Handle a key for whichever control has the keyboard. Returns what the app
+   * should do about it, since activating a row is the app's business.
+   */
+  key(name: string): "activate" | "delete" | "handled" | "ignored" {
+    if (this.part === "new") {
+      return name === "enter" || name === "space" ? "activate" : "ignored";
+    }
+    switch (name) {
+      case "up":
+        this.move(-1);
+        return "handled";
+      case "down":
+        this.move(1);
+        return "handled";
+      case "home":
+        this.selection = 0;
+        this.move(1);
+        this.move(-1);
+        return "handled";
+      case "end":
+        this.selection = this.rows.length - 1;
+        return "handled";
+      case "enter":
+      case "space":
+        return "activate";
+      case "delete":
+      case "backspace":
+        return "delete";
+      default:
+        return "ignored";
+    }
+  }
+
+  /** True when the New Session button is what Enter would press. */
+  get onNewButton(): boolean {
+    return this.part === "new";
   }
 
   move(offset: number): void {

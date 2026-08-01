@@ -84,6 +84,10 @@ interface Binding {
 }
 
 const BINDINGS: Binding[] = [
+  { keys: "Tab / ⇧Tab", description: "Move between controls; ↑↓←→ within one" },
+  { keys: "Enter", description: "Activate; on the tab strip, start typing" },
+  { keys: "Alt+F", description: "Leave the terminal (where Tab is the shell's)" },
+  { keys: "Esc", description: "Back to typing in the terminal" },
   { keys: "Alt+T", description: "New session on a fresh VM" },
   { keys: "Alt+L", description: "New local shell" },
   { keys: "Alt+W", description: "Close the session (leaves the VM running)" },
@@ -97,7 +101,6 @@ const BINDINGS: Binding[] = [
   { keys: "Alt+, ", description: "Settings" },
   { keys: "Alt+← / →", description: "Previous / next terminal tab" },
   { keys: "Alt+K", description: "Reconnect a dropped session" },
-  { keys: "Tab", description: "Move focus between the three panes" },
   { keys: "F1", description: "This help" },
   { keys: "Alt+Q", description: "Quit" },
   { keys: "Mouse", description: "Click, drag the dividers, wheel to scroll" },

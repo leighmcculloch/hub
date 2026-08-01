@@ -33,6 +33,34 @@ export class RemoteGitError extends Error {
   }
 }
 
+/**
+ * Printed by every one-shot before its real work, so anything the shell said
+ * first can be thrown away.
+ *
+ * A remote login shell runs the user's profile, and a profile that prints
+ * anything — a version-manager banner, a greeting, an MOTD — puts it on stdout
+ * ahead of git's output. Parsed as a repo listing that made every banner line a
+ * phantom repository; parsed as a diff it prepends junk to the pane. Neither is
+ * something the app can tell apart from real output by inspection, so the
+ * command says where its own output begins instead.
+ */
+export const OUTPUT_MARKER = "---exe-out---";
+
+/** Wrap a command so its output is preceded by the marker. */
+export function markedCommand(command: string): string {
+  return `printf '%s\\n' '${OUTPUT_MARKER}'; ${command}`;
+}
+
+/**
+ * Everything after the first marker line. Output with no marker is returned
+ * whole: a command that failed before printing it still has something to say.
+ */
+export function afterMarker(output: string): string {
+  const marker = `${OUTPUT_MARKER}\n`;
+  const index = output.indexOf(marker);
+  return index === -1 ? output : output.slice(index + marker.length);
+}
+
 /** Home-relative directories under `$HOME` (depth ≤ 2) that are git repos. */
 export async function listRepos(transport: RemoteTransport): Promise<string[]> {
   // Two passes: repos checked out directly in the home dir, plus every worktree
@@ -262,7 +290,7 @@ export async function runOrThrow(
   transport: RemoteTransport,
   remoteCommand: string,
 ): Promise<string> {
-  const spec = transport.oneshotSpec(remoteCommand);
+  const spec = transport.oneshotSpec(markedCommand(remoteCommand));
   let result;
   try {
     result = await runCommand(spec);
@@ -271,6 +299,6 @@ export async function runOrThrow(
       `Couldn't run ${spec.executable}: ${error instanceof Error ? error.message : error}`,
     );
   }
-  if (result.code === 0) return result.stdout;
+  if (result.code === 0) return afterMarker(result.stdout);
   throw new RemoteGitError(transport.summarize(result.stderr, result.code));
 }

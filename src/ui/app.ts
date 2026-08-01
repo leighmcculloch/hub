@@ -242,7 +242,12 @@ export class App {
     const left = ` ${styled(name, { fg: Color.fg, bold: true })} ` +
       styled(where, { fg: Color.dimmer });
     const middle = message ? `  ${styled(message, { fg: Color.accent })}` : "";
-    const right = styled("Alt+T new · Alt+O browser · F1 keys ", { fg: Color.dimmer });
+    // The hint follows the keyboard: the one thing worth knowing in the
+    // terminal is how to get out of it, and everywhere else that Tab moves on.
+    const hint = this.focus === "terminal" && this.terminal.inBody
+      ? "Alt+F focus · Alt+T new · F1 keys "
+      : "Tab moves · Enter selects · Esc terminal · F1 keys ";
+    const right = styled(hint, { fg: Color.dimmer });
     const used = displayWidth(left) + displayWidth(middle) + displayWidth(right);
     const gap = Math.max(1, cols - used);
     return fit(`${left}${middle}${" ".repeat(gap)}${right}`, cols, { bg: Color.panel });
@@ -385,26 +390,84 @@ export class App {
     }
     if (event.alt && await this.globalShortcut(event)) return;
 
-    // Anything else belongs to whatever has focus.
+    // While the terminal pane's body has the keyboard, every key belongs to the
+    // program running there — Tab included, or a shell loses completion. Alt+F
+    // is how you step back out.
+    if (this.focus === "terminal" && this.terminal.inBody) {
+      this.workspace.selectedSession?.sendKeys(event.bytes);
+      return;
+    }
+
+    // Everywhere else Tab walks the focus ring, so the whole interface is
+    // reachable without the mouse.
+    if (event.name === "tab") {
+      this.moveFocus(event.shift ? -1 : 1);
+      return;
+    }
+    if (event.name === "escape") {
+      this.enterTerminal();
+      return;
+    }
+
     switch (this.focus) {
-      case "terminal":
-        this.workspace.selectedSession?.sendKeys(event.bytes);
-        return;
       case "sessions":
         this.sessionSidebarKey(event);
         return;
+      case "terminal":
+        switch (this.terminal.key(this.workspace.selectedSession, event.name)) {
+          case "enterBody":
+            this.enterTerminal();
+            return;
+          case "newTab":
+            this.workspace.selectedSession?.newTab();
+            return;
+          default:
+            return;
+        }
       case "diff":
-        if (event.name === "escape") {
-          this.focus = "terminal";
-          return;
-        }
-        if (event.name === "tab") {
-          this.cycleFocus(event.shift ? -1 : 1);
-          return;
-        }
-        await this.diff.key(event.name, event.shift);
+        if (await this.diff.key(event.name, event.shift) === "openRepos") this.openRepoPopup();
         return;
     }
+  }
+
+  /**
+   * Move to the next control, stepping into the next pane when the current one
+   * runs out. Hidden panes are skipped.
+   */
+  private moveFocus(step: number): void {
+    const pane = this.pane(this.focus);
+    if (pane.advance(step)) return;
+
+    const available = this.focusablePanes();
+    const current = available.indexOf(this.focus);
+    const next = available[(current + step + available.length) % available.length];
+    this.focus = next;
+    const entered = this.pane(next);
+    if (step > 0) entered.focusFirst();
+    else entered.focusLast();
+  }
+
+  private pane(
+    focus: Focus,
+  ): { advance(step: number): boolean; focusFirst(): void; focusLast(): void } {
+    if (focus === "sessions") return this.sessions;
+    if (focus === "diff") return this.diff;
+    return this.terminal;
+  }
+
+  private focusablePanes(): Focus[] {
+    const order: Focus[] = ["sessions", "terminal", "diff"];
+    return order.filter((one) =>
+      one === "terminal" ||
+      (one === "sessions" && this.workspace.showSessionSidebar) ||
+      (one === "diff" && this.workspace.showDiffSidebar)
+    );
+  }
+
+  /** Put the keyboard in the terminal itself, where keys reach the program. */
+  private enterTerminal(): void {
+    this.focus = "terminal";
+    this.terminal.enterBody();
   }
 
   /** Returns whether the shortcut was handled. */
@@ -442,7 +505,8 @@ export class App {
         this.say("Reconnecting…");
         return true;
       case "f":
-        this.cycleFocus(1);
+        // The way out of the terminal body, where Tab belongs to the program.
+        this.moveFocus(event.shift ? -1 : 1);
         return true;
       case ",":
         this.settings = new SettingsModal(this.config, (popup) => this.openPopup(popup));
@@ -475,26 +539,15 @@ export class App {
   }
 
   private sessionSidebarKey(event: KeyEvent): void {
-    switch (event.name) {
-      case "escape":
-        this.focus = "terminal";
-        return;
-      case "tab":
-        this.cycleFocus(event.shift ? -1 : 1);
-        return;
-      case "up":
-        this.sessions.move(-1);
-        return;
-      case "down":
-        this.sessions.move(1);
-        return;
-      case "enter":
-      case "space":
-        this.activateSidebarRow(this.sessions.current);
+    switch (this.sessions.key(event.name)) {
+      case "activate":
+        if (this.sessions.onNewButton) this.openNewSession();
+        else this.activateSidebarRow(this.sessions.current);
         return;
       case "delete":
-      case "backspace":
         this.confirmDeleteRow(this.sessions.current);
+        return;
+      default:
         return;
     }
   }
@@ -518,17 +571,6 @@ export class App {
   private openPopup(popup: SelectPopup): void {
     this.popup = popup;
     this.requestRender();
-  }
-
-  private cycleFocus(step: number): void {
-    const order: Focus[] = ["sessions", "terminal", "diff"];
-    const available = order.filter((one) =>
-      one === "terminal" ||
-      (one === "sessions" && this.workspace.showSessionSidebar) ||
-      (one === "diff" && this.workspace.showDiffSidebar)
-    );
-    const current = available.indexOf(this.focus);
-    this.focus = available[(current + step + available.length) % available.length];
   }
 
   private async handleMouse(event: MouseEvent): Promise<void> {
@@ -602,13 +644,16 @@ export class App {
     }
 
     if (id.startsWith("sidebar.")) {
+      // Clicking moves the keyboard there too, so the two never disagree about
+      // what Enter would press.
       this.focus = "sessions";
       if (id === "sidebar.new") {
+        this.sessions.focusLast();
         this.openNewSession();
         return;
       }
-      const row = this.sessions.rowFor(id);
-      this.activateSidebarRow(row);
+      this.sessions.focusFirst();
+      this.activateSidebarRow(this.sessions.rowFor(id));
       return;
     }
 
@@ -616,22 +661,31 @@ export class App {
       this.focus = "terminal";
       const session = this.workspace.selectedSession;
       if (id === "terminal.newTab") {
+        this.terminal.focusLast();
         session?.newTab();
         return;
       }
       if (id.startsWith("terminal.tab:")) {
+        this.terminal.focusFirst();
         const tab = session?.tabs[Number(id.slice("terminal.tab:".length))];
         if (tab) session?.selectTab(tab.paneID);
+        return;
       }
+      // Clicking the pane itself is how you get back to typing.
+      this.enterTerminal();
       return;
     }
 
     if (id.startsWith("diff.")) {
       this.focus = "diff";
       if (id === "diff.repo") {
+        this.diff.part = "repo";
         this.openRepoPopup();
         return;
       }
+      if (id.startsWith("diff.scope:")) this.diff.part = "scope";
+      else if (id.startsWith("diff.file:")) this.diff.part = "files";
+      else if (id === "diff.body") this.diff.part = "diff";
       await this.diff.click(id, event.shift);
     }
   }

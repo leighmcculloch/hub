@@ -41,6 +41,10 @@ import * as RemoteGit from "../git/remote-git.ts";
 import { RemoteGitError } from "../git/remote-git.ts";
 import type { TerminalSession } from "../model/terminal-session.ts";
 
+/** The stops Tab visits inside this pane, in order. */
+const PARTS = ["repo", "scope", "files", "diff"] as const;
+type DiffPart = typeof PARTS[number];
+
 /** One row of the scope list, flattened so hit testing and keys share an index. */
 type ScopeRow =
   | { kind: "repoHeader"; repo: string; changes: number; commits: number }
@@ -89,6 +93,9 @@ export class DiffSidebar {
   /** Pane heights, dragged by the split handles between them. */
   scopeHeight = 10;
   filesHeight = 8;
+
+  /** Which control inside the pane has the keyboard. */
+  part: DiffPart = "repo";
 
   private backoff = new PollBackoff();
   private refreshing = false;
@@ -398,6 +405,7 @@ export class DiffSidebar {
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.repo");
     lines.push(
       dropdown(`${label}  ${this.repos.length}`, width, {
+        focused: focused && this.part === "repo",
         hovered: this.hoverRow === "diff.repo",
       }),
     );
@@ -491,13 +499,14 @@ export class DiffSidebar {
       const id = `diff.scope:${this.scopeOffset + index}`;
       const y = top + 1 + index;
       hits.add({ x: rect.x, y, width, height: 1 }, id);
-      const hovered = this.hoverRow === id;
+      const listFocused = focused && this.part === "scope";
+      const onCursor = listFocused && this.scopeOffset + index === this.scopeSelection;
       lines.push(
         fit(
           listRow(this.scopeRowText(entry, width - 2), width - 1, {
-            selected: this.isScopeSelected(entry),
-            hovered,
-            focused,
+            selected: this.isScopeSelected(entry) || onCursor,
+            hovered: this.hoverRow === id,
+            focused: listFocused,
           }) + bar[index],
           width,
         ),
@@ -648,12 +657,14 @@ export class DiffSidebar {
       const room = Math.max(6, width - 6 - displayWidth(statText));
       const text = `${styled(status.letter, { fg: status.color, bold: true })} ` +
         `${styled(elideHead(change.path, room), { fg: Color.fg })} ${statText}`;
+      const listFocused = focused && this.part === "files";
+      const onCursor = listFocused && this.filesOffset + index === this.filesSelection;
       lines.push(
         fit(
           listRow(text, width - 1, {
-            selected: this.selectedFile === change.path,
+            selected: this.selectedFile === change.path || onCursor,
             hovered: this.hoverRow === id,
-            focused,
+            focused: listFocused,
           }) + bar[index],
           width,
         ),
@@ -772,27 +783,92 @@ export class DiffSidebar {
     }
   }
 
-  /** Keyboard navigation while the sidebar has focus. */
-  async key(name: string, shift: boolean): Promise<boolean> {
+  focusFirst(): void {
+    this.part = PARTS[0];
+  }
+
+  focusLast(): void {
+    this.part = PARTS[PARTS.length - 1];
+  }
+
+  advance(step: number): boolean {
+    const next = PARTS.indexOf(this.part) + step;
+    if (next < 0 || next >= PARTS.length) return false;
+    this.part = PARTS[next];
+    return true;
+  }
+
+  /**
+   * Keyboard navigation for whichever control has the keyboard. The repo
+   * dropdown answers "openRepos" so the app can draw the list over everything.
+   */
+  async key(name: string, shift: boolean): Promise<"openRepos" | boolean> {
+    if (this.part === "repo") {
+      if (name === "enter" || name === "space" || name === "down") return "openRepos";
+      if (name === "left") this.cycleRepo(-1);
+      else if (name === "right") this.cycleRepo(1);
+      else return false;
+      return true;
+    }
+
+    if (this.part === "diff") {
+      const page = 10;
+      switch (name) {
+        case "up":
+          this.diff.offset = Math.max(0, this.diff.offset - 1);
+          return true;
+        case "down":
+          this.diff.offset += 1;
+          return true;
+        case "pageup":
+          this.diff.offset = Math.max(0, this.diff.offset - page);
+          return true;
+        case "pagedown":
+          this.diff.offset += page;
+          return true;
+        case "home":
+          this.diff.offset = 0;
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    const isScope = this.part === "scope";
+    const count = isScope ? this.scopeRows.length : this.fileRows.length;
+    const selection = isScope ? this.scopeSelection : this.filesSelection;
+    const set = (value: number) => {
+      const clamped = Math.min(Math.max(0, value), Math.max(0, count - 1));
+      if (isScope) this.scopeSelection = clamped;
+      else this.filesSelection = clamped;
+    };
+
     switch (name) {
       case "up":
-        this.scopeSelection = Math.max(0, this.scopeSelection - 1);
+        set(selection - 1);
         return true;
       case "down":
-        this.scopeSelection = Math.min(this.scopeRows.length - 1, this.scopeSelection + 1);
+        set(selection + 1);
         return true;
       case "pageup":
-        this.diff.offset = Math.max(0, this.diff.offset - 10);
+        set(selection - 10);
         return true;
       case "pagedown":
-        this.diff.offset += 10;
+        set(selection + 10);
+        return true;
+      case "home":
+        set(0);
+        return true;
+      case "end":
+        set(count - 1);
         return true;
       case "enter":
       case "space":
-        await this.activateScopeRow(this.scopeSelection, shift);
-        return true;
-      case "tab":
-        this.cycleRepo(shift ? -1 : 1);
+        if (isScope) await this.activateScopeRow(this.scopeSelection, shift);
+        else {
+          const path = this.fileRows[this.filesSelection];
+          if (path) await this.selectFile(path);
+        }
         return true;
       default:
         return false;
