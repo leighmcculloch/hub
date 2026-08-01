@@ -84,12 +84,14 @@ Everything else is an `Alt` chord, for the same reason.
 | `Enter` | Activate; on the tab strip, start typing |
 | `Alt+F` | Leave the terminal |
 | `Esc` | Back to typing in the terminal |
+| `Alt+P` | Command palette — everything, by name |
 | `Alt+N` | New session on a fresh VM |
 | `Alt+L` | New local shell |
 | `Alt+W` | Close the session (leaves the VM running) |
 | `Alt+D` | Delete the session and destroy its VM |
 | `Alt+O` | Open this VM's URL in the system browser |
 | `Alt+S` / `Alt+R` | Toggle the left / right pane |
+| `Alt+Z` | Zen mode — the terminal, edge to edge |
 | `Alt+1`…`Alt+9` | Select a session (9 is the last) |
 | `Alt+[` / `Alt+]` | Previous / next session |
 | `Alt+T` | New tmux window in this session |
@@ -221,7 +223,10 @@ and the global environment variables. GitHub access is discovered from
 Config lives in `~/Library/Application Support/ExeDesktopApp` on macOS and
 `~/.config/hub` elsewhere; `HUB_CONFIG_DIR` overrides it. The macOS path is the
 one the earlier SwiftUI version of this app used, so an existing install's
-token, environments and open sessions are picked up as they are.
+token, environments and open sessions are picked up as they are. Alongside
+`config.json` the app keeps `sessions.json` (the tabs that were open) and
+`layout.json` (the pane sizes and which panes were showing), so a workspace
+comes back the way you left it.
 
 ## Development
 

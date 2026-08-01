@@ -23,7 +23,9 @@ import type { TerminalSession } from "../model/terminal-session.ts";
 type SidebarRow =
   | { kind: "header"; title: string; busy: boolean }
   | { kind: "session"; session: TerminalSession }
-  | { kind: "vm"; vm: RemoteVMRecord };
+  | { kind: "vm"; vm: RemoteVMRecord }
+  /** Why the list below is short — a failed listing, not an empty account. */
+  | { kind: "notice"; text: string };
 
 /** The stops Tab visits inside this pane, in order. */
 const PARTS = ["list", "new"] as const;
@@ -84,6 +86,18 @@ export class SessionSidebar {
           lines.push(sectionHeader(entry.title, width, entry.busy ? "◌" : ""));
           continue;
         }
+        if (entry.kind === "notice") {
+          // No hit region: there is nothing to click, and tinting it under the
+          // pointer would promise otherwise.
+          lines.push(
+            fit(
+              ` ${styled("!", { fg: Color.orange })} ` +
+                styled(elideMiddle(entry.text, Math.max(6, width - 4)), { fg: Color.dim }),
+              width,
+            ),
+          );
+          continue;
+        }
         const id = `sidebar.row:${this.offset + index}`;
         hits.add({ x: rect.x, y: rect.y + index, width, height: 1 }, id);
         const listFocused = focused && this.part === "list";
@@ -131,8 +145,10 @@ export class SessionSidebar {
       for (const session of this.workspace.sessions) rows.push({ kind: "session", session });
     }
     const unopened = this.workspace.unopenedVMs;
-    if (unopened.length > 0 || this.workspace.loadingVMs) {
+    const failure = this.workspace.vmListError;
+    if (unopened.length > 0 || this.workspace.loadingVMs || failure) {
       rows.push({ kind: "header", title: "Existing", busy: this.workspace.loadingVMs });
+      if (failure) rows.push({ kind: "notice", text: failure });
       for (const vm of unopened) rows.push({ kind: "vm", vm });
     }
     return rows;
@@ -230,10 +246,11 @@ export class SessionSidebar {
   move(offset: number): void {
     if (this.rows.length === 0) return;
     let next = this.selection;
-    // Headers aren't selectable, so keep going in the same direction past them.
+    // Headers and notices aren't selectable, so keep going past them in the
+    // same direction.
     for (let step = 0; step < this.rows.length; step += 1) {
       next = (next + offset + this.rows.length) % this.rows.length;
-      if (this.rows[next].kind !== "header") break;
+      if (this.rows[next].kind !== "header" && this.rows[next].kind !== "notice") break;
     }
     this.selection = next;
   }

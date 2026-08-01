@@ -96,6 +96,7 @@ const BINDINGS: Binding[] = [
   { keys: "Alt+O", description: "Open this VM's URL in the system browser" },
   { keys: "Alt+S", description: "Toggle the sessions sidebar" },
   { keys: "Alt+R", description: "Toggle the worktree diff sidebar" },
+  { keys: "Alt+Z", description: "Zen mode — the terminal, edge to edge" },
   { keys: "Alt+1…9", description: "Select a session (9 is the last)" },
   { keys: "Alt+[ / ]", description: "Previous / next session" },
   { keys: "Alt+T", description: "New tmux window in this session" },

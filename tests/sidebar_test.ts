@@ -16,12 +16,17 @@ function stubSession(id: string, name: string, unseen: boolean): TerminalSession
   } as unknown as TerminalSession;
 }
 
-function stubWorkspace(sessions: TerminalSession[], selected: string | null): Workspace {
+function stubWorkspace(
+  sessions: TerminalSession[],
+  selected: string | null,
+  vmListError: string | null = null,
+): Workspace {
   return {
     sessions,
     unopenedVMs: [],
     loadingVMs: false,
     selectedSessionID: selected,
+    vmListError,
   } as unknown as Workspace;
 }
 
@@ -49,6 +54,25 @@ Deno.test("the session you are looking at never claims unseen output", () => {
   const lines = rows(stubWorkspace([stubSession("a", "alpha", true)], "a"));
   const alpha = lines.find((line) => line.includes("alpha"));
   assert(alpha && !alpha.includes("●"), `the open session was marked: ${alpha}`);
+});
+
+Deno.test("a failed VM listing says so where the VMs would have been", () => {
+  const lines = rows(stubWorkspace([], null, "401 Unauthorized"));
+  const text = lines.join("\n");
+  assert(text.toLowerCase().includes("existing"), "the section should still appear");
+  assert(text.includes("401 Unauthorized"), `no reason shown: ${text}`);
+});
+
+Deno.test("the notice isn't something the keyboard can land on", () => {
+  const workspace = stubWorkspace([stubSession("a", "alpha", false)], "a", "network is down");
+  const sidebar = new SessionSidebar(workspace);
+  sidebar.render({ x: 0, y: 0, width: 26, height: 10 }, new HitMap(), true);
+  // Rows: Sessions header, alpha, Existing header, notice. Walking off the end
+  // has to wrap past both headers and the notice, back onto the one session.
+  sidebar.move(1);
+  assertEquals(sidebar.current?.kind, "session");
+  sidebar.move(-1);
+  assertEquals(sidebar.current?.kind, "session");
 });
 
 Deno.test("the dot doesn't crowd out the name it sits beside", () => {

@@ -12,6 +12,7 @@ import { Screen } from "../tui/screen.ts";
 import { InputDecoder, type InputEvent, type KeyEvent, type MouseEvent } from "../tui/input.ts";
 import { HitMap, type Rect } from "../tui/widgets.ts";
 import { AppConfig } from "../config/app-config.ts";
+import { LayoutStore } from "../config/layout-store.ts";
 import { Workspace } from "../model/workspace.ts";
 import { openInBrowser } from "../providers/process.ts";
 import { SessionSidebar } from "./session-sidebar.ts";
@@ -53,8 +54,11 @@ export class App {
   private hovered: string | null = null;
 
   private focus: Focus = "terminal";
-  private sidebarWidth = 26;
-  private diffWidth = 46;
+  private layoutStore = new LayoutStore();
+  private sidebarWidth: number;
+  private diffWidth: number;
+  /** What the sidebars were doing before zen mode hid them. */
+  private beforeZen: { sessions: boolean; diff: boolean } | null = null;
   private dragging: "left" | "right" | "scopeSplit" | "filesSplit" | null = null;
   private dragOrigin = 0;
   private dragBase = 0;
@@ -72,6 +76,27 @@ export class App {
     this.workspace = new Workspace(this.config, () => this.requestRender());
     this.sessions = new SessionSidebar(this.workspace);
     this.diff = new DiffSidebar(() => this.requestRender());
+
+    // The panes come back the size you left them: a layout dragged to suit one
+    // screen is worth exactly nothing if it resets on every launch.
+    const layout = this.layoutStore.load();
+    this.sidebarWidth = layout.sidebarWidth;
+    this.diffWidth = layout.diffWidth;
+    this.diff.scopeHeight = layout.scopeHeight;
+    this.diff.filesHeight = layout.filesHeight;
+    this.workspace.showSessionSidebar = layout.showSessionSidebar;
+    this.workspace.showDiffSidebar = layout.showDiffSidebar;
+  }
+
+  private persistLayout(): void {
+    this.layoutStore.save({
+      sidebarWidth: this.sidebarWidth,
+      diffWidth: this.diffWidth,
+      scopeHeight: this.diff.scopeHeight,
+      filesHeight: this.diff.filesHeight,
+      showSessionSidebar: this.workspace.showSessionSidebar,
+      showDiffSidebar: this.workspace.showDiffSidebar,
+    });
   }
 
   async run(): Promise<void> {
@@ -519,6 +544,9 @@ export class App {
       case "p":
         this.openCommandPalette();
         return true;
+      case "z":
+        this.toggleZen();
+        return true;
       case "t":
         session?.newTab();
         return true;
@@ -564,13 +592,44 @@ export class App {
     this.workspace.showSessionSidebar = !this.workspace.showSessionSidebar;
     // Hiding the pane the keyboard is in would strand it somewhere invisible.
     if (!this.workspace.showSessionSidebar && this.focus === "sessions") this.enterTerminal();
+    this.beforeZen = null;
     this.screen.invalidate();
+    this.persistLayout();
   }
 
   private toggleDiffSidebar(): void {
     this.workspace.showDiffSidebar = !this.workspace.showDiffSidebar;
     if (!this.workspace.showDiffSidebar && this.focus === "diff") this.enterTerminal();
+    this.beforeZen = null;
     this.screen.invalidate();
+    this.persistLayout();
+  }
+
+  /**
+   * Both sidebars away, the terminal edge to edge, in one keystroke — and back
+   * to exactly what was showing before.
+   *
+   * "In zen mode" is read off the panes rather than a flag of its own, so
+   * hiding both with Alt+S and Alt+R leaves Alt+Z meaning what it looks like it
+   * should mean.
+   */
+  private toggleZen(): void {
+    if (!this.workspace.showSessionSidebar && !this.workspace.showDiffSidebar) {
+      const restore = this.beforeZen ?? { sessions: true, diff: true };
+      this.workspace.showSessionSidebar = restore.sessions;
+      this.workspace.showDiffSidebar = restore.diff;
+      this.beforeZen = null;
+    } else {
+      this.beforeZen = {
+        sessions: this.workspace.showSessionSidebar,
+        diff: this.workspace.showDiffSidebar,
+      };
+      this.workspace.showSessionSidebar = false;
+      this.workspace.showDiffSidebar = false;
+      this.enterTerminal();
+    }
+    this.screen.invalidate();
+    this.persistLayout();
   }
 
   /**
@@ -615,6 +674,13 @@ export class App {
         label: this.workspace.showDiffSidebar ? "Hide Diff Sidebar" : "Show Diff Sidebar",
         shortcut: "Alt+R",
         run: () => this.toggleDiffSidebar(),
+      },
+      {
+        label: !this.workspace.showSessionSidebar && !this.workspace.showDiffSidebar
+          ? "Leave Zen Mode"
+          : "Zen Mode — Terminal Only",
+        shortcut: "Alt+Z",
+        run: () => this.toggleZen(),
       },
       {
         label: "Reconnect Dropped Sessions",
@@ -708,6 +774,9 @@ export class App {
     }
 
     if (event.kind === "up") {
+      // Written once the handle is let go rather than on every pixel of the
+      // drag, so resizing a pane isn't a file write per mouse event.
+      if (this.dragging) this.persistLayout();
       this.dragging = null;
       return;
     }

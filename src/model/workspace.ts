@@ -29,6 +29,13 @@ import type { GatewaySelection } from "../providers/types.ts";
 /** How often each connected VM is asked whether it has renamed itself. */
 const RENAME_POLL_MS = 10_000;
 
+/** A one-line reason from a thrown value, short enough for a sidebar row. */
+function failureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const line = message.split("\n")[0].trim();
+  return line || "Couldn't reach the provider";
+}
+
 export class Workspace {
   sessions: TerminalSession[] = [];
   selectedSessionID: string | null = null;
@@ -43,6 +50,12 @@ export class Workspace {
    */
   availableVMs: RemoteVMRecord[] = [];
   loadingVMs = false;
+  /**
+   * Why the last listing failed, if it did. An empty "Existing" section and a
+   * provider that is refusing the token look identical otherwise, and only one
+   * of them is something you can act on.
+   */
+  vmListError: string | null = null;
 
   /** The signed-in GitHub account, used to seed git config on new VMs. */
   githubUser: GitHubUser | null = null;
@@ -123,9 +136,11 @@ export class Workspace {
     this.onChange();
     try {
       this.availableVMs = await this.provider.listVMs();
-    } catch {
-      // A failed listing leaves the last known VMs on screen; the sidebar has
-      // nowhere useful to put the reason, and the next poll may well work.
+      this.vmListError = null;
+    } catch (error) {
+      // The last known VMs stay on screen — they probably still exist — but the
+      // reason goes in the sidebar, where the missing ones would have been.
+      this.vmListError = failureReason(error);
     }
     this.loadingVMs = false;
     this.onChange();

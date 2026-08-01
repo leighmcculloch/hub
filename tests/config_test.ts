@@ -6,6 +6,7 @@ import {
 } from "../src/config/app-config.ts";
 import { mergeEnv } from "../src/config/env-var.ts";
 import { restorable, restorableSelection, SessionStore } from "../src/config/session-store.ts";
+import { decodeLayout, defaultLayout, LayoutStore } from "../src/config/layout-store.ts";
 import { normalizeRepo } from "../src/github/repo-reference.ts";
 import { sortRepos, userDisplayName, userNoreplyEmail } from "../src/github/repos.ts";
 
@@ -113,6 +114,41 @@ Deno.test("SessionStore treats a missing or corrupt file as no sessions", async 
   } finally {
     await Deno.remove(directory, { recursive: true });
   }
+});
+
+Deno.test("LayoutStore round-trips the pane sizes and what was showing", async () => {
+  const directory = await Deno.makeTempDir();
+  try {
+    const store = new LayoutStore(`${directory}/layout.json`);
+    store.save({
+      sidebarWidth: 34,
+      diffWidth: 60,
+      scopeHeight: 6,
+      filesHeight: 12,
+      showSessionSidebar: false,
+      showDiffSidebar: true,
+    });
+    const loaded = store.load();
+    assertEquals(loaded.sidebarWidth, 34);
+    assertEquals(loaded.filesHeight, 12);
+    assertEquals(loaded.showSessionSidebar, false);
+    assertEquals(loaded.showDiffSidebar, true);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("decodeLayout falls back per field and refuses a nonsense size", () => {
+  const defaults = defaultLayout();
+  assertEquals(decodeLayout(null), defaults);
+  const partial = decodeLayout({ diffWidth: 70, showDiffSidebar: "yes", sidebarWidth: Infinity });
+  assertEquals(partial.diffWidth, 70);
+  // A width that isn't a usable number costs that width, not the layout.
+  assertEquals(partial.sidebarWidth, defaults.sidebarWidth);
+  assertEquals(partial.showDiffSidebar, defaults.showDiffSidebar);
+  // A pane can never be persisted to nothing; the layout pass clamps from here.
+  assertEquals(decodeLayout({ sidebarWidth: -5, scopeHeight: 0.4 }).sidebarWidth, 1);
+  assertEquals(decodeLayout({ scopeHeight: 0.4 }).scopeHeight, 1);
 });
 
 Deno.test("normalizeRepo accepts owner/repo and the URLs people paste", () => {
