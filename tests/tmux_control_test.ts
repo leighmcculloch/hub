@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
 import {
+  capturePaneCommand,
   paneTitle,
   parseCursor,
   parsePanes,
@@ -57,10 +58,32 @@ Deno.test("paneTitle qualifies a split window's panes", () => {
   assertEquals(paneTitle(single), "vim");
 });
 
-Deno.test("parseCursor reads the position and the visibility flag", () => {
-  assertEquals(parseCursor(["12,3,1"]), { x: 12, y: 3, visible: true });
-  assertEquals(parseCursor(["0,0,0"]), { x: 0, y: 0, visible: false });
+Deno.test("parseCursor reads the position, the flags and the history size", () => {
+  assertEquals(parseCursor(["12,3,1,400,1"]), {
+    x: 12,
+    y: 3,
+    visible: true,
+    historySize: 400,
+    alternate: true,
+  });
+  // A reply from before those fields were asked for still parses.
+  assertEquals(parseCursor(["0,0,0"]), {
+    x: 0,
+    y: 0,
+    visible: false,
+    historySize: 0,
+    alternate: false,
+  });
   assertEquals(parseCursor(["nonsense"]), null);
+});
+
+Deno.test("capture-pane reads the live screen, or a window of the scrollback", () => {
+  assertEquals(capturePaneCommand("%1"), "capture-pane -p -e -t %1");
+  // Scrolled back 30 lines in a 20-row pane: the 20 lines ending 30 above the
+  // top of the live screen.
+  assertEquals(capturePaneCommand("%1", 30, 20), "capture-pane -p -e -S -30 -E -11 -t %1");
+  // No height yet means no window to ask for, so it falls back to the screen.
+  assertEquals(capturePaneCommand("%1", 30, 0), "capture-pane -p -e -t %1");
 });
 
 Deno.test("sendKeysCommands hex-encodes bytes and splits long payloads", () => {

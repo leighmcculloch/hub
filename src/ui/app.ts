@@ -367,7 +367,9 @@ export class App {
 
     const session = this.workspace.selectedSession;
     const tab = session?.selectedTab;
-    if (modalOpen || this.focus !== "terminal" || !tab || !tab.cursor.visible) {
+    // Scrolled back, the cursor isn't on screen at all; drawing it where it
+    // would have been would point at the wrong line of old output.
+    if (modalOpen || this.focus !== "terminal" || !tab || !tab.cursor.visible || tab.scrollback) {
       return { x: 0, y: 0, visible: false };
     }
     const content = this.terminalContent;
@@ -614,6 +616,9 @@ export class App {
       case "m":
         this.renameSession();
         return true;
+      case "g":
+        this.openSessionSwitcher();
+        return true;
       case "t":
         session?.newTab();
         return true;
@@ -640,10 +645,24 @@ export class App {
         this.sessions.syncSelection();
         return true;
       case "left":
-        session?.selectAdjacentTab(-1);
+      case "right": {
+        // Shift resizes the sidebar you're in, so the layout is reachable
+        // without the mouse; without a sidebar in focus it switches tabs.
+        const step = event.name === "left" ? -1 : 1;
+        if (event.shift && this.resizeFocusedSidebar(step * 2)) return true;
+        session?.selectAdjacentTab(step);
         return true;
-      case "right":
-        session?.selectAdjacentTab(1);
+      }
+      case "pageup":
+        // Scrollback from the keyboard, in the app's own namespace so the
+        // program in the pane keeps its own PageUp.
+        session?.scrollTab(this.terminalContent.height - 1);
+        return true;
+      case "pagedown":
+        session?.scrollTab(-(this.terminalContent.height - 1));
+        return true;
+      case "end":
+        session?.resetScroll();
         return true;
       default:
         if (/^[1-9]$/.test(event.name)) {
@@ -707,6 +726,7 @@ export class App {
   private commands(): Command[] {
     const session = this.workspace.selectedSession;
     return availableCommands([
+      { label: "Go to Session or VM…", shortcut: "Alt+G", run: () => this.openSessionSwitcher() },
       { label: "New Session…", shortcut: "Alt+N", run: () => this.openNewSession() },
       { label: "New Local Shell", shortcut: "Alt+L", run: () => this.workspace.newLocalSession() },
       {
@@ -786,6 +806,52 @@ export class App {
       },
       { label: "Quit", shortcut: "Alt+Q", run: () => this.quit() },
     ]);
+  }
+
+  /** Widen or narrow whichever sidebar has the keyboard. */
+  private resizeFocusedSidebar(delta: number): boolean {
+    if (this.focus === "sessions") {
+      this.sidebarWidth = Math.max(MIN_SIDEBAR, this.sidebarWidth + delta);
+    } else if (this.focus === "diff") {
+      // The diff sidebar is anchored to the right edge, so it grows against
+      // the arrow: Left widens it.
+      this.diffWidth = Math.max(MIN_DIFF, this.diffWidth - delta);
+    } else {
+      return false;
+    }
+    this.screen.invalidate();
+    this.persistLayout();
+    return true;
+  }
+
+  /**
+   * Everything you might want on screen, in one list: the sessions already
+   * open, then the VMs that aren't. Typing a VM's name and pressing Enter
+   * connects to it, which is the shortest path from "where was that box" to
+   * looking at it.
+   */
+  private openSessionSwitcher(): void {
+    const sessions = this.workspace.sessions;
+    const unopened = this.workspace.unopenedVMs;
+    if (sessions.length === 0 && unopened.length === 0) {
+      this.say("No sessions or VMs to switch to");
+      return;
+    }
+    const options = [
+      ...sessions.map((one) => ({
+        label: one.displayName,
+        detail: one.hasUnseenOutput ? "open · new output" : "open",
+      })),
+      ...unopened.map((vm) => ({ label: vm.name, detail: vm.status ?? "not connected" })),
+    ];
+    const current = sessions.findIndex((one) => one.id === this.workspace.selectedSessionID);
+    this.openPopup(
+      new SelectPopup("Go to", options, current, (index) => {
+        if (index < sessions.length) this.workspace.selectSession(sessions[index].id);
+        else this.workspace.reopen(unopened[index - sessions.length]);
+        this.sessions.syncSelection();
+      }),
+    );
   }
 
   /**
@@ -1040,12 +1106,15 @@ export class App {
       this.diff.scroll(id, delta);
       return;
     }
-    // The terminal's own scrollback belongs to tmux; forwarding the wheel lets
-    // whatever is running in the pane decide what scrolling means.
+    // Over the terminal the wheel means what it means in a terminal: it walks
+    // the pane's scrollback. A full-screen program — an editor, an agent's UI —
+    // owns the wheel instead, so it gets the arrows it is listening for.
     if (id === "terminal.body") {
       const session = this.workspace.selectedSession;
+      if (!session) return;
+      if (!session.selectedTab?.alternate && session.scrollTab(-delta)) return;
       const bytes = new TextEncoder().encode(delta < 0 ? "\x1b[A".repeat(3) : "\x1b[B".repeat(3));
-      session?.sendKeys(bytes);
+      session.sendKeys(bytes);
     }
   }
 

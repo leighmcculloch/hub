@@ -44,6 +44,18 @@ export interface TerminalTab {
   /** The pane's visible screen, one styled string per row, from capture-pane. */
   screen: string[];
   cursor: { x: number; y: number; visible: boolean };
+  /**
+   * How many lines above the live screen the pane is being read at. 0 is the
+   * live screen; anything else is scrollback, and any keystroke returns to 0
+   * the way it does in a terminal.
+   */
+  scrollback: number;
+  /** How far back it can go, as tmux last reported. */
+  historySize: number;
+  /** True while a full-screen program has the pane; see `PaneCursor`. */
+  alternate: boolean;
+  /** True when this pane has printed something since it was last on screen. */
+  hasUnseenOutput: boolean;
 }
 
 export function tabDisplayName(tab: TerminalTab): string {
@@ -312,6 +324,8 @@ export class TerminalSession {
   selectTab(paneID: string): void {
     if (this.selectedTabID === paneID) return;
     this.selectedTabID = paneID;
+    const tab = this.selectedTab;
+    if (tab) tab.hasUnseenOutput = false;
     this.focusSelectedPane();
   }
 
@@ -325,10 +339,38 @@ export class TerminalSession {
 
   // MARK: - Input and sizing
 
+  /**
+   * Read the pane further back in its scrollback, or closer to the live screen.
+   * Positive moves back in time. Returns whether anything moved, so the caller
+   * can fall back to forwarding the wheel.
+   */
+  scrollTab(lines: number): boolean {
+    const tab = this.selectedTab;
+    if (!tab) return false;
+    const next = Math.min(Math.max(0, tab.scrollback + lines), tab.historySize);
+    if (next === tab.scrollback) return false;
+    tab.scrollback = next;
+    this.scheduleCapture();
+    return true;
+  }
+
+  /** Back to the live screen, wherever the pane was being read. */
+  resetScroll(): void {
+    const tab = this.selectedTab;
+    if (!tab || tab.scrollback === 0) return;
+    tab.scrollback = 0;
+    this.scheduleCapture();
+  }
+
   /** Forward raw keystrokes to the selected pane, byte for byte. */
   sendKeys(bytes: Uint8Array): void {
     const tab = this.selectedTab;
     if (!tab) return;
+    // Typing returns you to the live screen, the way it does in a terminal:
+    // what you type appears where the cursor is, so that is where to be looking.
+    if (tab.scrollback !== 0) {
+      tab.scrollback = 0;
+    }
     for (const command of sendKeysCommands(tab.paneID, bytes)) this.send(command);
     // Typing moves the cursor and redraws the pane without any notification, so
     // a capture is scheduled off the keystroke rather than waiting for output.
@@ -364,6 +406,10 @@ export class TerminalSession {
         // Noted whichever pane it came from: a background window of a
         // background session has still done something worth flagging.
         if (!this.isForeground) this.hasUnseenOutput = true;
+        if (event.pane !== this.selectedTabID) {
+          const tab = this.tabs.find((entry) => entry.paneID === event.pane);
+          if (tab) tab.hasUnseenOutput = true;
+        }
         break;
       case "paneListChanged":
         this.scheduleRefresh();
@@ -396,7 +442,17 @@ export class TerminalSession {
       case "cursor": {
         const tab = this.tabs.find((entry) => entry.paneID === expectation.paneID);
         const cursor = parseCursor(lines);
-        if (tab && cursor) tab.cursor = cursor;
+        if (tab && cursor) {
+          tab.cursor = { x: cursor.x, y: cursor.y, visible: cursor.visible };
+          tab.historySize = cursor.historySize;
+          tab.alternate = cursor.alternate;
+          // A pane that has scrolled off the end of its own history — the
+          // buffer filled up behind you — is pulled back to what still exists.
+          if (tab.scrollback > cursor.historySize) {
+            tab.scrollback = cursor.historySize;
+            this.scheduleCapture();
+          }
+        }
         break;
       }
       case "ignored":
@@ -435,7 +491,10 @@ export class TerminalSession {
   private captureSelected(): void {
     const tab = this.selectedTab;
     if (!tab || this.client === null) return;
-    this.send(capturePaneCommand(tab.paneID), { kind: "capture", paneID: tab.paneID });
+    this.send(
+      capturePaneCommand(tab.paneID, tab.scrollback, this.reportedSize?.rows ?? 0),
+      { kind: "capture", paneID: tab.paneID },
+    );
     this.send(cursorCommand(tab.paneID), { kind: "cursor", paneID: tab.paneID });
   }
 
@@ -461,6 +520,10 @@ export class TerminalSession {
         title: "",
         screen: [],
         cursor: { x: 0, y: 0, visible: true },
+        scrollback: 0,
+        historySize: 0,
+        alternate: false,
+        hasUnseenOutput: false,
       };
       tab.title = paneTitle(pane);
       tab.windowID = pane.windowID;

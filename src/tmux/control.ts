@@ -192,8 +192,13 @@ export function selectPaneCommands(window: string, pane: string): string[] {
  * pane is drawn: tmux keeps the screen state, so the app renders what tmux says
  * is on it rather than emulating a terminal of its own.
  */
-export function capturePaneCommand(pane: string): string {
-  return `capture-pane -p -e -t ${pane}`;
+export function capturePaneCommand(pane: string, offset = 0, height = 0): string {
+  if (offset <= 0 || height <= 0) return `capture-pane -p -e -t ${pane}`;
+  // tmux numbers the visible screen from 0 and the scrollback with negative
+  // lines, so scrolling back `offset` lines is a window of the same height
+  // starting that far above the top of the screen.
+  const start = -offset;
+  return `capture-pane -p -e -S ${start} -E ${start + height - 1} -t ${pane}`;
 }
 
 /**
@@ -202,17 +207,38 @@ export function capturePaneCommand(pane: string): string {
  * do.
  */
 export function cursorCommand(pane: string): string {
-  return `display-message -p -t ${pane} "#{cursor_x},#{cursor_y},#{?cursor_flag,1,0}"`;
+  return `display-message -p -t ${pane} ` +
+    `"#{cursor_x},#{cursor_y},#{?cursor_flag,1,0},#{history_size},#{?alternate_on,1,0}"`;
 }
 
-/** Parse `cursorCommand`'s reply. */
-export function parseCursor(lines: string[]): { x: number; y: number; visible: boolean } | null {
+export interface PaneCursor {
+  x: number;
+  y: number;
+  visible: boolean;
+  /** Lines of scrollback above the visible screen; how far back it can go. */
+  historySize: number;
+  /**
+   * True while the pane's program is on the alternate screen — an editor, or an
+   * agent's full-screen UI. Such a program owns the wheel; anything else means
+   * the wheel should move the scrollback, the way a terminal does.
+   */
+  alternate: boolean;
+}
+
+/** Parse `cursorCommand`'s reply. Trailing fields are optional. */
+export function parseCursor(lines: string[]): PaneCursor | null {
   const fields = (lines[0] ?? "").trim().split(",");
   if (fields.length < 2) return null;
   const x = integer(fields[0]);
   const y = integer(fields[1]);
   if (x === null || y === null) return null;
-  return { x, y, visible: fields[2] !== "0" };
+  return {
+    x,
+    y,
+    visible: fields[2] !== "0",
+    historySize: Math.max(0, integer(fields[3] ?? "") ?? 0),
+    alternate: fields[4] === "1",
+  };
 }
 
 /**

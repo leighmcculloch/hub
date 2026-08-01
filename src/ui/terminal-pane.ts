@@ -7,7 +7,7 @@
  * from being clipped to the pane's width.
  */
 
-import { Color, fit, styled } from "../tui/ansi.ts";
+import { Color, displayWidth, fit, styled } from "../tui/ansi.ts";
 import {
   control,
   type HitMap,
@@ -161,15 +161,18 @@ export class TerminalPane {
       const tab = session.tabs[index];
       const selected = tab.paneID === session.selectedTabID;
       const id = `terminal.tab:${index}`;
-      hits.add({ x, y: rect.y, width: tabDisplayName(tab).length + 2, height: 1 }, id);
-      bar += control(` ${tabDisplayName(tab)} `, {
+      // A background window that has printed something is marked, the same way
+      // a background session is in the sidebar.
+      const label = `${tabDisplayName(tab)}${tab.hasUnseenOutput && !selected ? " •" : ""}`;
+      hits.add({ x, y: rect.y, width: label.length + 2, height: 1 }, id);
+      bar += control(` ${label} `, {
         // The strip having the keyboard is shown on the current tab, so it is
         // clear that left/right will move between them.
         focused: selected && onTabs,
         active: selected,
         hovered: this.hovered === id,
       });
-      x += tabDisplayName(tab).length + 2;
+      x += label.length + 2;
     }
     hits.add({ x, y: rect.y, width: 3, height: 1 }, "terminal.newTab");
     bar += control(" + ", {
@@ -179,7 +182,18 @@ export class TerminalPane {
     if (onTabs || (focused && this.part === "new")) {
       bar += styled("  ← → switch · Enter to type", { fg: Color.dimmer });
     }
-    return fit(bar, width);
+
+    // Reading the scrollback is a mode, and a mode you can't see is a mode you
+    // get stuck in — so it says so, and says how to get out.
+    const back = session.selectedTab?.scrollback ?? 0;
+    if (back === 0) return fit(bar, width);
+    const note = styled(` ↑ ${back} lines back · Alt+End or type to return `, {
+      fg: Color.black,
+      bg: Color.orange,
+      bold: true,
+    });
+    const gap = Math.max(1, width - displayWidth(bar) - displayWidth(note));
+    return fit(`${bar}${" ".repeat(gap)}${note}`, width);
   }
 
   /** Handle a key for the tab strip or the + button. */

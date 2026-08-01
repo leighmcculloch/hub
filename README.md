@@ -98,6 +98,10 @@ Everything else is an `Alt` chord, for the same reason.
 | `Alt+Z` | Zen mode — the terminal, edge to edge |
 | `Alt+1`…`Alt+9` | Select a session (9 is the last) |
 | `Alt+[` / `Alt+]` | Previous / next session |
+| `Alt+G` | Go to a session or VM by name |
+| `Alt+PgUp` / `Alt+PgDn` | Read the terminal's scrollback |
+| `Alt+End` | Back to the live screen |
+| `Alt+Shift+←` / `→` | Resize the sidebar you're in |
 | `Alt+T` | New tmux window in this session |
 | `Alt+←` / `Alt+→` | Previous / next terminal tab |
 | `Alt+K` | Reconnect a dropped session |
