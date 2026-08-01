@@ -73,6 +73,16 @@ export class Workspace {
     return this.sessions.find((session) => session.id === this.selectedSessionID) ?? null;
   }
 
+  /**
+   * Tell each session whether it is the one on screen, so output arriving in a
+   * background session can be flagged as unseen.
+   */
+  private syncForeground(): void {
+    for (const session of this.sessions) {
+      session.setForeground(session.id === this.selectedSessionID);
+    }
+  }
+
   /** Known VMs that aren't already open as a tab. */
   get unopenedVMs(): RemoteVMRecord[] {
     const open = new Set(
@@ -144,6 +154,7 @@ export class Workspace {
     }, this.onChange);
     this.sessions.push(session);
     this.selectedSessionID = session.id;
+    this.syncForeground();
     session.start();
     if (options.persist !== false) this.persistSessions();
     this.onChange();
@@ -228,8 +239,7 @@ export class Workspace {
     // If this VM already has a tab, just focus it.
     const existing = this.sessions.find((session) => session.destination === vm.destination);
     if (existing) {
-      this.selectedSessionID = existing.id;
-      this.onChange();
+      this.selectSession(existing.id);
       return;
     }
     const provider = this.provider;
@@ -265,6 +275,7 @@ export class Workspace {
       this.selectedSessionID = (this.sessions[index] ?? this.sessions[this.sessions.length - 1])
         ?.id ?? null;
     }
+    this.syncForeground();
     this.persistSessions();
     this.onChange();
   }
@@ -308,6 +319,7 @@ export class Workspace {
   selectSession(id: string): void {
     if (this.selectedSessionID === id) return;
     this.selectedSessionID = id;
+    this.syncForeground();
     this.persistSessions();
     this.onChange();
   }

@@ -88,6 +88,7 @@ const BINDINGS: Binding[] = [
   { keys: "Enter", description: "Activate; on the tab strip, start typing" },
   { keys: "Alt+F", description: "Leave the terminal (where Tab is the shell's)" },
   { keys: "Esc", description: "Back to typing in the terminal" },
+  { keys: "Alt+P", description: "Command palette — everything, by name" },
   { keys: "Alt+N", description: "New session on a fresh VM" },
   { keys: "Alt+L", description: "New local shell" },
   { keys: "Alt+W", description: "Close the session (leaves the VM running)" },

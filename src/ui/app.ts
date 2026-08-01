@@ -21,6 +21,7 @@ import { NewSessionModal } from "./new-session-modal.ts";
 import { SettingsModal } from "./settings-modal.ts";
 import { ConfirmModal, HelpModal } from "./overlays.ts";
 import { SelectPopup } from "./select-popup.ts";
+import { availableCommands, type Command, commandOptions } from "./commands.ts";
 import { isWorktree, shortRepoLabel } from "../model/repo-label.ts";
 
 type Focus = "sessions" | "terminal" | "diff";
@@ -265,7 +266,7 @@ export class App {
     // The hint follows the keyboard: the one thing worth knowing in the
     // terminal is how to get out of it, and everywhere else that Tab moves on.
     const hint = this.focus === "terminal" && this.terminal.inBody
-      ? "Alt+F focus · Alt+N new · F1 keys "
+      ? "Alt+F focus · Alt+P commands · F1 keys "
       : "Tab moves · Enter selects · Esc terminal · F1 keys ";
     const right = styled(hint, { fg: Color.dimmer });
     const used = displayWidth(left) + displayWidth(middle) + displayWidth(right);
@@ -510,12 +511,13 @@ export class App {
         await this.openBrowser();
         return true;
       case "s":
-        this.workspace.showSessionSidebar = !this.workspace.showSessionSidebar;
-        this.screen.invalidate();
+        this.toggleSessionSidebar();
         return true;
       case "r":
-        this.workspace.showDiffSidebar = !this.workspace.showDiffSidebar;
-        this.screen.invalidate();
+        this.toggleDiffSidebar();
+        return true;
+      case "p":
+        this.openCommandPalette();
         return true;
       case "t":
         session?.newTab();
@@ -556,6 +558,106 @@ export class App {
         }
         return false;
     }
+  }
+
+  private toggleSessionSidebar(): void {
+    this.workspace.showSessionSidebar = !this.workspace.showSessionSidebar;
+    // Hiding the pane the keyboard is in would strand it somewhere invisible.
+    if (!this.workspace.showSessionSidebar && this.focus === "sessions") this.enterTerminal();
+    this.screen.invalidate();
+  }
+
+  private toggleDiffSidebar(): void {
+    this.workspace.showDiffSidebar = !this.workspace.showDiffSidebar;
+    if (!this.workspace.showDiffSidebar && this.focus === "diff") this.enterTerminal();
+    this.screen.invalidate();
+  }
+
+  /**
+   * Everything the app can do, in one filterable list. The shortcut beside each
+   * entry is the point as much as the entry is: the palette is discoverable, and
+   * using it teaches the chord that skips it next time.
+   */
+  private commands(): Command[] {
+    const session = this.workspace.selectedSession;
+    return availableCommands([
+      { label: "New Session…", shortcut: "Alt+N", run: () => this.openNewSession() },
+      { label: "New Local Shell", shortcut: "Alt+L", run: () => this.workspace.newLocalSession() },
+      {
+        label: "New Terminal Tab",
+        shortcut: "Alt+T",
+        enabled: session !== null,
+        run: () => session?.newTab(),
+      },
+      {
+        label: "Close Session",
+        shortcut: "Alt+W",
+        enabled: session !== null,
+        run: () => {
+          if (session) this.workspace.closeSession(session);
+        },
+      },
+      {
+        label: "Delete Session and VM…",
+        shortcut: "Alt+D",
+        enabled: session !== null,
+        run: () => this.confirmDelete(),
+      },
+      { label: "Open VM in Browser", shortcut: "Alt+O", run: () => this.openBrowser() },
+      {
+        label: this.workspace.showSessionSidebar
+          ? "Hide Sessions Sidebar"
+          : "Show Sessions Sidebar",
+        shortcut: "Alt+S",
+        run: () => this.toggleSessionSidebar(),
+      },
+      {
+        label: this.workspace.showDiffSidebar ? "Hide Diff Sidebar" : "Show Diff Sidebar",
+        shortcut: "Alt+R",
+        run: () => this.toggleDiffSidebar(),
+      },
+      {
+        label: "Reconnect Dropped Sessions",
+        shortcut: "Alt+K",
+        run: () => {
+          this.workspace.reconnectDisconnectedSessions();
+          this.say("Reconnecting…");
+        },
+      },
+      {
+        label: "Refresh VM List",
+        run: async () => {
+          this.say("Refreshing VMs…");
+          await this.workspace.loadAvailableVMs();
+        },
+      },
+      {
+        label: "Settings…",
+        shortcut: "Alt+,",
+        run: () => {
+          this.settings = new SettingsModal(this.config, (popup) => this.openPopup(popup));
+        },
+      },
+      {
+        label: "Keyboard Shortcuts",
+        shortcut: "F1",
+        run: () => {
+          this.help = true;
+        },
+      },
+      { label: "Quit", shortcut: "Alt+Q", run: () => this.quit() },
+    ]);
+  }
+
+  private openCommandPalette(): void {
+    const commands = this.commands();
+    // No option is "current", so -1: the list opens on the first entry without
+    // marking any of them as the value already chosen.
+    this.openPopup(
+      new SelectPopup("Commands", commandOptions(commands), -1, (index) => {
+        void commands[index].run();
+      }),
+    );
   }
 
   private sessionSidebarKey(event: KeyEvent): void {

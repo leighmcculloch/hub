@@ -4,7 +4,7 @@
  * connects to it.
  */
 
-import { Color, elideMiddle, fit, styled } from "../tui/ansi.ts";
+import { Color, displayWidth, elideMiddle, fit, styled } from "../tui/ansi.ts";
 import {
   type HitMap,
   placeholder,
@@ -152,9 +152,17 @@ export class SessionSidebar {
         : session.isConnecting
         ? styled(spinnerFrame(session.elapsedMs), { fg: Color.accent })
         : styled("›", { fg: Color.accent });
-      const name = elideMiddle(session.displayName, Math.max(6, width - 4));
+      const nameWidth = Math.max(6, width - 4);
+      const name = elideMiddle(session.displayName, nameWidth);
       const style = session.isDisconnected ? { fg: Color.dim } : { fg: Color.fg };
-      return `${icon} ${styled(name, style)}`;
+      // An agent working in a session you aren't looking at is the reason to
+      // keep several open, so a session that has printed something since you
+      // last saw it carries a dot on the right until you go back to it.
+      if (!session.hasUnseenOutput || this.isSelected(entry)) {
+        return `${icon} ${styled(name, style)}`;
+      }
+      const gap = " ".repeat(Math.max(1, nameWidth - displayWidth(name) + 1));
+      return `${icon} ${styled(name, style)}${gap}${styled("●", { fg: Color.orange })}`;
     }
     if (entry.kind === "vm") {
       const running = entry.vm.status === "running";

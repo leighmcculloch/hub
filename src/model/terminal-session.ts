@@ -111,12 +111,30 @@ export class TerminalSession {
   tabs: TerminalTab[] = [];
   selectedTabID: string | null = null;
 
+  /**
+   * True when a pane has printed something since this session was last looked
+   * at. An agent working in a background session is the whole point of having
+   * several, so the sidebar says which ones have moved.
+   */
+  hasUnseenOutput = false;
+
   /** When the current connection attempt began, for the elapsed counter. */
   startedAt = Date.now();
   /** The most recent thing the transport said, shown while connecting. */
   progressNote: string | null = null;
   /** Set once tmux has answered anything, so "spawning" can end. */
   private heardFromTmux = false;
+  /** Whether this is the session on screen; kept by the workspace. */
+  private isForeground = false;
+
+  /**
+   * Say whether this session is the one being looked at. Output arriving while
+   * it isn't raises the unseen flag; becoming foreground clears it.
+   */
+  setForeground(foreground: boolean): void {
+    this.isForeground = foreground;
+    if (foreground) this.hasUnseenOutput = false;
+  }
 
   /** Replaced when the VM is renamed, so a reconnect dials a host that exists. */
   private bootstrap: string;
@@ -343,6 +361,9 @@ export class TerminalSession {
         // The bytes themselves aren't rendered — tmux's own screen is, via
         // capture-pane — so output is only a signal that the pane changed.
         if (event.pane === this.selectedTabID) this.scheduleCapture();
+        // Noted whichever pane it came from: a background window of a
+        // background session has still done something worth flagging.
+        if (!this.isForeground) this.hasUnseenOutput = true;
         break;
       case "paneListChanged":
         this.scheduleRefresh();
