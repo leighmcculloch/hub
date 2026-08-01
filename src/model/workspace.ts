@@ -117,6 +117,19 @@ export class Workspace {
   }
 
   /**
+   * Whether the diff sidebar is shown: the user's toggle, but not for a local
+   * session — a local shell has no remote worktree to diff, and showing the
+   * sidebar would only poll git repos on the host machine. The preference is
+   * kept so switching back to a VM tab restores it.
+   */
+  get diffSidebarVisible(): boolean {
+    if (!this.showDiffSidebar) return false;
+    const session = this.selectedSession;
+    // No selection yet (no tabs) still shows it, matching the launch state.
+    return session === null || session.destination !== null;
+  }
+
+  /**
    * Known VMs that aren't already open as a tab. Keyed by provider as well as
    * destination: a sprite and an exe.dev VM can perfectly well share a name,
    * and opening one must not hide the other.

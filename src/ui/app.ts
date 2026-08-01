@@ -255,7 +255,7 @@ export class App {
     let leftWidth = this.workspace.showSessionSidebar
       ? Math.max(MIN_SIDEBAR, this.sidebarWidth)
       : 0;
-    let rightWidth = this.workspace.showDiffSidebar ? Math.max(MIN_DIFF, this.diffWidth) : 0;
+    let rightWidth = this.workspace.diffSidebarVisible ? Math.max(MIN_DIFF, this.diffWidth) : 0;
     const dividers = (leftWidth > 0 ? 1 : 0) + (rightWidth > 0 ? 1 : 0);
 
     if (cols - leftWidth - rightWidth - dividers < MIN_TERMINAL) {
@@ -598,7 +598,7 @@ export class App {
     return order.filter((one) =>
       one === "terminal" ||
       (one === "sessions" && this.workspace.showSessionSidebar) ||
-      (one === "diff" && this.workspace.showDiffSidebar)
+      (one === "diff" && this.workspace.diffSidebarVisible)
     );
   }
 
@@ -724,6 +724,13 @@ export class App {
 
   private toggleDiffSidebar(): void {
     this.workspace.showDiffSidebar = !this.workspace.showDiffSidebar;
+    // A local shell has no remote worktree, so the diff sidebar stays hidden
+    // on local tabs — flip the preference, but say so when it can't take
+    // effect here.
+    const session = this.workspace.selectedSession;
+    if (session !== null && session.destination === null) {
+      this.say("Diff sidebar is hidden on local sessions");
+    }
     if (!this.workspace.showDiffSidebar && this.focus === "diff") this.enterTerminal();
     this.beforeZen = null;
     this.screen.invalidate();
