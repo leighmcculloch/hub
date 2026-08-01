@@ -56,7 +56,10 @@ Three panes, all resizable (drag the dividers) and hideable:
   branch, and the commits themselves. Click a commit to read its diff,
   shift-click a second to diff the run together. It re-polls every few seconds —
   backing off while a VM is unreachable — so edits appear without clicking
-  anything. `Alt+R` toggles the pane.
+  anything. `/` searches the open diff, highlighting every hit as you type, with
+  `n` and `p` stepping the matches and `[` / `]` jumping file to file. `y` copies
+  what you're looking at — the diff, a path, a commit sha — to your terminal's
+  clipboard over OSC 52, so it works over SSH. `Alt+R` toggles the pane.
 
 The diff pane reaches VM repos by running `git` over the same transport the
 terminal holds, reusing SSH's multiplexed connection, so it is cheap once a
@@ -98,6 +101,9 @@ Everything else is an `Alt` chord, for the same reason.
 | `Alt+←` / `Alt+→` | Previous / next terminal tab |
 | `Alt+K` | Reconnect a dropped session |
 | `Alt+,` | Settings |
+| `/` `n` `p` | In the diff: search, next / previous match |
+| `[` `]` | In the diff: previous / next file or hunk |
+| `y` | Copy the diff, file or commit to the clipboard |
 | `F1` | Key map |
 | `Alt+Q` | Quit |
 

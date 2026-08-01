@@ -21,8 +21,17 @@ import {
   hideCursor,
   leaveAltScreen,
   resetStyle,
+  setClipboard,
   showCursor,
 } from "./ansi.ts";
+import { encodeBase64 } from "@std/encoding/base64";
+
+/**
+ * How much text is worth handing to OSC 52. Terminals cap the sequence and drop
+ * anything over it without a word, so a long diff is trimmed to something that
+ * will actually arrive.
+ */
+const CLIPBOARD_LIMIT = 60_000;
 
 export interface CursorState {
   x: number;
@@ -108,6 +117,16 @@ export class Screen {
   /** Force the next `render` to repaint every row. */
   invalidate(): void {
     this.previous = [];
+  }
+
+  /**
+   * Put text on the terminal's clipboard. Returns how many characters were
+   * actually sent, so the caller can say when it had to trim.
+   */
+  copyToClipboard(text: string): number {
+    const trimmed = text.length > CLIPBOARD_LIMIT ? text.slice(0, CLIPBOARD_LIMIT) : text;
+    this.write(setClipboard(encodeBase64(this.encoder.encode(trimmed))));
+    return trimmed.length;
   }
 
   private write(text: string): void {

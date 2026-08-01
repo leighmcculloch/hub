@@ -40,6 +40,19 @@ export const disableMouse = `${CSI}?1006l${CSI}?1003l${CSI}?1002l${CSI}?1000l`;
 export const enableBracketedPaste = `${CSI}?2004h`;
 export const disableBracketedPaste = `${CSI}?2004l`;
 
+/**
+ * OSC 52: hand text to the *terminal's* clipboard rather than the machine this
+ * process runs on. That is the whole point here — hub is routinely run over SSH
+ * or inside another multiplexer, and the clipboard worth reaching is the one on
+ * the keyboard in front of you.
+ *
+ * Terminals cap the sequence's length; anything longer is dropped silently, so
+ * callers truncate rather than send something the terminal will discard.
+ */
+export function setClipboard(base64: string): string {
+  return `${ESC}]52;c;${base64}\x07`;
+}
+
 /** Ask the terminal to keep reporting focus, so a blurred app can dim. */
 export const enableFocusReporting = `${CSI}?1004h`;
 export const disableFocusReporting = `${CSI}?1004l`;

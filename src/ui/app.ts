@@ -340,7 +340,8 @@ export class App {
   private cursor(modalOpen: boolean): { x: number; y: number; visible: boolean } {
     const field = this.popup?.cursorPosition() ??
       (this.confirm || this.help ? null : this.settings?.cursorPosition()) ??
-      (this.confirm || this.help || this.settings ? null : this.newSession?.cursorPosition());
+      (this.confirm || this.help || this.settings ? null : this.newSession?.cursorPosition()) ??
+      (modalOpen || this.focus !== "diff" ? null : this.diff.cursorPosition());
     if (field) return { x: field.x, y: field.y, visible: true };
 
     const session = this.workspace.selectedSession;
@@ -451,6 +452,12 @@ export class App {
       return;
     }
     if (event.name === "escape") {
+      // A search in the diff pane claims Esc first: dropping the query is what
+      // you mean, and the Esc after that still leaves for the terminal.
+      if (this.focus === "diff" && this.diff.searchActive) {
+        await this.diffKey(event);
+        return;
+      }
       this.enterTerminal();
       return;
     }
@@ -471,9 +478,41 @@ export class App {
             return;
         }
       case "diff":
-        if (await this.diff.key(event.name, event.shift) === "openRepos") this.openRepoPopup();
+        await this.diffKey(event);
         return;
     }
+  }
+
+  /** Run a key through the diff pane and do whatever it couldn't do itself. */
+  private async diffKey(event: KeyEvent): Promise<void> {
+    switch (await this.diff.key(event)) {
+      case "openRepos":
+        this.openRepoPopup();
+        return;
+      case "copy":
+        this.copyFromDiff();
+        return;
+    }
+  }
+
+  /**
+   * Put the diff pane's current selection on the *terminal's* clipboard, which
+   * is the one on the desk in front of you even when hub is running over SSH.
+   */
+  private copyFromDiff(): void {
+    const text = this.diff.clipboardText();
+    if (!text) {
+      this.say("Nothing to copy here");
+      return;
+    }
+    const sent = this.screen.copyToClipboard(text);
+    this.say(
+      sent < text.length
+        ? `Copied the first ${sent} characters — the rest is too long for the terminal`
+        : text.includes("\n")
+        ? `Copied ${text.split("\n").length} lines`
+        : `Copied ${text}`,
+    );
   }
 
   /**

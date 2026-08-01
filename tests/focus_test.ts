@@ -5,6 +5,10 @@ import { DiffSidebar } from "../src/ui/diff-sidebar.ts";
 import type { Workspace } from "../src/model/workspace.ts";
 import type { TerminalSession } from "../src/model/terminal-session.ts";
 
+function diffKey(name: string, shift: boolean) {
+  return { name, ctrl: false, alt: false, shift };
+}
+
 /** The sidebar only reaches the workspace while rendering, which these don't. */
 function stubWorkspace(): Workspace {
   return {
@@ -126,7 +130,7 @@ Deno.test("the diff sidebar walks repo, scope, files and diff", async () => {
   sidebar.focusFirst();
   assertEquals(sidebar.part, "repo");
   // The repo row is a dropdown: Enter asks the app to open its list.
-  assertEquals(await sidebar.key("enter", false), "openRepos");
+  assertEquals(await sidebar.key(diffKey("enter", false)), "openRepos");
 
   for (const expected of ["scope", "files", "diff"]) {
     assertEquals(sidebar.advance(1), true);
@@ -145,15 +149,15 @@ Deno.test("the diff sidebar's lists and diff pane take the arrow keys", async ()
   sidebar.focusFirst();
   // Left and right step the repo filter without opening the list; the dropdown
   // claims them whether or not there is another repo to step to.
-  assertEquals(await sidebar.key("right", false), true);
-  assertEquals(await sidebar.key("q", false), false);
+  assertEquals(await sidebar.key(diffKey("right", false)), true);
+  assertEquals(await sidebar.key(diffKey("q", false)), false);
 
   sidebar.part = "scope";
-  assertEquals(await sidebar.key("down", false), true);
-  assertEquals(await sidebar.key("end", false), true);
-  assertEquals(await sidebar.key("q", false), false);
+  assertEquals(await sidebar.key(diffKey("down", false)), true);
+  assertEquals(await sidebar.key(diffKey("end", false)), true);
+  assertEquals(await sidebar.key(diffKey("q", false)), false);
 
   sidebar.part = "diff";
-  assertEquals(await sidebar.key("pagedown", false), true);
-  assertEquals(await sidebar.key("home", false), true);
+  assertEquals(await sidebar.key(diffKey("pagedown", false)), true);
+  assertEquals(await sidebar.key(diffKey("home", false)), true);
 });

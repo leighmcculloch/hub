@@ -7,7 +7,15 @@
  * all), and everything is read over the session's own transport.
  */
 
-import { Color, displayWidth, elideHead, elideMiddle, fit, styled } from "../tui/ansi.ts";
+import {
+  Color,
+  displayWidth,
+  elideHead,
+  elideMiddle,
+  fit,
+  type Style,
+  styled,
+} from "../tui/ansi.ts";
 import {
   dropdown,
   type HitMap,
@@ -17,6 +25,7 @@ import {
   rule,
   scrollbar,
   scrollToShow,
+  TextInput,
   wrap,
 } from "../tui/widgets.ts";
 import { PollBackoff } from "../model/poll-backoff.ts";
@@ -37,6 +46,7 @@ import { emptyLog, type GitLog } from "../git/git-log.ts";
 import { type GitLineStat, type GitRepoStatus, isBinaryStat } from "../git/git-status.ts";
 import { emptyScopeFiles, type GitScopeFiles } from "../git/git-scope-files.ts";
 import { type ParsedDiff, parseDiff } from "../git/diff-parse.ts";
+import { matchingRows, matchOrdinal, nextLandmark, nextMatch } from "../git/diff-search.ts";
 import * as RemoteGit from "../git/remote-git.ts";
 import { RemoteGitError } from "../git/remote-git.ts";
 import type { TerminalSession } from "../model/terminal-session.ts";
@@ -44,6 +54,21 @@ import type { TerminalSession } from "../model/terminal-session.ts";
 /** The stops Tab visits inside this pane, in order. */
 const PARTS = ["repo", "scope", "files", "diff"] as const;
 type DiffPart = typeof PARTS[number];
+
+/** What this pane needs off a key event; the app's `KeyEvent` satisfies it. */
+export interface DiffKey {
+  name: string;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+}
+
+/**
+ * What the app has to do about a key the pane couldn't finish itself: open the
+ * repo list (only the app can draw over everything) or put something on the
+ * clipboard (only the app holds the screen).
+ */
+export type DiffKeyResult = "openRepos" | "copy" | boolean;
 
 /** One row of the scope list, flattened so hit testing and keys share an index. */
 type ScopeRow =
@@ -105,6 +130,21 @@ export class DiffSidebar {
   private scopeRows: ScopeRow[] = [];
   private fileRows: string[] = [];
 
+  /**
+   * The diff pane's search. `/` opens the field, `n` and `p` step the matches,
+   * and the query stays live afterwards so the matches keep their highlight
+   * while you read around them.
+   */
+  private search = new TextInput();
+  private searching = false;
+  private query = "";
+  /** Row indexes matching the query, rebuilt whenever either side changes. */
+  private matches: number[] = [];
+  /** The diff body's height as last drawn, so End and the readout are honest. */
+  private diffBodyHeight = 0;
+  /** Where the search caret goes, in screen cells; null unless searching. */
+  private searchCursor: { x: number; y: number } | null = null;
+
   constructor(private onChange: () => void) {}
 
   /** Point the sidebar at a session, resetting everything if it changed. */
@@ -125,8 +165,30 @@ export class DiffSidebar {
     this.filesOffset = 0;
     this.scopeSelection = 0;
     this.filesSelection = 0;
+    this.clearSearch();
     this.backoff = new PollBackoff();
     this.restartPolling();
+  }
+
+  private clearSearch(): void {
+    this.searching = false;
+    this.query = "";
+    this.search.set("");
+    this.matches = [];
+  }
+
+  /**
+   * True while a search is being typed or is still showing its matches. The app
+   * hands Esc to this pane while it is, so the first Esc drops the search
+   * rather than jumping straight back to the terminal.
+   */
+  get searchActive(): boolean {
+    return this.searching || this.query.length > 0;
+  }
+
+  /** Where the search caret should sit this frame, if it is showing. */
+  cursorPosition(): { x: number; y: number } | null {
+    return this.searchCursor;
   }
 
   stop(): void {
@@ -332,6 +394,43 @@ export class DiffSidebar {
       parsed: parseDiff(text, this.selectedFile === null),
       offset: 0,
     };
+    this.recomputeMatches();
+  }
+
+  // MARK: - Search
+
+  private recomputeMatches(): void {
+    this.matches = matchingRows(this.diff.parsed.rows, this.query);
+  }
+
+  private jumpMatch(step: number): void {
+    const next = nextMatch(this.matches, this.diff.offset, step);
+    if (next !== null) this.diff.offset = next;
+  }
+
+  private jumpLandmark(step: number): void {
+    this.diff.offset = nextLandmark(this.diff.parsed.rows, this.diff.offset, step);
+  }
+
+  /**
+   * What `y` copies, which depends on where the keyboard is: the diff itself,
+   * the file you're looking at, or the commit you have picked.
+   */
+  clipboardText(): string | null {
+    switch (this.part) {
+      case "diff":
+        return this.diff.text || null;
+      case "files":
+        return this.fileRows[this.filesSelection] ?? null;
+      case "scope": {
+        const entry = this.scopeRows[this.scopeSelection];
+        if (!entry) return null;
+        if (entry.kind === "commit") return entry.log.commits[entry.index].sha;
+        return entry.repo;
+      }
+      case "repo":
+        return this.selectedRepo;
+    }
   }
 
   // MARK: - Selection
@@ -679,19 +778,21 @@ export class DiffSidebar {
     if (height <= 1) return [];
     const parsed = this.diff.parsed;
 
-    const title = this.selectedFile ??
-      (this.scope ? targetLabel(this.scope, this.logIn(this.scope.repo)) : "");
-    const stats =
-      `${parsed.additions > 0 ? styled(`+${parsed.additions}`, { fg: Color.green }) : ""}` +
-      `${parsed.deletions > 0 ? ` ${styled(`−${parsed.deletions}`, { fg: Color.red })}` : ""}`;
-    const lines = [
-      fit(
-        ` ${styled(elideHead(title || "Diff", Math.max(4, width - 14)), { bold: true })} ${stats}`,
-        width,
-      ),
-    ];
-
     const bodyHeight = height - 1;
+    this.diffBodyHeight = bodyHeight;
+
+    // The header doubles as the search field: the pane is too narrow to carry
+    // both, and while you are typing a query the query is what matters.
+    const lines: string[] = [];
+    if (this.searching) {
+      hits.add({ x: rect.x, y: top, width, height: 1 }, "diff.search");
+      lines.push(this.search.render(width, true, "Search this diff…", false));
+      this.searchCursor = { x: rect.x + this.search.cursorOffset(width), y: top };
+    } else {
+      this.searchCursor = null;
+      lines.push(this.diffHeader(width, parsed, bodyHeight));
+    }
+
     if (parsed.rows.length === 0) {
       return [
         ...lines,
@@ -716,9 +817,38 @@ export class DiffSidebar {
         lines.push(fit("", width));
         continue;
       }
-      lines.push(renderDiffRow(diffRow, width, gutter));
+      lines.push(renderDiffRow(diffRow, width, gutter, this.query));
     }
     return lines;
+  }
+
+  /**
+   * The diff pane's title bar: what is being read, its totals, and — pushed to
+   * the right — either where in the diff you are or how the search is going.
+   */
+  private diffHeader(width: number, parsed: ParsedDiff, bodyHeight: number): string {
+    const title = this.selectedFile ??
+      (this.scope ? targetLabel(this.scope, this.logIn(this.scope.repo)) : "");
+    const stats =
+      `${parsed.additions > 0 ? styled(`+${parsed.additions}`, { fg: Color.green }) : ""}` +
+      `${parsed.deletions > 0 ? ` ${styled(`−${parsed.deletions}`, { fg: Color.red })}` : ""}`;
+
+    const tail = this.query
+      ? styled(
+        this.matches.length === 0
+          ? `⌕ ${this.query}: none`
+          : `⌕ ${matchOrdinal(this.matches, this.diff.offset)}/${this.matches.length}`,
+        { fg: this.matches.length === 0 ? Color.orange : Color.accent },
+      )
+      : styled(scrollLabel(this.diff.offset, bodyHeight, parsed.rows.length), {
+        fg: Color.dimmer,
+      });
+
+    const tailWidth = displayWidth(tail);
+    const room = Math.max(4, width - 14 - tailWidth);
+    const head = ` ${styled(elideHead(title || "Diff", room), { bold: true })} ${stats}`;
+    const gap = Math.max(1, width - displayWidth(head) - tailWidth - 1);
+    return fit(`${head}${" ".repeat(gap)}${tail}`, width);
   }
 
   // MARK: - Interaction
@@ -802,17 +932,20 @@ export class DiffSidebar {
    * Keyboard navigation for whichever control has the keyboard. The repo
    * dropdown answers "openRepos" so the app can draw the list over everything.
    */
-  async key(name: string, shift: boolean): Promise<"openRepos" | boolean> {
+  async key(event: DiffKey): Promise<DiffKeyResult> {
+    const name = event.name;
     if (this.part === "repo") {
       if (name === "enter" || name === "space" || name === "down") return "openRepos";
       if (name === "left") this.cycleRepo(-1);
       else if (name === "right") this.cycleRepo(1);
+      else if (name === "y") return "copy";
       else return false;
       return true;
     }
 
     if (this.part === "diff") {
-      const page = 10;
+      if (this.searching) return this.searchKey(event);
+      const page = this.diffBodyHeight > 2 ? this.diffBodyHeight - 1 : 10;
       switch (name) {
         case "up":
           this.diff.offset = Math.max(0, this.diff.offset - 1);
@@ -829,6 +962,34 @@ export class DiffSidebar {
         case "home":
           this.diff.offset = 0;
           return true;
+        case "end":
+          // The render pass clamps to the last full screen of rows.
+          this.diff.offset = this.diff.parsed.rows.length;
+          return true;
+        case "/":
+          this.searching = true;
+          this.search.set(this.query);
+          return true;
+        case "n":
+          this.jumpMatch(1);
+          return true;
+        case "p":
+          this.jumpMatch(-1);
+          return true;
+        case "]":
+          this.jumpLandmark(1);
+          return true;
+        case "[":
+          this.jumpLandmark(-1);
+          return true;
+        case "escape":
+          // Not the app's Esc while a query is showing: dropping the search is
+          // what you mean first, and a second Esc still leaves the pane.
+          if (!this.query) return false;
+          this.clearSearch();
+          return true;
+        case "y":
+          return "copy";
         default:
           return false;
       }
@@ -864,14 +1025,43 @@ export class DiffSidebar {
         return true;
       case "enter":
       case "space":
-        if (isScope) await this.activateScopeRow(this.scopeSelection, shift);
+        if (isScope) await this.activateScopeRow(this.scopeSelection, event.shift);
         else {
           const path = this.fileRows[this.filesSelection];
           if (path) await this.selectFile(path);
         }
         return true;
+      case "y":
+        return "copy";
       default:
         return false;
+    }
+  }
+
+  /**
+   * Keys for the search field. The matches update as you type — there is no
+   * reason to make you press Enter to find out whether the query hits anything.
+   */
+  private searchKey(event: DiffKey): DiffKeyResult {
+    switch (event.name) {
+      case "escape":
+        this.clearSearch();
+        return true;
+      case "enter":
+        this.searching = false;
+        if (this.matches.length > 0) this.jumpMatch(1);
+        return true;
+      case "up":
+        this.jumpMatch(-1);
+        return true;
+      case "down":
+        this.jumpMatch(1);
+        return true;
+      default:
+        if (!this.search.handle(event)) return false;
+        this.query = this.search.value;
+        this.recomputeMatches();
+        return true;
     }
   }
 
@@ -888,6 +1078,7 @@ function renderDiffRow(
   diffRow: { kind: string; number: number | null; text: string; detail: string | null },
   width: number,
   gutter: number,
+  query: string,
 ): string {
   switch (diffRow.kind) {
     case "file":
@@ -921,12 +1112,44 @@ function renderDiffRow(
       return fit(
         styled(number, { fg: Color.dimmer, bg: background }) +
           styled(marker, { fg: markerColor, bg: background }) +
-          styled(diffRow.text, { fg: Color.fg, bg: background }),
+          highlighted(diffRow.text, query, { fg: Color.fg, bg: background }),
         width,
         { bg: background },
       );
     }
   }
+}
+
+/**
+ * A line with every occurrence of the search query picked out. Case-insensitive,
+ * because nobody searching a diff for `foo` means to miss `Foo`.
+ */
+export function highlighted(text: string, query: string, style: Style): string {
+  if (!query) return styled(text, style);
+  const needle = query.toLowerCase();
+  const haystack = text.toLowerCase();
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const found = haystack.indexOf(needle, at);
+    if (found === -1) break;
+    out += styled(text.slice(at, found), style);
+    out += styled(text.slice(found, found + needle.length), {
+      fg: "16",
+      bg: Color.yellow,
+      bold: true,
+    });
+    at = found + needle.length;
+  }
+  return out + styled(text.slice(at), style);
+}
+
+/** Where a scrolled body is, in the compact form `less` uses. */
+export function scrollLabel(offset: number, height: number, total: number): string {
+  if (total <= height || height <= 0) return "";
+  if (offset <= 0) return "top";
+  if (offset >= total - height) return "end";
+  return `${Math.round((offset / (total - height)) * 100)}%`;
 }
 
 /**
