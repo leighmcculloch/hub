@@ -78,18 +78,29 @@ export class TerminalPane {
     rect: Rect,
     hits: HitMap,
     focused: boolean,
+    configured = true,
   ): { lines: string[]; content: Rect } {
     const width = rect.width;
     const emptyContent = { x: rect.x, y: rect.y, width, height: rect.height };
 
     if (session === null) {
+      // Without a token there is nothing Alt+N can do, so the empty screen
+      // points at the one thing that has to happen first.
       return {
-        lines: placeholder(
-          width,
-          rect.height,
-          "No session open",
-          "Alt+N starts one on a fresh VM · Alt+L opens a local shell · F1 for keys",
-        ),
+        lines: configured
+          ? placeholder(
+            width,
+            rect.height,
+            "No session open",
+            "Alt+N starts one on a fresh VM · Alt+L opens a local shell · F1 for keys",
+          )
+          : placeholder(
+            width,
+            rect.height,
+            "Add a provider token to begin",
+            "Alt+, opens Settings, which takes an exe.dev or sprites.dev token · " +
+              "Alt+L opens a local shell in the meantime",
+          ),
         content: emptyContent,
       };
     }

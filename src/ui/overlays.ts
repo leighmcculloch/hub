@@ -3,7 +3,8 @@
  */
 
 import { center, Color, fit, styled } from "../tui/ansi.ts";
-import { control, type HitMap, panel, type Rect, wrap } from "../tui/widgets.ts";
+import { control, type HitMap, panel, type Rect, TextInput, wrap } from "../tui/widgets.ts";
+import type { CursorHint } from "./select-popup.ts";
 
 /**
  * Deleting a VM destroys its disk, so it is confirmed. Held as its own overlay
@@ -78,6 +79,69 @@ export class ConfirmModal {
   }
 }
 
+/**
+ * One line of text and somewhere to type it — renaming a session, say, where a
+ * whole modal is too much and a bare keystroke is too little.
+ *
+ * Submitting an empty value is allowed and meaningful: it is how a session goes
+ * back to being named by whatever named it in the first place.
+ */
+export class PromptModal {
+  private input: TextInput;
+  private cursor: CursorHint | null = null;
+
+  constructor(
+    readonly title: string,
+    readonly hint: string,
+    value: string,
+    private onSubmit: (value: string) => void,
+  ) {
+    this.input = new TextInput(value);
+  }
+
+  cursorPosition(): CursorHint | null {
+    return this.cursor;
+  }
+
+  render(cols: number, rows: number, hits: HitMap): { lines: string[]; rect: Rect } {
+    const width = Math.min(56, cols - 4);
+    const height = 6;
+    const rect: Rect = {
+      x: Math.floor((cols - width) / 2),
+      y: Math.floor((rows - height) / 2),
+      width,
+      height,
+    };
+    const inner = width - 2;
+    const fieldY = rect.y + 2;
+    hits.add({ x: rect.x + 1, y: fieldY, width: inner, height: 1 }, "prompt.field");
+
+    const lines: string[] = [fit("", inner, { bg: Color.panel })];
+    lines.push(this.input.render(inner, true, this.hint, false));
+    this.cursor = { x: rect.x + 1 + this.input.cursorOffset(inner), y: fieldY };
+    lines.push(fit("", inner, { bg: Color.panel }));
+    lines.push(
+      fit(
+        ` ${styled("Enter saves · Esc cancels", { fg: Color.dimmer, bg: Color.panel })}`,
+        inner,
+        { bg: Color.panel },
+      ),
+    );
+    return { lines: panel(width, height, this.title, lines, { bg: Color.panel }), rect };
+  }
+
+  /** Returns true when the overlay should close. */
+  key(event: { name: string; ctrl: boolean; alt: boolean; shift: boolean }): boolean {
+    if (event.name === "escape") return true;
+    if (event.name === "enter") {
+      this.onSubmit(this.input.value.trim());
+      return true;
+    }
+    this.input.handle(event);
+    return false;
+  }
+}
+
 interface Binding {
   keys: string;
   description: string;
@@ -91,6 +155,7 @@ const BINDINGS: Binding[] = [
   { keys: "Alt+P", description: "Command palette — everything, by name" },
   { keys: "Alt+N", description: "New session on a fresh VM" },
   { keys: "Alt+L", description: "New local shell" },
+  { keys: "Alt+M", description: "Rename the session" },
   { keys: "Alt+W", description: "Close the session (leaves the VM running)" },
   { keys: "Alt+D", description: "Delete the session and destroy its VM" },
   { keys: "Alt+O", description: "Open this VM's URL in the system browser" },

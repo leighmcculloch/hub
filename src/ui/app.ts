@@ -7,7 +7,7 @@
  * arrows and Tab — reach the program running in the terminal pane untouched.
  */
 
-import { Color, displayWidth, fit, overlay, styled } from "../tui/ansi.ts";
+import { Color, displayWidth, elideHead, fit, overlay, styled } from "../tui/ansi.ts";
 import { Screen } from "../tui/screen.ts";
 import { InputDecoder, type InputEvent, type KeyEvent, type MouseEvent } from "../tui/input.ts";
 import { HitMap, type Rect } from "../tui/widgets.ts";
@@ -20,7 +20,7 @@ import { TerminalPane } from "./terminal-pane.ts";
 import { DiffSidebar } from "./diff-sidebar.ts";
 import { NewSessionModal } from "./new-session-modal.ts";
 import { SettingsModal } from "./settings-modal.ts";
-import { ConfirmModal, HelpModal } from "./overlays.ts";
+import { ConfirmModal, HelpModal, PromptModal } from "./overlays.ts";
 import { SelectPopup } from "./select-popup.ts";
 import { availableCommands, type Command, commandOptions } from "./commands.ts";
 import { isWorktree, shortRepoLabel } from "../model/repo-label.ts";
@@ -47,6 +47,7 @@ export class App {
   private newSession: NewSessionModal | null = null;
   private settings: SettingsModal | null = null;
   private confirm: ConfirmModal | null = null;
+  private prompt: PromptModal | null = null;
   private help = false;
   /** The list a dropdown opened; drawn over whatever opened it. */
   private popup: SelectPopup | null = null;
@@ -208,6 +209,7 @@ export class App {
       layout.middle,
       this.hits,
       this.focus === "terminal",
+      this.config.effectiveToken !== "",
     );
     this.terminalContent = middle.content;
     this.reportTerminalSize();
@@ -287,7 +289,11 @@ export class App {
 
     const left = ` ${styled(name, { fg: Color.fg, bold: true })} ` +
       styled(where, { fg: Color.dimmer });
-    const middle = message ? `  ${styled(message, { fg: Color.accent })}` : "";
+    // With no message to show, the slot carries where the pane's shell actually
+    // is — the one piece of state you otherwise have to type `pwd` to learn.
+    const middle = message
+      ? `  ${styled(message, { fg: Color.accent })}`
+      : this.workingDirectoryLabel(session, Math.max(8, cols - 60));
     // The hint follows the keyboard: the one thing worth knowing in the
     // terminal is how to get out of it, and everywhere else that Tab moves on.
     const hint = this.focus === "terminal" && this.terminal.inBody
@@ -299,6 +305,17 @@ export class App {
     return fit(`${left}${middle}${" ".repeat(gap)}${right}`, cols, { bg: Color.panel });
   }
 
+  /** The pane's working directory, with the home prefix shortened to `~`. */
+  private workingDirectoryLabel(
+    session: { workingDirectory: string | null } | null,
+    room: number,
+  ): string {
+    const path = session?.workingDirectory;
+    if (!path) return "";
+    const short = path.replace(/^\/(?:home|Users)\/[^/]+/, "~");
+    return `  ${styled(elideHead(short, room), { fg: Color.dimmer })}`;
+  }
+
   /**
    * Overlays, innermost last: a dropdown opened from a modal is drawn over it,
    * and each layer is registered after the one below so it takes the clicks.
@@ -308,6 +325,7 @@ export class App {
     if (this.settings) layers.push(this.settings.render(cols, rows, this.hits));
     if (this.newSession) layers.push(this.newSession.render(cols, rows, this.hits));
     if (this.help) layers.push(new HelpModal().render(cols, rows, this.hits));
+    if (this.prompt) layers.push(this.prompt.render(cols, rows, this.hits));
     if (this.confirm) layers.push(this.confirm.render(cols, rows, this.hits, this.hovered));
     if (this.popup) layers.push(this.popup.render(cols, rows, this.hits));
     return layers;
@@ -339,8 +357,11 @@ export class App {
    */
   private cursor(modalOpen: boolean): { x: number; y: number; visible: boolean } {
     const field = this.popup?.cursorPosition() ??
-      (this.confirm || this.help ? null : this.settings?.cursorPosition()) ??
-      (this.confirm || this.help || this.settings ? null : this.newSession?.cursorPosition()) ??
+      (this.confirm ? null : this.prompt?.cursorPosition()) ??
+      (this.confirm || this.prompt || this.help ? null : this.settings?.cursorPosition()) ??
+      (this.confirm || this.prompt || this.help || this.settings
+        ? null
+        : this.newSession?.cursorPosition()) ??
       (modalOpen || this.focus !== "diff" ? null : this.diff.cursorPosition());
     if (field) return { x: field.x, y: field.y, visible: true };
 
@@ -416,6 +437,10 @@ export class App {
     }
     if (this.confirm) {
       if (this.confirm.key(event.name)) this.confirm = null;
+      return;
+    }
+    if (this.prompt) {
+      if (this.prompt.key(event)) this.prompt = null;
       return;
     }
     if (this.help) {
@@ -586,6 +611,9 @@ export class App {
       case "z":
         this.toggleZen();
         return true;
+      case "m":
+        this.renameSession();
+        return true;
       case "t":
         session?.newTab();
         return true;
@@ -688,6 +716,12 @@ export class App {
         run: () => session?.newTab(),
       },
       {
+        label: "Rename Session…",
+        shortcut: "Alt+M",
+        enabled: session !== null,
+        run: () => this.renameSession(),
+      },
+      {
         label: "Close Session",
         shortcut: "Alt+W",
         enabled: session !== null,
@@ -752,6 +786,24 @@ export class App {
       },
       { label: "Quit", shortcut: "Alt+Q", run: () => this.quit() },
     ]);
+  }
+
+  /**
+   * Name the open session yourself. Left empty it goes back to being named by
+   * its VM — which is what names it while an agent is still deciding.
+   */
+  private renameSession(): void {
+    const session = this.workspace.selectedSession;
+    if (!session) {
+      this.say("No session to rename");
+      return;
+    }
+    this.prompt = new PromptModal(
+      "Rename session",
+      session.vmName ?? "Name this session…",
+      session.title,
+      (title) => this.workspace.renameSession(session, title),
+    );
   }
 
   private openCommandPalette(): void {
@@ -840,6 +892,11 @@ export class App {
       } else if (region?.id === "confirm.cancel") {
         this.confirm = null;
       }
+      return;
+    }
+    if (this.prompt) {
+      // Clicking away is a cancel; the field itself already has the keyboard.
+      if (!region?.id.startsWith("prompt.")) this.prompt = null;
       return;
     }
     if (this.help) {

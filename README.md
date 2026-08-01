@@ -90,6 +90,7 @@ Everything else is an `Alt` chord, for the same reason.
 | `Alt+P` | Command palette — everything, by name |
 | `Alt+N` | New session on a fresh VM |
 | `Alt+L` | New local shell |
+| `Alt+M` | Rename the session |
 | `Alt+W` | Close the session (leaves the VM running) |
 | `Alt+D` | Delete the session and destroy its VM |
 | `Alt+O` | Open this VM's URL in the system browser |

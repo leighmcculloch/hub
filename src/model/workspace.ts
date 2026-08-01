@@ -281,6 +281,16 @@ export class Workspace {
     });
   }
 
+  /**
+   * Give a session a name of your own. An empty name hands it back to whatever
+   * was naming it — the VM's own name, or the working directory.
+   */
+  renameSession(session: TerminalSession, title: string): void {
+    session.title = title || session.vmName || "";
+    this.persistSessions();
+    this.onChange();
+  }
+
   closeSession(session: TerminalSession): void {
     const index = this.sessions.findIndex((entry) => entry.id === session.id);
     if (index === -1) return;

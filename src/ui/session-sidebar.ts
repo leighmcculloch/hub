@@ -69,8 +69,15 @@ export class SessionSidebar {
     const listHeight = rect.height - 2; // the new-session footer and its rule
 
     if (this.rows.length === 0) {
+      // Nothing here and no token is a setup step, not an empty list.
+      const configured = this.workspace.config.effectiveToken !== "";
       lines.push(
-        ...placeholder(width, listHeight, "No sessions", "Start one on a fresh VM with Alt+N."),
+        ...placeholder(
+          width,
+          listHeight,
+          configured ? "No sessions" : "No token yet",
+          configured ? "Start one on a fresh VM with Alt+N." : "Add one in Settings, with Alt+,",
+        ),
       );
     } else {
       this.selection = Math.min(Math.max(0, this.selection), this.rows.length - 1);

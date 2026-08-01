@@ -27,6 +27,7 @@ function stubWorkspace(
     loadingVMs: false,
     selectedSessionID: selected,
     vmListError,
+    config: { effectiveToken: "token" },
   } as unknown as Workspace;
 }
 
