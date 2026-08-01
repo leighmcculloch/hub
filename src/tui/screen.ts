@@ -22,6 +22,7 @@ import {
   leaveAltScreen,
   resetStyle,
   setClipboard,
+  setWindowTitle,
   showCursor,
 } from "./ansi.ts";
 import { encodeBase64 } from "@std/encoding/base64";
@@ -46,6 +47,8 @@ export class Screen {
   private previous: string[] = [];
   private encoder = new TextEncoder();
   private started = false;
+  /** The window title last written, so an unchanged one costs nothing. */
+  private title = "";
 
   constructor() {
     const size = safeConsoleSize();
@@ -117,6 +120,13 @@ export class Screen {
   /** Force the next `render` to repaint every row. */
   invalidate(): void {
     this.previous = [];
+  }
+
+  /** Name the terminal's window, but only when the name has actually changed. */
+  setTitle(title: string): void {
+    if (title === this.title) return;
+    this.title = title;
+    this.write(setWindowTitle(title));
   }
 
   /**

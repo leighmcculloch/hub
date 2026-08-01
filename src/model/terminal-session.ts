@@ -30,6 +30,7 @@ import {
   type TmuxPane,
 } from "../tmux/control.ts";
 import { LocalTransport } from "../providers/local-transport.ts";
+import { PollBackoff } from "./poll-backoff.ts";
 import type { RemoteTransport, VMProvider } from "../providers/types.ts";
 
 /** How long output is allowed to pile up before the pane is re-captured. */
@@ -164,6 +165,11 @@ export class TerminalSession {
   private reportedSize: { cols: number; rows: number } | null = null;
   /** The pane tmux last reported as active, so a real focus change is followed. */
   private lastActivePaneID: string | null = null;
+  /** Widening gap between automatic reconnection attempts. */
+  private retryBackoff = new PollBackoff();
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the next automatic attempt is due, as epoch milliseconds. */
+  private retryAt: number | null = null;
 
   constructor(
     options: {
@@ -252,6 +258,9 @@ export class TerminalSession {
 
     const client = new TmuxClient(this.transport, this.bootstrap, {
       onEvents: (events) => {
+        // tmux answering is what counts as the connection having worked, so
+        // that is where the retry gap resets rather than at the attempt.
+        if (!this.heardFromTmux) this.retryBackoff.recordSuccess();
         this.heardFromTmux = true;
         for (const event of events) this.handle(event);
         this.onChange();
@@ -273,12 +282,46 @@ export class TerminalSession {
   /** Re-run the launch command, recovering a dropped connection. */
   reconnect(): void {
     if (!this.isDisconnected) return;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retryAt = null;
     this.start();
+  }
+
+  /**
+   * How long until this session tries again on its own, in whole seconds, or
+   * null when nothing is scheduled. Shown on the disconnected screen so a drop
+   * reads as "recovering" rather than "over".
+   */
+  get secondsUntilRetry(): number | null {
+    if (this.retryAt === null) return null;
+    return Math.max(0, Math.ceil((this.retryAt - Date.now()) / 1000));
+  }
+
+  /**
+   * Try again by itself, backing off between attempts. A dropped VM usually
+   * comes back — a network blip, a laptop lid — and noticing that yourself and
+   * pressing a key for it is work the app can do.
+   */
+  private scheduleRetry(): void {
+    if (this.retryTimer !== null) return;
+    const delay = this.retryBackoff.delay;
+    this.retryBackoff.recordFailure();
+    this.retryAt = Date.now() + delay;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.retryAt = null;
+      if (this.isDisconnected) this.start();
+    }, delay);
   }
 
   stop(): void {
     if (this.captureTimer !== null) clearTimeout(this.captureTimer);
     this.captureTimer = null;
+    // A closed session must not resurrect itself.
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retryAt = null;
     this.client?.stop();
     this.client = null;
   }
@@ -579,5 +622,6 @@ export class TerminalSession {
     this.pendingReplies = [];
     this.isDisconnected = true;
     this.disconnectReason = reason;
+    this.scheduleRetry();
   }
 }

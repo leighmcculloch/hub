@@ -101,6 +101,7 @@ Everything else is an `Alt` chord, for the same reason.
 | `Alt+G` | Go to a session or VM by name |
 | `Alt+PgUp` / `Alt+PgDn` | Read the terminal's scrollback |
 | `Alt+End` | Back to the live screen |
+| `Alt+C` | Copy the pane's screen to the clipboard |
 | `Alt+Shift+←` / `→` | Resize the sidebar you're in |
 | `Alt+T` | New tmux window in this session |
 | `Alt+←` / `Alt+→` | Previous / next terminal tab |

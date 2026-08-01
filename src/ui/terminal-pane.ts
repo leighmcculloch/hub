@@ -114,8 +114,16 @@ export class TerminalPane {
 
     if (session.isDisconnected) {
       const detail = session.disconnectReason ?? "The connection dropped.";
+      const next = session.secondsUntilRetry;
       lines.push(
-        ...placeholder(width, contentHeight, "Disconnected", `${detail}  ·  Alt+R to reconnect`),
+        ...placeholder(
+          width,
+          contentHeight,
+          "Disconnected",
+          `${detail}  ·  ${
+            next === null ? "Alt+K to reconnect" : `Retrying in ${next}s · Alt+K to retry now`
+          }`,
+        ),
       );
       return { lines, content };
     }

@@ -7,7 +7,7 @@
  * arrows and Tab — reach the program running in the terminal pane untouched.
  */
 
-import { Color, displayWidth, elideHead, fit, overlay, styled } from "../tui/ansi.ts";
+import { Color, displayWidth, elideHead, fit, overlay, stripAnsi, styled } from "../tui/ansi.ts";
 import { Screen } from "../tui/screen.ts";
 import { InputDecoder, type InputEvent, type KeyEvent, type MouseEvent } from "../tui/input.ts";
 import { HitMap, type Rect } from "../tui/widgets.ts";
@@ -48,7 +48,7 @@ export class App {
   private settings: SettingsModal | null = null;
   private confirm: ConfirmModal | null = null;
   private prompt: PromptModal | null = null;
-  private help = false;
+  private help: HelpModal | null = null;
   /** The list a dropdown opened; drawn over whatever opened it. */
   private popup: SelectPopup | null = null;
   /** The hit region under the pointer, so anything clickable can tint. */
@@ -177,7 +177,11 @@ export class App {
    * an idle app should draw only when something actually changes.
    */
   private syncAnimation(): void {
-    const wanted = this.workspace.sessions.some((session) => session.isConnecting);
+    // Anything with a clock on screen: the connecting panel's spinner and
+    // elapsed count, and a disconnected session's retry countdown.
+    const wanted = this.workspace.sessions.some((session) =>
+      session.isConnecting || session.secondsUntilRetry !== null
+    );
     if (wanted && this.animation === null) {
       this.animation = setInterval(() => this.requestRender(), 120);
     } else if (!wanted && this.animation !== null) {
@@ -229,6 +233,8 @@ export class App {
       composed.push(fit(row, cols));
     }
     composed.push(this.statusBar(cols));
+
+    this.screen.setTitle(this.windowTitle());
 
     const overlays = this.renderOverlay(cols, rows);
     const cursor = this.cursor(overlays.length > 0);
@@ -287,8 +293,13 @@ export class App {
     const where = session?.destination ?? "local";
     const message = Date.now() < this.statusUntil ? this.status : "";
 
+    // Sessions that have moved while you weren't looking. The sidebar marks
+    // them individually, but the sidebar may well be hidden, and this is the
+    // one strip that never is.
+    const busy = this.workspace.sessions.filter((one) => one.hasUnseenOutput).length;
     const left = ` ${styled(name, { fg: Color.fg, bold: true })} ` +
-      styled(where, { fg: Color.dimmer });
+      styled(where, { fg: Color.dimmer }) +
+      (busy > 0 ? ` ${styled(`● ${busy} active`, { fg: Color.orange })}` : "");
     // With no message to show, the slot carries where the pane's shell actually
     // is — the one piece of state you otherwise have to type `pwd` to learn.
     const middle = message
@@ -303,6 +314,20 @@ export class App {
     const used = displayWidth(left) + displayWidth(middle) + displayWidth(right);
     const gap = Math.max(1, cols - used);
     return fit(`${left}${middle}${" ".repeat(gap)}${right}`, cols, { bg: Color.panel });
+  }
+
+  /**
+   * What the surrounding terminal calls this window. Named after the session
+   * you're on, with a dot when another session has moved — so hub tells you
+   * something even when it isn't the window you're looking at.
+   */
+  private windowTitle(): string {
+    const session = this.workspace.selectedSession;
+    const busy = this.workspace.sessions.some((one) => one.hasUnseenOutput);
+    const name = session ? session.displayName : "no session";
+    // Plain ASCII: title bars are shown by everything from a tab strip to a
+    // taskbar, and not all of them agree on what to do with the fancier glyphs.
+    return `${busy ? "* " : ""}${name} - hub`;
   }
 
   /** The pane's working directory, with the home prefix shortened to `~`. */
@@ -324,7 +349,7 @@ export class App {
     const layers: Array<{ lines: string[]; rect: Rect }> = [];
     if (this.settings) layers.push(this.settings.render(cols, rows, this.hits));
     if (this.newSession) layers.push(this.newSession.render(cols, rows, this.hits));
-    if (this.help) layers.push(new HelpModal().render(cols, rows, this.hits));
+    if (this.help) layers.push(this.help.render(cols, rows, this.hits));
     if (this.prompt) layers.push(this.prompt.render(cols, rows, this.hits));
     if (this.confirm) layers.push(this.confirm.render(cols, rows, this.hits, this.hovered));
     if (this.popup) layers.push(this.popup.render(cols, rows, this.hits));
@@ -446,7 +471,8 @@ export class App {
       return;
     }
     if (this.help) {
-      if (event.name === "escape" || event.name === "f1" || event.name === "q") this.help = false;
+      // Anything that isn't a scroll closes it, so it never becomes a mode.
+      if (this.help.key(event.name)) this.help = null;
       return;
     }
     if (this.settings) {
@@ -459,7 +485,7 @@ export class App {
     }
 
     if (event.name === "f1") {
-      this.help = true;
+      this.help = new HelpModal();
       return;
     }
     if (event.alt && await this.globalShortcut(event)) return;
@@ -619,6 +645,9 @@ export class App {
       case "g":
         this.openSessionSwitcher();
         return true;
+      case "c":
+        this.copyTerminalScreen();
+        return true;
       case "t":
         session?.newTab();
         return true;
@@ -757,6 +786,12 @@ export class App {
       },
       { label: "Open VM in Browser", shortcut: "Alt+O", run: () => this.openBrowser() },
       {
+        label: "Copy Terminal Screen",
+        shortcut: "Alt+C",
+        enabled: session !== null,
+        run: () => this.copyTerminalScreen(),
+      },
+      {
         label: this.workspace.showSessionSidebar
           ? "Hide Sessions Sidebar"
           : "Show Sessions Sidebar",
@@ -801,11 +836,35 @@ export class App {
         label: "Keyboard Shortcuts",
         shortcut: "F1",
         run: () => {
-          this.help = true;
+          this.help = new HelpModal();
         },
       },
       { label: "Quit", shortcut: "Alt+Q", run: () => this.quit() },
     ]);
+  }
+
+  /**
+   * Copy what the terminal pane is showing. tmux's own colours come with the
+   * capture, so they're stripped — what you want on the clipboard is the text,
+   * not the escape sequences that drew it.
+   */
+  private copyTerminalScreen(): void {
+    const tab = this.workspace.selectedSession?.selectedTab;
+    if (!tab || tab.screen.length === 0) {
+      this.say("Nothing on screen to copy");
+      return;
+    }
+    const text = tab.screen.map((line) => stripAnsi(line).trimEnd()).join("\n").trimEnd();
+    if (!text) {
+      this.say("Nothing on screen to copy");
+      return;
+    }
+    const sent = this.screen.copyToClipboard(text);
+    this.say(
+      sent < text.length
+        ? `Copied the first ${sent} characters — the rest is too long for the terminal`
+        : `Copied ${text.split("\n").length} lines from the pane`,
+    );
   }
 
   /** Widen or narrow whichever sidebar has the keyboard. */
@@ -966,7 +1025,7 @@ export class App {
       return;
     }
     if (this.help) {
-      this.help = false;
+      this.help = null;
       return;
     }
     if (this.settings) {
@@ -1088,6 +1147,10 @@ export class App {
   private wheel(id: string | null, delta: number): void {
     if (this.popup) {
       this.popup.scroll(delta);
+      return;
+    }
+    if (this.help) {
+      this.help.scroll(delta);
       return;
     }
     if (this.newSession) {

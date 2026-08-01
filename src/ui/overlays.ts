@@ -3,7 +3,15 @@
  */
 
 import { center, Color, fit, styled } from "../tui/ansi.ts";
-import { control, type HitMap, panel, type Rect, TextInput, wrap } from "../tui/widgets.ts";
+import {
+  control,
+  type HitMap,
+  panel,
+  type Rect,
+  scrollbar,
+  TextInput,
+  wrap,
+} from "../tui/widgets.ts";
 import type { CursorHint } from "./select-popup.ts";
 
 /**
@@ -142,49 +150,72 @@ export class PromptModal {
   }
 }
 
-interface Binding {
-  keys: string;
-  description: string;
-}
+type HelpRow =
+  | { kind: "heading"; text: string }
+  | { kind: "binding"; keys: string; description: string };
 
-const BINDINGS: Binding[] = [
-  { keys: "Tab / ⇧Tab", description: "Move between controls; ↑↓←→ within one" },
-  { keys: "Enter", description: "Activate; on the tab strip, start typing" },
-  { keys: "Alt+F", description: "Leave the terminal (where Tab is the shell's)" },
-  { keys: "Esc", description: "Back to typing in the terminal" },
-  { keys: "Alt+P", description: "Command palette — everything, by name" },
-  { keys: "Alt+N", description: "New session on a fresh VM" },
-  { keys: "Alt+L", description: "New local shell" },
-  { keys: "Alt+M", description: "Rename the session" },
-  { keys: "Alt+W", description: "Close the session (leaves the VM running)" },
-  { keys: "Alt+D", description: "Delete the session and destroy its VM" },
-  { keys: "Alt+O", description: "Open this VM's URL in the system browser" },
-  { keys: "Alt+S", description: "Toggle the sessions sidebar" },
-  { keys: "Alt+R", description: "Toggle the worktree diff sidebar" },
-  { keys: "Alt+Z", description: "Zen mode — the terminal, edge to edge" },
-  { keys: "Alt+1…9", description: "Select a session (9 is the last)" },
-  { keys: "Alt+[ / ]", description: "Previous / next session" },
-  { keys: "Alt+G", description: "Go to a session or VM by name" },
-  { keys: "Alt+PgUp/Dn", description: "Read the terminal's scrollback" },
-  { keys: "Alt+End", description: "Back to the live screen" },
-  { keys: "Alt+⇧← / →", description: "Resize the sidebar you're in" },
-  { keys: "Alt+T", description: "New tmux window in this session" },
-  { keys: "Alt+, ", description: "Settings" },
-  { keys: "Alt+← / →", description: "Previous / next terminal tab" },
-  { keys: "Alt+K", description: "Reconnect a dropped session" },
-  { keys: "/ n p", description: "In the diff: search, next / previous match" },
-  { keys: "[ ]", description: "In the diff: previous / next file or hunk" },
-  { keys: "y", description: "Copy the diff, file or commit to the clipboard" },
-  { keys: "F1", description: "This help" },
-  { keys: "Alt+Q", description: "Quit" },
-  { keys: "Mouse", description: "Click, drag the dividers, wheel to scroll" },
+/**
+ * The key map, grouped by what you'd be trying to do. Grouped rather than
+ * alphabetical because nobody arrives at a key map knowing the key — they
+ * arrive knowing the task.
+ */
+const HELP_ROWS: HelpRow[] = [
+  { kind: "heading", text: "Getting around" },
+  { kind: "binding", keys: "Tab / ⇧Tab", description: "Move between controls; ↑↓←→ within one" },
+  { kind: "binding", keys: "Enter", description: "Activate; on the tab strip, start typing" },
+  { kind: "binding", keys: "Alt+F", description: "Leave the terminal (where Tab is the shell's)" },
+  { kind: "binding", keys: "Esc", description: "Back to typing in the terminal" },
+  { kind: "binding", keys: "Alt+P", description: "Command palette — everything, by name" },
+  { kind: "binding", keys: "Mouse", description: "Click, drag the dividers, wheel to scroll" },
+
+  { kind: "heading", text: "Sessions" },
+  { kind: "binding", keys: "Alt+N", description: "New session on a fresh VM" },
+  { kind: "binding", keys: "Alt+L", description: "New local shell" },
+  { kind: "binding", keys: "Alt+G", description: "Go to a session or VM by name" },
+  { kind: "binding", keys: "Alt+1…9", description: "Select a session (9 is the last)" },
+  { kind: "binding", keys: "Alt+[ / ]", description: "Previous / next session" },
+  { kind: "binding", keys: "Alt+M", description: "Rename the session" },
+  { kind: "binding", keys: "Alt+W", description: "Close the session (leaves the VM running)" },
+  { kind: "binding", keys: "Alt+D", description: "Delete the session and destroy its VM" },
+  { kind: "binding", keys: "Alt+K", description: "Reconnect a dropped session" },
+  { kind: "binding", keys: "Alt+O", description: "Open this VM's URL in the system browser" },
+
+  { kind: "heading", text: "The terminal" },
+  { kind: "binding", keys: "Alt+T", description: "New tmux window in this session" },
+  { kind: "binding", keys: "Alt+← / →", description: "Previous / next terminal tab" },
+  { kind: "binding", keys: "Alt+PgUp/Dn", description: "Read the pane's scrollback" },
+  { kind: "binding", keys: "Alt+End", description: "Back to the live screen" },
+  { kind: "binding", keys: "Alt+C", description: "Copy the pane's screen to the clipboard" },
+
+  { kind: "heading", text: "The diff" },
+  { kind: "binding", keys: "/ n p", description: "Search, next / previous match" },
+  { kind: "binding", keys: "[ ]", description: "Previous / next file or hunk" },
+  { kind: "binding", keys: "y", description: "Copy the diff, file or commit" },
+
+  { kind: "heading", text: "Layout" },
+  { kind: "binding", keys: "Alt+S", description: "Toggle the sessions sidebar" },
+  { kind: "binding", keys: "Alt+R", description: "Toggle the worktree diff sidebar" },
+  { kind: "binding", keys: "Alt+Z", description: "Zen mode — the terminal, edge to edge" },
+  { kind: "binding", keys: "Alt+⇧← / →", description: "Resize the sidebar you're in" },
+
+  { kind: "heading", text: "The app" },
+  { kind: "binding", keys: "Alt+,", description: "Settings" },
+  { kind: "binding", keys: "F1", description: "This help" },
+  { kind: "binding", keys: "Alt+Q", description: "Quit" },
 ];
 
-/** The key map. Every shortcut is Alt-based so plain keys reach the terminal. */
+/**
+ * The key map. Every shortcut is Alt-based so plain keys reach the terminal.
+ *
+ * Scrolls, because the list is longer than a short terminal is tall and a key
+ * you can't scroll to is a key that doesn't exist.
+ */
 export class HelpModal {
+  private offset = 0;
+
   render(cols: number, rows: number, _hits: HitMap): { lines: string[]; rect: Rect } {
     const width = Math.min(64, cols - 4);
-    const height = Math.min(BINDINGS.length + 5, rows - 2);
+    const height = Math.min(HELP_ROWS.length + 4, rows - 2);
     const rect: Rect = {
       x: Math.floor((cols - width) / 2),
       y: Math.floor((rows - height) / 2),
@@ -192,30 +223,74 @@ export class HelpModal {
       height,
     };
     const inner = width - 2;
-    const lines: string[] = [fit("", inner, { bg: Color.panel })];
-    for (const binding of BINDINGS) {
+    const bodyHeight = Math.max(1, height - 3);
+    this.offset = Math.min(
+      Math.max(0, this.offset),
+      Math.max(0, HELP_ROWS.length - bodyHeight),
+    );
+    const bar = scrollbar(this.offset, bodyHeight, HELP_ROWS.length);
+
+    const lines: string[] = [];
+    for (let index = 0; index < bodyHeight; index += 1) {
+      const row = HELP_ROWS[this.offset + index];
+      if (!row) {
+        lines.push(fit("", inner, { bg: Color.panel }));
+        continue;
+      }
+      const text = row.kind === "heading"
+        ? ` ${styled(row.text.toUpperCase(), { fg: Color.dim, bold: true, bg: Color.panel })}`
+        : ` ${styled(row.keys.padEnd(12), { fg: Color.accent, bg: Color.panel })}` +
+          styled(row.description, { fg: Color.fg, bg: Color.panel });
+      // The bar sits at the right edge, so the row is padded out to meet it.
       lines.push(
-        fit(
-          ` ${styled(binding.keys.padEnd(12), { fg: Color.accent, bg: Color.panel })}` +
-            styled(binding.description, { fg: Color.fg, bg: Color.panel }),
-          inner,
-          { bg: Color.panel },
-        ),
+        fit(fit(text, inner - 1, { bg: Color.panel }) + bar[index], inner, { bg: Color.panel }),
       );
     }
-    lines.push(fit("", inner, { bg: Color.panel }));
     lines.push(
       fit(
         center(
-          styled("Any other key goes to the terminal", { fg: Color.dimmer, bg: Color.panel }),
+          styled(
+            HELP_ROWS.length > bodyHeight
+              ? "↑↓ scroll · any other key goes to the terminal"
+              : "Any other key goes to the terminal",
+            { fg: Color.dimmer, bg: Color.panel },
+          ),
           inner,
         ),
         inner,
-        {
-          bg: Color.panel,
-        },
+        { bg: Color.panel },
       ),
     );
     return { lines: panel(width, height, "Keys", lines, { bg: Color.panel }), rect };
+  }
+
+  /** Returns true when the overlay should close. */
+  key(name: string): boolean {
+    switch (name) {
+      case "up":
+        this.offset -= 1;
+        return false;
+      case "down":
+        this.offset += 1;
+        return false;
+      case "pageup":
+        this.offset -= 10;
+        return false;
+      case "pagedown":
+        this.offset += 10;
+        return false;
+      case "home":
+        this.offset = 0;
+        return false;
+      case "end":
+        this.offset = HELP_ROWS.length;
+        return false;
+      default:
+        return true;
+    }
+  }
+
+  scroll(delta: number): void {
+    this.offset += delta;
   }
 }

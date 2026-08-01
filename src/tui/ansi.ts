@@ -53,6 +53,17 @@ export function setClipboard(base64: string): string {
   return `${ESC}]52;c;${base64}\x07`;
 }
 
+/**
+ * OSC 2: name the window. The surrounding terminal — or tmux, or a taskbar —
+ * shows it, which is how you find the hub you left running on a given VM
+ * without cycling through every window to look.
+ */
+export function setWindowTitle(title: string): string {
+  // Control characters would end the sequence early, so they never go in.
+  // deno-lint-ignore no-control-regex
+  return `${ESC}]2;${title.replace(/[\x00-\x1f\x7f]/g, " ")}\x07`;
+}
+
 /** Ask the terminal to keep reporting focus, so a blurred app can dim. */
 export const enableFocusReporting = `${CSI}?1004h`;
 export const disableFocusReporting = `${CSI}?1004l`;

@@ -7,6 +7,8 @@ import {
   elideMiddle,
   fit,
   overlay,
+  setClipboard,
+  setWindowTitle,
   stripAnsi,
   truncate,
 } from "../src/tui/ansi.ts";
@@ -237,4 +239,15 @@ Deno.test("a selected row still shows hover, and unfocused selection is dimmer",
 
 Deno.test("a dropdown says it opens a list", () => {
   assertEquals(stripAnsi(dropdown("exe.dev", 20, {})).includes("▾"), true);
+});
+
+Deno.test("the window title never carries a control character", () => {
+  assertEquals(setWindowTitle("agent-vm"), "\x1b]2;agent-vm\x07");
+  // A newline or a BEL in a session name would end the sequence early and
+  // spill the rest onto the screen.
+  assertEquals(setWindowTitle("one\ntwo\x07"), "\x1b]2;one two \x07");
+});
+
+Deno.test("the clipboard sequence carries base64, not the text", () => {
+  assertEquals(setClipboard("aGk="), "\x1b]52;c;aGk=\x07");
 });
