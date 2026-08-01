@@ -480,6 +480,9 @@ export class DiffSidebar {
   render(rect: Rect, hits: HitMap, focused: boolean): string[] {
     const lines: string[] = [];
     const width = rect.width;
+    // The pane that has the keyboard lifts its empty rows and headings onto a
+    // focus tint; the content rows keep their own colours.
+    const paneBg = focused ? Color.paneFocus : undefined;
 
     if (this.session === null) {
       return placeholder(
@@ -487,6 +490,7 @@ export class DiffSidebar {
         rect.height,
         "No session selected",
         "Pick a session on the left to inspect its worktree.",
+        paneBg,
       );
     }
 
@@ -494,12 +498,17 @@ export class DiffSidebar {
     const destination = this.session.destination ?? "local shell";
     lines.push(
       fit(
-        ` ${styled("Worktree Diff", { bold: true, fg: Color.fg })} ` +
-          styled(this.loadingRepos ? "◌" : "", { fg: Color.dim }),
+        ` ${styled("Worktree Diff", { bold: true, fg: Color.fg, bg: paneBg })} ` +
+          styled(this.loadingRepos ? "◌" : "", { fg: Color.dim, bg: paneBg }),
         width,
+        { bg: paneBg },
       ),
     );
-    lines.push(fit(` ${styled(elideMiddle(destination, width - 2), { fg: Color.dim })}`, width));
+    lines.push(
+      fit(` ${styled(elideMiddle(destination, width - 2), { fg: Color.dim, bg: paneBg })}`, width, {
+        bg: paneBg,
+      }),
+    );
 
     // The repo filter: a dropdown, so the whole list is one click away.
     const label = this.selectedRepo === null ? "All repos" : shortRepoLabel(this.selectedRepo);
@@ -513,14 +522,16 @@ export class DiffSidebar {
 
     if (this.connectionError) {
       for (const line of wrap(`Can't reach ${destination}: ${this.connectionError}`, width - 2)) {
-        lines.push(fit(` ${styled(line, { fg: Color.orange })}`, width));
+        lines.push(
+          fit(` ${styled(line, { fg: Color.orange, bg: paneBg })}`, width, { bg: paneBg }),
+        );
         if (lines.length > 6) break;
       }
     }
-    lines.push(rule(width));
+    lines.push(rule(width, { bg: paneBg }));
 
     const remaining = rect.height - lines.length;
-    if (remaining <= 3) return pad(lines, rect.height, width);
+    if (remaining <= 3) return pad(lines, rect.height, width, paneBg);
 
     if (this.repos.length === 0) {
       return pad(
@@ -531,10 +542,12 @@ export class DiffSidebar {
             remaining,
             this.loadingRepos ? "Looking for repos…" : "No git repos in ~",
             this.loadingRepos ? undefined : "The VM may still be cloning.",
+            paneBg,
           ),
         ],
         rect.height,
         width,
+        paneBg,
       );
     }
 
@@ -544,29 +557,29 @@ export class DiffSidebar {
     const diffHeight = remaining - scopeHeight - filesHeight - 2;
 
     const scopeTop = rect.y + lines.length;
-    lines.push(...this.renderScopes(rect, scopeTop, scopeHeight, hits, focused));
+    lines.push(...this.renderScopes(rect, scopeTop, scopeHeight, hits, focused, paneBg));
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.splitScope");
-    lines.push(this.splitHandle(width, "diff.splitScope"));
+    lines.push(this.splitHandle(width, "diff.splitScope", paneBg));
 
     const filesTop = rect.y + lines.length;
-    lines.push(...this.renderFiles(rect, filesTop, filesHeight, hits, focused));
+    lines.push(...this.renderFiles(rect, filesTop, filesHeight, hits, focused, paneBg));
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.splitFiles");
-    lines.push(this.splitHandle(width, "diff.splitFiles"));
+    lines.push(this.splitHandle(width, "diff.splitFiles", paneBg));
 
     const diffTop = rect.y + lines.length;
-    lines.push(...this.renderDiff(rect, diffTop, diffHeight, hits));
+    lines.push(...this.renderDiff(rect, diffTop, diffHeight, hits, paneBg));
 
-    return pad(lines, rect.height, width);
+    return pad(lines, rect.height, width, paneBg);
   }
 
   /**
    * The rule between two of the stacked panes. It drags, so it says so under
    * the pointer rather than looking like a plain border.
    */
-  private splitHandle(width: number, id: string): string {
-    if (this.hoverRow !== id) return rule(width);
+  private splitHandle(width: number, id: string, bg?: string): string {
+    if (this.hoverRow !== id) return rule(width, { bg });
     const grip = "─".repeat(Math.max(0, Math.floor((width - 4) / 2)));
-    return fit(styled(`${grip}════${grip}`, { fg: Color.accent }), width);
+    return fit(styled(`${grip}════${grip}`, { fg: Color.accent, bg }), width, { bg });
   }
 
   /**
@@ -580,12 +593,13 @@ export class DiffSidebar {
     height: number,
     hits: HitMap,
     focused: boolean,
+    paneBg?: string,
   ): string[] {
     const width = rect.width;
     const rows = this.buildScopeRows();
     this.scopeRows = rows;
 
-    const caption = this.captionForScopes();
+    const caption = this.captionForScopes(paneBg);
     const listHeight = height - 1;
     this.scopeOffset = scrollToShow(this.scopeOffset, this.scopeSelection, listHeight, rows.length);
 
@@ -594,7 +608,7 @@ export class DiffSidebar {
     for (let index = 0; index < listHeight; index += 1) {
       const entry = rows[this.scopeOffset + index];
       if (!entry) {
-        lines.push(fit("", width));
+        lines.push(fit("", width, { bg: paneBg }));
         continue;
       }
       const id = `diff.scope:${this.scopeOffset + index}`;
@@ -641,7 +655,7 @@ export class DiffSidebar {
     return rows;
   }
 
-  private captionForScopes(): (width: number) => string {
+  private captionForScopes(bg?: string): (width: number) => string {
     const total = [...this.statusByRepo.values()].reduce(
       (sum, status) => sum + status.log.commits.length,
       0,
@@ -649,9 +663,10 @@ export class DiffSidebar {
     const base = this.visibleRepos.length === 1 ? this.logIn(this.visibleRepos[0]).base : "";
     return (width: number) =>
       fit(
-        ` ${styled(total === 1 ? "1 commit" : `${total} commits`, { fg: Color.dim })}` +
-          (base ? ` ${styled(`ahead of ${base}`, { fg: Color.dimmer })}` : ""),
+        ` ${styled(total === 1 ? "1 commit" : `${total} commits`, { fg: Color.dim, bg })}` +
+          (base ? ` ${styled(`ahead of ${base}`, { fg: Color.dimmer, bg })}` : ""),
         width,
+        { bg },
       );
   }
 
@@ -710,6 +725,7 @@ export class DiffSidebar {
     height: number,
     hits: HitMap,
     focused: boolean,
+    paneBg?: string,
   ): string[] {
     const width = rect.width;
     const files = this.scopeFiles;
@@ -718,9 +734,10 @@ export class DiffSidebar {
     const label = this.scope ? targetLabel(this.scope, this.logIn(this.scope.repo)) : "";
     const lines = [
       fit(
-        ` ${styled("Files", { fg: Color.dim, bold: true })} ` +
-          styled(elideMiddle(label, Math.max(0, width - 9)), { fg: Color.dimmer }),
+        ` ${styled("Files", { fg: Color.dim, bold: true, bg: paneBg })} ` +
+          styled(elideMiddle(label, Math.max(0, width - 9)), { fg: Color.dimmer, bg: paneBg }),
         width,
+        { bg: paneBg },
       ),
     ];
 
@@ -733,6 +750,7 @@ export class DiffSidebar {
           listHeight,
           this.loadingFiles ? "Listing files…" : "No changed files",
           this.scope === null ? "Pick a scope above." : undefined,
+          paneBg,
         ),
       ];
     }
@@ -747,7 +765,7 @@ export class DiffSidebar {
     for (let index = 0; index < listHeight; index += 1) {
       const change = files.changes[this.filesOffset + index];
       if (!change) {
-        lines.push(fit("", width));
+        lines.push(fit("", width, { bg: paneBg }));
         continue;
       }
       const id = `diff.file:${this.filesOffset + index}`;
@@ -775,7 +793,13 @@ export class DiffSidebar {
   }
 
   /** The diff pane: a unified diff with a line-number gutter and tinted rows. */
-  private renderDiff(rect: Rect, top: number, height: number, hits: HitMap): string[] {
+  private renderDiff(
+    rect: Rect,
+    top: number,
+    height: number,
+    hits: HitMap,
+    paneBg?: string,
+  ): string[] {
     const width = rect.width;
     if (height <= 1) return [];
     const parsed = this.diff.parsed;
@@ -792,7 +816,7 @@ export class DiffSidebar {
       this.searchCursor = { x: rect.x + this.search.cursorOffset(width), y: top };
     } else {
       this.searchCursor = null;
-      lines.push(this.diffHeader(width, parsed, bodyHeight));
+      lines.push(this.diffHeader(width, parsed, bodyHeight, paneBg));
     }
 
     if (parsed.rows.length === 0) {
@@ -803,6 +827,7 @@ export class DiffSidebar {
           bodyHeight,
           this.loadingDiff ? "Loading diff…" : "No line changes",
           this.scope === null ? "Pick a scope above to read its diff." : undefined,
+          paneBg,
         ),
       ];
     }
@@ -816,7 +841,7 @@ export class DiffSidebar {
     for (let index = 0; index < bodyHeight; index += 1) {
       const diffRow = parsed.rows[this.diff.offset + index];
       if (!diffRow) {
-        lines.push(fit("", width));
+        lines.push(fit("", width, { bg: paneBg }));
         continue;
       }
       lines.push(renderDiffRow(diffRow, width, gutter, this.query));
@@ -828,29 +853,43 @@ export class DiffSidebar {
    * The diff pane's title bar: what is being read, its totals, and — pushed to
    * the right — either where in the diff you are or how the search is going.
    */
-  private diffHeader(width: number, parsed: ParsedDiff, bodyHeight: number): string {
+  private diffHeader(
+    width: number,
+    parsed: ParsedDiff,
+    bodyHeight: number,
+    paneBg?: string,
+  ): string {
     const title = this.selectedFile ??
       (this.scope ? targetLabel(this.scope, this.logIn(this.scope.repo)) : "");
     const stats =
-      `${parsed.additions > 0 ? styled(`+${parsed.additions}`, { fg: Color.green }) : ""}` +
-      `${parsed.deletions > 0 ? ` ${styled(`−${parsed.deletions}`, { fg: Color.red })}` : ""}`;
+      `${
+        parsed.additions > 0 ? styled(`+${parsed.additions}`, { fg: Color.green, bg: paneBg }) : ""
+      }` +
+      `${
+        parsed.deletions > 0
+          ? ` ${styled(`−${parsed.deletions}`, { fg: Color.red, bg: paneBg })}`
+          : ""
+      }`;
 
     const tail = this.query
       ? styled(
         this.matches.length === 0
           ? `⌕ ${this.query}: none`
           : `⌕ ${matchOrdinal(this.matches, this.diff.offset)}/${this.matches.length}`,
-        { fg: this.matches.length === 0 ? Color.orange : Color.accent },
+        { fg: this.matches.length === 0 ? Color.orange : Color.accent, bg: paneBg },
       )
       : styled(scrollLabel(this.diff.offset, bodyHeight, parsed.rows.length), {
         fg: Color.dimmer,
+        bg: paneBg,
       });
 
     const tailWidth = displayWidth(tail);
     const room = Math.max(4, width - 14 - tailWidth);
-    const head = ` ${styled(elideHead(title || "Diff", room), { bold: true })} ${stats}`;
+    const head = ` ${
+      styled(elideHead(title || "Diff", room), { bold: true, bg: paneBg })
+    } ${stats}`;
     const gap = Math.max(1, width - displayWidth(head) - tailWidth - 1);
-    return fit(`${head}${" ".repeat(gap)}${tail}`, width);
+    return fit(`${head}${" ".repeat(gap)}${tail}`, width, { bg: paneBg });
   }
 
   // MARK: - Interaction
@@ -1198,8 +1237,8 @@ function statLabel(stat: GitLineStat): string {
   return parts.join(" ");
 }
 
-function pad(lines: string[], height: number, width: number): string[] {
-  while (lines.length < height) lines.push(fit("", width));
+function pad(lines: string[], height: number, width: number, bg?: string): string[] {
+  while (lines.length < height) lines.push(fit("", width, { bg }));
   return lines.slice(0, height);
 }
 

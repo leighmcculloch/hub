@@ -104,6 +104,15 @@ export const Color = {
   /** Anything interactive under the pointer. */
   hover: "237",
   border: "238",
+  /**
+   * The background of the pane that has the keyboard: its empty rows and
+   * structural fills carry this tint, so the focus is legible at a glance
+   * without colouring the content itself (a selected row, a dropdown, the
+   * terminal's own screen all keep their own colours). One shade darker than
+   * `panelAlt` so it reads as "this pane is active" rather than "this pane is
+   * a panel".
+   */
+  paneFocus: "239",
   black: "232",
 } as const;
 

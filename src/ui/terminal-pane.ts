@@ -82,6 +82,11 @@ export class TerminalPane {
   ): { lines: string[]; content: Rect } {
     const width = rect.width;
     const emptyContent = { x: rect.x, y: rect.y, width, height: rect.height };
+    // The pane that has the keyboard lifts its chrome — the tab bar and the
+    // status panels — onto a focus tint. The terminal body itself is left
+    // alone: it carries tmux's own colours, and re-styling it would corrupt
+    // what `capture-pane` rendered.
+    const paneBg = focused ? Color.paneFocus : undefined;
 
     if (session === null) {
       // Without a token there is nothing Alt+N can do, so the empty screen
@@ -93,6 +98,7 @@ export class TerminalPane {
             rect.height,
             "No session open",
             "Alt+N starts one on a fresh VM · Alt+L opens a local shell · F1 for keys",
+            paneBg,
           )
           : placeholder(
             width,
@@ -100,14 +106,15 @@ export class TerminalPane {
             "Add a provider token to begin",
             "Alt+, opens Settings, which takes an exe.dev or sprites.dev token · " +
               "Alt+L opens a local shell in the meantime",
+            paneBg,
           ),
         content: emptyContent,
       };
     }
 
     const lines: string[] = [];
-    lines.push(this.renderTabBar(session, rect, hits, focused));
-    lines.push(rule(width));
+    lines.push(this.renderTabBar(session, rect, hits, focused, paneBg));
+    lines.push(rule(width, { bg: paneBg }));
 
     const contentHeight = rect.height - lines.length;
     const content: Rect = { x: rect.x, y: rect.y + lines.length, width, height: contentHeight };
@@ -123,6 +130,7 @@ export class TerminalPane {
           `${detail}  ·  ${
             next === null ? "Alt+K to reconnect" : `Retrying in ${next}s · Alt+K to retry now`
           }`,
+          paneBg,
         ),
       );
       return { lines, content };
@@ -133,13 +141,15 @@ export class TerminalPane {
     // prints almost nothing. Say what is happening rather than showing a blank
     // rectangle that looks identical to a hang.
     if (session.isConnecting) {
-      lines.push(...connectingPanel(session, width, contentHeight));
+      lines.push(...connectingPanel(session, width, contentHeight, paneBg));
       return { lines, content };
     }
 
     const tab = session.selectedTab;
     if (!tab) {
-      lines.push(...placeholder(width, contentHeight, "No pane", "tmux reported no panes."));
+      lines.push(
+        ...placeholder(width, contentHeight, "No pane", "tmux reported no panes.", paneBg),
+      );
       return { lines, content };
     }
 
@@ -157,10 +167,13 @@ export class TerminalPane {
     rect: Rect,
     hits: HitMap,
     focused: boolean,
+    paneBg?: string,
   ): string {
     const width = rect.width;
     if (session.tabs.length === 0) {
-      return fit(` ${styled(session.displayName, { fg: Color.dim })}`, width);
+      return fit(` ${styled(session.displayName, { fg: Color.dim, bg: paneBg })}`, width, {
+        bg: paneBg,
+      });
     }
     const onTabs = focused && this.part === "tabs";
     let bar = "";
@@ -188,20 +201,20 @@ export class TerminalPane {
       hovered: this.hovered === "terminal.newTab",
     });
     if (onTabs || (focused && this.part === "new")) {
-      bar += styled("  ← → switch · Enter to type", { fg: Color.dimmer });
+      bar += styled("  ← → switch · Enter to type", { fg: Color.dimmer, bg: paneBg });
     }
 
     // Reading the scrollback is a mode, and a mode you can't see is a mode you
     // get stuck in — so it says so, and says how to get out.
     const back = session.selectedTab?.scrollback ?? 0;
-    if (back === 0) return fit(bar, width);
+    if (back === 0) return fit(bar, width, { bg: paneBg });
     const note = styled(` ↑ ${back} lines back · Alt+End or type to return `, {
       fg: Color.black,
       bg: Color.orange,
       bold: true,
     });
     const gap = Math.max(1, width - displayWidth(bar) - displayWidth(note));
-    return fit(`${bar}${" ".repeat(gap)}${note}`, width);
+    return fit(`${bar}${" ".repeat(gap)}${note}`, width, { bg: paneBg });
   }
 
   /** Handle a key for the tab strip or the + button. */
@@ -274,6 +287,7 @@ export function connectingPanel(
   session: TerminalSession,
   width: number,
   height: number,
+  bg?: string,
 ): string[] {
   const elapsed = session.elapsedMs;
   const frame = spinnerFrame(elapsed);
@@ -326,7 +340,9 @@ export function connectingPanel(
   const lines: string[] = [];
   for (let row = 0; row < height; row += 1) {
     const entry = rendered[row - top];
-    lines.push(entry === undefined ? fit("", width) : fit(" ".repeat(left) + entry, width));
+    lines.push(
+      entry === undefined ? fit("", width, { bg }) : fit(" ".repeat(left) + entry, width, { bg }),
+    );
   }
   return lines;
 }

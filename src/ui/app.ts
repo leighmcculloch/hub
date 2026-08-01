@@ -286,7 +286,13 @@ export class App {
     const id = `divider.${which}`;
     this.hits.add({ x, y, width: 1, height: 1 }, id);
     const active = this.hovered === id || this.dragging === which;
-    return styled(active ? "┃" : "│", { fg: active ? Color.accent : Color.border });
+    // The divider belongs to the pane on its side: the left divider to the
+    // sessions pane, the right divider to the diff pane. Tinting it when that
+    // pane has the keyboard is a second cue to where the focus landed.
+    const ownsFocus = (which === "left" && this.focus === "sessions") ||
+      (which === "right" && this.focus === "diff");
+    const fg = active ? Color.accent : ownsFocus ? Color.dimmer : Color.border;
+    return styled(active ? "┃" : "│", { fg });
   }
 
   private statusBar(cols: number): string {

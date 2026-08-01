@@ -157,20 +157,26 @@ export class SessionSidebar {
           Math.max(0, listHeight),
           configured ? "No sessions" : "No token yet",
           configured ? "Start one on a fresh VM with Alt+N." : "Add one in Settings, with Alt+,",
+          focused ? Color.paneFocus : undefined,
         ),
       );
     } else {
       this.selection = Math.min(Math.max(0, this.selection), this.rows.length - 1);
       this.offset = scrollToShow(this.offset, this.selection, listHeight, this.rows.length);
       const bar = scrollbar(this.offset, listHeight, this.rows.length);
+      // The pane that has the keyboard lifts its empty rows and headings onto a
+      // focus tint, so where the focus landed is legible without colouring the
+      // content rows themselves (the selection bar and badges keep their own
+      // colours).
+      const paneBg = focused ? Color.paneFocus : undefined;
       for (let index = 0; index < listHeight; index += 1) {
         const entry = this.rows[this.offset + index];
         if (!entry) {
-          lines.push(fit("", width));
+          lines.push(fit("", width, { bg: paneBg }));
           continue;
         }
         if (entry.kind === "header") {
-          lines.push(sectionHeader(entry.title, width, entry.busy ? "◌" : ""));
+          lines.push(sectionHeader(entry.title, width, entry.busy ? "◌" : "", paneBg));
           continue;
         }
         if (entry.kind === "notice") {
@@ -178,9 +184,13 @@ export class SessionSidebar {
           // pointer would promise otherwise.
           lines.push(
             fit(
-              ` ${styled("!", { fg: Color.orange })} ` +
-                styled(elideMiddle(entry.text, Math.max(6, width - 4)), { fg: Color.dim }),
+              ` ${styled("!", { fg: Color.orange, bg: paneBg })} ` +
+                styled(elideMiddle(entry.text, Math.max(6, width - 4)), {
+                  fg: Color.dim,
+                  bg: paneBg,
+                }),
               width,
+              { bg: paneBg },
             ),
           );
           continue;
@@ -212,6 +222,8 @@ export class SessionSidebar {
       ? Color.selection
       : this.hovered === "sidebar.group"
       ? Color.hover
+      : focused
+      ? Color.paneFocus
       : undefined;
     {
       const label = styled(`Group: ${groupingLabel(this.grouping)}`, {
@@ -224,13 +236,15 @@ export class SessionSidebar {
       lines.push(fit(` ${label}${gap}${hint}`, width, { bg: groupBg }));
     }
 
-    lines.push(rule(width));
+    lines.push(rule(width, { bg: focused ? Color.paneFocus : undefined }));
     hits.add({ x: rect.x, y: rect.y + rect.height - 1, width, height: 1 }, "sidebar.new");
     const newFocused = focused && this.part === "new";
     const background = newFocused
       ? Color.selection
       : this.hovered === "sidebar.new"
       ? Color.hover
+      : focused
+      ? Color.paneFocus
       : undefined;
     lines.push(
       fit(

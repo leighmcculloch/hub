@@ -161,11 +161,16 @@ export function rule(width: number, style: Style = {}): string {
 }
 
 /** A section heading: small, dim, uppercase. */
-export function sectionHeader(title: string, width: number, trailing = ""): string {
-  const left = styled(` ${title.toUpperCase()}`, { fg: Color.dimmer, bold: true });
-  const right = trailing ? styled(`${trailing} `, { fg: Color.dimmer }) : "";
+export function sectionHeader(
+  title: string,
+  width: number,
+  trailing = "",
+  bg?: string,
+): string {
+  const left = styled(` ${title.toUpperCase()}`, { fg: Color.dimmer, bold: true, bg });
+  const right = trailing ? styled(`${trailing} `, { fg: Color.dimmer, bg }) : "";
   const gap = Math.max(0, width - displayWidth(left) - displayWidth(right));
-  return fit(`${left}${" ".repeat(gap)}${right}`, width);
+  return fit(`${left}${" ".repeat(gap)}${right}`, width, { bg });
 }
 
 /**
@@ -266,23 +271,24 @@ export function placeholder(
   height: number,
   title: string,
   detail?: string,
+  bg?: string,
 ): string[] {
   const lines: string[] = [];
-  const body = [styled(title, { fg: Color.dim, bold: true })];
+  const body = [styled(title, { fg: Color.dim, bold: true, bg })];
   if (detail) {
     for (const wrapped of wrap(detail, Math.max(4, width - 4))) {
-      body.push(styled(wrapped, { fg: Color.dimmer }));
+      body.push(styled(wrapped, { fg: Color.dimmer, bg }));
     }
   }
   const top = Math.max(0, Math.floor((height - body.length) / 2));
   for (let index = 0; index < height; index += 1) {
     const entry = body[index - top];
     if (entry === undefined) {
-      lines.push(fit("", width));
+      lines.push(fit("", width, { bg }));
       continue;
     }
     const pad = Math.max(0, Math.floor((width - displayWidth(entry)) / 2));
-    lines.push(fit(" ".repeat(pad) + entry, width));
+    lines.push(fit(" ".repeat(pad) + entry, width, { bg }));
   }
   return lines;
 }

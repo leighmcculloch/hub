@@ -2,8 +2,12 @@ import { assert, assertEquals } from "@std/assert";
 import { SessionSidebar } from "../src/ui/session-sidebar.ts";
 import { TerminalPane } from "../src/ui/terminal-pane.ts";
 import { DiffSidebar } from "../src/ui/diff-sidebar.ts";
+import { HitMap } from "../src/tui/widgets.ts";
 import type { Workspace } from "../src/model/workspace.ts";
 import type { TerminalSession } from "../src/model/terminal-session.ts";
+
+/** The SGR sequence that paints the focused-pane background (ansi Color.paneFocus). */
+const PANE_FOCUS_BG = "\x1b[48;5;239m";
 
 function diffKey(name: string, shift: boolean) {
   return { name, ctrl: false, alt: false, shift };
@@ -209,4 +213,29 @@ Deno.test("Alt+↑/↓ walks the diff sidebar's stacked panes and wraps", () => 
   assertEquals(sidebar.part, "repo");
   sidebar.cyclePart(-1);
   assertEquals(sidebar.part, "diff");
+});
+
+Deno.test("a focused terminal pane tints its tab bar, not the body", () => {
+  // The chrome (tab bar, rule) lifts onto the focus tint; the terminal body
+  // is left alone, because it carries tmux's own colours.
+  const pane = new TerminalPane();
+  const session = stubSession();
+  const focused = pane.render(
+    session,
+    { x: 0, y: 0, width: 30, height: 6 },
+    new HitMap(),
+    true,
+  ).lines;
+  const unfocused = pane.render(
+    session,
+    { x: 0, y: 0, width: 30, height: 6 },
+    new HitMap(),
+    false,
+  ).lines;
+  const tabBar = focused[0];
+  assert(tabBar.includes(PANE_FOCUS_BG), `focused tab bar has no focus tint: ${tabBar}`);
+  assert(
+    !unfocused[0].includes(PANE_FOCUS_BG),
+    `unfocused tab bar shows the focus tint: ${unfocused[0]}`,
+  );
 });
