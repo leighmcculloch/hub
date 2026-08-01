@@ -78,6 +78,12 @@ export interface RemoteVMRecord {
   destination: string;
   webURL: string | null;
   status: string | null;
+  /**
+   * Which provider this VM lives on. Carried on the record because both
+   * providers are listed at once when both are configured, and reopening or
+   * deleting one has to reach the account it actually belongs to.
+   */
+  provider: VMProviderID;
 }
 
 /**

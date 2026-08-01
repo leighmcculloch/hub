@@ -137,5 +137,6 @@ export function recordFromExeVM(vm: ExeVM): RemoteVMRecord {
     destination,
     webURL: `https://${destination}`,
     status: vm.status ?? null,
+    provider: "exe",
   };
 }

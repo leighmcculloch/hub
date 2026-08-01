@@ -230,5 +230,6 @@ export function recordFromSprite(sprite: Sprite): RemoteVMRecord {
     destination: sprite.name,
     webURL: sprite.url ?? null,
     status: sprite.status ?? null,
+    provider: "sprites",
   };
 }

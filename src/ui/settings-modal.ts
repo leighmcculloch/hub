@@ -1,6 +1,9 @@
 /**
- * Settings: which provider to use, the API tokens, and the environments a
- * session can be started with.
+ * Settings: which provider new sessions default to, the API tokens, and the
+ * environments a session can be started with.
+ *
+ * The provider setting is a default, not a switch: a token for each means both
+ * accounts are listed and usable at once.
  *
  * Everything here writes straight into the shared config and saves on change,
  * so a new session picks up an edit without the modal being dismissed first.
@@ -169,7 +172,9 @@ export class SettingsModal {
 
     switch (entry.kind) {
       case "provider":
-        return label("Provider") +
+        // Both providers are live whenever both have a token; this only picks
+        // which one a new session starts on by default.
+        return label("Default") +
           dropdown(
             this.config.data.provider === "exe" ? "exe.dev" : "sprites.dev",
             field,
@@ -306,7 +311,7 @@ export class SettingsModal {
     if (entry?.kind === "provider") {
       this.onOpenPopup(
         new SelectPopup(
-          "Provider",
+          "Default provider",
           [
             { label: "exe.dev", detail: "ssh to <name>.exe.xyz" },
             { label: "sprites.dev", detail: "the sprite CLI" },

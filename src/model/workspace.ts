@@ -51,11 +51,12 @@ export class Workspace {
   availableVMs: RemoteVMRecord[] = [];
   loadingVMs = false;
   /**
-   * Why the last listing failed, if it did. An empty "Existing" section and a
-   * provider that is refusing the token look identical otherwise, and only one
-   * of them is something you can act on.
+   * Which providers failed the last listing, and why. An empty "Existing"
+   * section and a provider refusing the token look identical otherwise, and
+   * only one of them is something you can act on — and with both providers
+   * listed at once, which one failed is half the answer.
    */
-  vmListError: string | null = null;
+  vmListErrors: Array<{ provider: VMProviderID; reason: string }> = [];
 
   /** The signed-in GitHub account, used to seed git config on new VMs. */
   githubUser: GitHubUser | null = null;
@@ -70,11 +71,30 @@ export class Workspace {
   }
 
   /**
-   * The provider the app is configured to use. Rebuilt on each read so
-   * switching provider in Settings takes effect without rebuilding anything.
+   * The provider new sessions default to. Rebuilt on each read so a change in
+   * Settings takes effect without rebuilding anything.
+   *
+   * It is a *default*, not a mode: both providers are listed and usable at once
+   * whenever both have a token, and every session and VM carries the provider
+   * it actually belongs to.
    */
   get provider(): VMProvider {
     return this.providerFor(this.config.data.provider);
+  }
+
+  /**
+   * Every provider with a token, the default one first. This is what "which
+   * providers is this app talking to" means everywhere else.
+   */
+  get configuredProviders(): VMProviderID[] {
+    const preferred = this.config.data.provider;
+    const other: VMProviderID = preferred === "exe" ? "sprites" : "exe";
+    return [preferred, other].filter((id) => this.config.tokenFor(id) !== "");
+  }
+
+  /** Whether anything can be provisioned or listed at all. */
+  get hasAnyToken(): boolean {
+    return this.configuredProviders.length > 0;
   }
 
   providerFor(id: VMProviderID): VMProvider {
@@ -96,18 +116,22 @@ export class Workspace {
     }
   }
 
-  /** Known VMs that aren't already open as a tab. */
+  /**
+   * Known VMs that aren't already open as a tab. Keyed by provider as well as
+   * destination: a sprite and an exe.dev VM can perfectly well share a name,
+   * and opening one must not hide the other.
+   */
   get unopenedVMs(): RemoteVMRecord[] {
     const open = new Set(
-      this.sessions.map((session) => session.destination).filter((one): one is string =>
-        one !== null
-      ),
+      this.sessions
+        .filter((session) => session.destination !== null)
+        .map((session) => `${session.provider.id}:${session.destination}`),
     );
-    return this.availableVMs.filter((vm) => !open.has(vm.destination));
+    return this.availableVMs.filter((vm) => !open.has(`${vm.provider}:${vm.destination}`));
   }
 
-  makeProvisioner(): SessionProvisioner {
-    return new SessionProvisioner(this.provider, this.config, this.onChange);
+  makeProvisioner(provider: VMProviderID = this.config.data.provider): SessionProvisioner {
+    return new SessionProvisioner(this.providerFor(provider), this.config, this.onChange);
   }
 
   /** The commit identity to seed on a VM, if the GitHub user is known. */
@@ -131,17 +155,35 @@ export class Workspace {
    * select any of them.
    */
   async loadAvailableVMs(): Promise<void> {
-    if (!this.config.effectiveToken) return;
+    const providers = this.configuredProviders;
+    if (providers.length === 0) return;
     this.loadingVMs = true;
     this.onChange();
-    try {
-      this.availableVMs = await this.provider.listVMs();
-      this.vmListError = null;
-    } catch (error) {
-      // The last known VMs stay on screen — they probably still exist — but the
-      // reason goes in the sidebar, where the missing ones would have been.
-      this.vmListError = failureReason(error);
+
+    // Both accounts at once, in parallel: they are independent services, and
+    // one of them being slow is no reason for the other's VMs to wait.
+    const results = await Promise.all(providers.map(async (id) => {
+      try {
+        return { id, vms: await this.providerFor(id).listVMs(), reason: null };
+      } catch (error) {
+        return { id, vms: null, reason: failureReason(error) };
+      }
+    }));
+
+    const listed: RemoteVMRecord[] = [];
+    const failures: Array<{ provider: VMProviderID; reason: string }> = [];
+    for (const result of results) {
+      if (result.vms !== null) {
+        listed.push(...result.vms);
+        continue;
+      }
+      failures.push({ provider: result.id, reason: result.reason });
+      // A provider that failed keeps whatever it had on screen — those VMs
+      // probably still exist — so only its own rows are carried over.
+      listed.push(...this.availableVMs.filter((vm) => vm.provider === result.id));
     }
+    this.availableVMs = listed;
+    this.vmListErrors = failures;
     this.loadingVMs = false;
     this.onChange();
   }
@@ -252,12 +294,16 @@ export class Workspace {
   reopen(vm: RemoteVMRecord): void {
     if (!vm.destination) return;
     // If this VM already has a tab, just focus it.
-    const existing = this.sessions.find((session) => session.destination === vm.destination);
+    const existing = this.sessions.find((session) =>
+      session.destination === vm.destination && session.provider.id === vm.provider
+    );
     if (existing) {
       this.selectSession(existing.id);
       return;
     }
-    const provider = this.provider;
+    // The VM's own provider, not the default one: with both configured, the
+    // row you clicked decides which account this connects to.
+    const provider = this.providerFor(vm.provider);
     this.addSession({
       title: vm.name,
       provider,
@@ -312,10 +358,12 @@ export class Workspace {
   async deleteVM(vm: RemoteVMRecord): Promise<void> {
     // Drop it from the sidebar immediately; the refresh below is the authority
     // if the delete actually failed.
-    this.availableVMs = this.availableVMs.filter((entry) => entry.name !== vm.name);
+    this.availableVMs = this.availableVMs.filter((entry) =>
+      entry.name !== vm.name || entry.provider !== vm.provider
+    );
     this.onChange();
     try {
-      await this.provider.deleteVM(vm.name);
+      await this.providerFor(vm.provider).deleteVM(vm.name);
     } catch {
       // The refresh is the authority.
     }

@@ -19,6 +19,7 @@ import {
 import type { Workspace } from "../model/workspace.ts";
 import type { RemoteVMRecord } from "../providers/types.ts";
 import type { TerminalSession } from "../model/terminal-session.ts";
+import { providerBadge, providerLabel } from "../model/provider-label.ts";
 
 type SidebarRow =
   | { kind: "header"; title: string; busy: boolean }
@@ -70,7 +71,7 @@ export class SessionSidebar {
 
     if (this.rows.length === 0) {
       // Nothing here and no token is a setup step, not an empty list.
-      const configured = this.workspace.config.effectiveToken !== "";
+      const configured = this.workspace.hasAnyToken;
       lines.push(
         ...placeholder(
           width,
@@ -152,10 +153,15 @@ export class SessionSidebar {
       for (const session of this.workspace.sessions) rows.push({ kind: "session", session });
     }
     const unopened = this.workspace.unopenedVMs;
-    const failure = this.workspace.vmListError;
-    if (unopened.length > 0 || this.workspace.loadingVMs || failure) {
+    const failures = this.workspace.vmListErrors;
+    if (unopened.length > 0 || this.workspace.loadingVMs || failures.length > 0) {
       rows.push({ kind: "header", title: "Existing", busy: this.workspace.loadingVMs });
-      if (failure) rows.push({ kind: "notice", text: failure });
+      for (const failure of failures) {
+        rows.push({
+          kind: "notice",
+          text: `${providerLabel(failure.provider)}: ${failure.reason}`,
+        });
+      }
       for (const vm of unopened) rows.push({ kind: "vm", vm });
     }
     return rows;
@@ -190,8 +196,16 @@ export class SessionSidebar {
     if (entry.kind === "vm") {
       const running = entry.vm.status === "running";
       const dot = styled("•", { fg: running ? Color.green : Color.dimmer });
-      const name = elideMiddle(entry.vm.name, Math.max(6, width - 4));
-      return `${dot} ${styled(name, { fg: Color.dim })}`;
+      // Which account a VM is on only matters — and only fits — when there is
+      // more than one account in the list.
+      const badge = this.workspace.configuredProviders.length > 1
+        ? providerBadge(entry.vm.provider)
+        : "";
+      const nameWidth = Math.max(6, width - 4 - badge.length);
+      const name = elideMiddle(entry.vm.name, nameWidth);
+      const gap = badge ? " ".repeat(Math.max(1, nameWidth - displayWidth(name) + 1)) : "";
+      return `${dot} ${styled(name, { fg: Color.dim })}${gap}` +
+        (badge ? styled(badge, { fg: Color.dimmer }) : "");
     }
     return "";
   }

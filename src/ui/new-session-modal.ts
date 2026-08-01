@@ -22,10 +22,21 @@ import { SelectPopup } from "./select-popup.ts";
 import type { SessionProvisioner } from "../model/session-provisioner.ts";
 import type { AppConfig } from "../config/app-config.ts";
 import type { Workspace } from "../model/workspace.ts";
+import type { VMProviderID } from "../providers/types.ts";
+import { providerLabel } from "../model/provider-label.ts";
 
-type Field = "name" | "environment" | "model" | "search" | "repos" | "manual" | "submit";
+type Field =
+  | "provider"
+  | "name"
+  | "environment"
+  | "model"
+  | "search"
+  | "repos"
+  | "manual"
+  | "submit";
 
 const CREATE_FIELDS: Field[] = [
+  "provider",
   "name",
   "environment",
   "model",
@@ -44,22 +55,89 @@ export class NewSessionModal {
   private repoIndex = 0;
   private repoOffset = 0;
   private vmIndex = 0;
+  /**
+   * Which account a new VM goes on. Starts at the configured default and is
+   * only choosable when both providers have a token.
+   */
+  private providerID: VMProviderID;
   private hovered: string | null = null;
   private caret: { x: number; y: number } | null = null;
 
   constructor(
     private workspace: Workspace,
     private config: AppConfig,
-    readonly provisioner: SessionProvisioner,
+    public provisioner: SessionProvisioner,
     private onClose: () => void,
     private onOpenPopup: (popup: SelectPopup) => void,
-  ) {}
+  ) {
+    this.providerID = config.data.provider;
+  }
+
+  /**
+   * The fields Tab walks. The provider row is only one of them when there is
+   * more than one account to choose between.
+   */
+  private fields(): Field[] {
+    if (this.workspace.configuredProviders.length > 1) return CREATE_FIELDS;
+    return CREATE_FIELDS.filter((field) => field !== "provider");
+  }
+
+  /** Which account new VMs go on, and the heading that says so. */
+  private reopenHeading(): string {
+    return this.workspace.configuredProviders.length > 1
+      ? "VMs on your accounts"
+      : "VMs on your account";
+  }
+
+  /**
+   * Change which account this session provisions on. The provisioner is bound
+   * to one provider, so it is rebuilt — the repo and model choices already made
+   * are carried over, since neither depends on the VM host.
+   */
+  private selectProvider(provider: VMProviderID): void {
+    if (provider === this.providerID) return;
+    this.providerID = provider;
+    const kept = this.provisioner;
+    const next = this.workspace.makeProvisioner(provider);
+    next.sessionName = kept.sessionName;
+    next.search = kept.search;
+    next.manualRepo = kept.manualRepo;
+    next.selected = kept.selected;
+    next.repos = kept.repos;
+    next.reposError = kept.reposError;
+    next.models = kept.models;
+    next.modelsError = kept.modelsError;
+    this.provisioner = next;
+  }
+
+  private openProviderPopup(): void {
+    const options = this.workspace.configuredProviders.map((id) => ({
+      label: providerLabel(id),
+      detail: id === this.config.data.provider ? "default" : undefined,
+    }));
+    const providers = this.workspace.configuredProviders;
+    this.onOpenPopup(
+      new SelectPopup("Provider", options, providers.indexOf(this.providerID), (index) => {
+        this.selectProvider(providers[index]);
+      }),
+    );
+  }
+
+  /** Step to the other configured account without opening the list. */
+  private stepProvider(): void {
+    const providers = this.workspace.configuredProviders;
+    if (providers.length < 2) return;
+    const at = providers.indexOf(this.providerID);
+    this.selectProvider(providers[(at + 1) % providers.length]);
+  }
 
   /** Kick off the loads the picker needs. Safe to call once, on open. */
   load(): void {
     void this.provisioner.loadModels();
     void this.provisioner.loadRepos();
-    void this.provisioner.loadExistingVMs();
+    // The reopen tab shows the workspace's own list, which already covers every
+    // configured provider; refreshing it here keeps the modal current.
+    void this.workspace.loadAvailableVMs();
   }
 
   // MARK: - Rendering
@@ -141,6 +219,20 @@ export class NewSessionModal {
       return this.renderReopen(lines, width, height, originX, originY, hits);
     }
 
+    // Which account to create on. Only shown when there is a choice to make —
+    // with one token configured there is nothing to pick.
+    if (this.workspace.configuredProviders.length > 1) {
+      register("new.provider");
+      put(
+        ` ${styled("Provider   ", { fg: Color.dim, bg: Color.panel })} ` +
+          dropdown(providerLabel(this.providerID), width - 14, {
+            focused: this.field === "provider",
+            hovered: this.hovered === "new.provider",
+          }),
+      );
+      put("");
+    }
+
     // Name.
     put(` ${styled("Session name", { fg: Color.dim, bg: Color.panel })}`);
     register("new.name");
@@ -191,12 +283,13 @@ export class NewSessionModal {
         }`,
       );
     }
-    if (!this.workspace.config.effectiveToken) {
+    if (!this.config.tokenFor(this.providerID)) {
+      const provider = this.workspace.providerFor(this.providerID);
       put(
         ` ${
           styled(
-            `No ${this.workspace.provider.displayName} token — set one in Settings (Alt+,) or ` +
-              this.workspace.provider.tokenEnvVar,
+            `No ${provider.displayName} token — set one in Settings (Alt+,) or ` +
+              provider.tokenEnvVar,
             { fg: Color.orange, bg: Color.panel },
           )
         }`,
@@ -318,11 +411,11 @@ export class NewSessionModal {
     originY: number,
     hits: HitMap,
   ): string[] {
-    const vms = this.provisioner.existingVMs;
+    const vms = this.workspace.availableVMs;
     lines.push(
       fit(
-        ` ${styled("VMs on your account", { fg: Color.dim, bg: Color.panel })}  ` +
-          styled(this.provisioner.loadingVMs ? "◌" : `${vms.length}`, {
+        ` ${styled(this.reopenHeading(), { fg: Color.dim, bg: Color.panel })}  ` +
+          styled(this.workspace.loadingVMs ? "◌" : `${vms.length}`, {
             fg: Color.dimmer,
             bg: Color.panel,
           }),
@@ -341,10 +434,14 @@ export class NewSessionModal {
       const id = `new.vm:${index}`;
       hits.add({ x: originX, y: originY + lines.length, width, height: 1 }, id);
       const running = vm.status === "running";
+      // Which account it's on, when there is more than one to be on.
+      const where = this.workspace.configuredProviders.length > 1
+        ? ` ${styled(providerLabel(vm.provider), { fg: Color.dimmer, bg: Color.panel })}`
+        : "";
       const text =
         `${styled("•", { fg: running ? Color.green : Color.dimmer, bg: Color.panel })} ` +
-        `${elideMiddle(vm.name, Math.max(8, width - 18))} ` +
-        styled(vm.status ?? "", { fg: Color.dimmer, bg: Color.panel });
+        `${elideMiddle(vm.name, Math.max(8, width - 30))} ` +
+        styled(vm.status ?? "", { fg: Color.dimmer, bg: Color.panel }) + where;
       lines.push(
         fit(
           listRow(text, width, {
@@ -404,13 +501,13 @@ export class NewSessionModal {
           this.vmIndex = Math.max(0, this.vmIndex - 1);
           return false;
         case "down":
-          this.vmIndex = Math.min(this.provisioner.existingVMs.length - 1, this.vmIndex + 1);
+          this.vmIndex = Math.min(this.workspace.availableVMs.length - 1, this.vmIndex + 1);
           return false;
         case "tab":
           this.mode = "create";
           return false;
         case "enter": {
-          const vm = this.provisioner.existingVMs[this.vmIndex];
+          const vm = this.workspace.availableVMs[this.vmIndex];
           if (vm) {
             this.workspace.reopen(vm);
             return true;
@@ -423,9 +520,10 @@ export class NewSessionModal {
     }
 
     if (event.name === "tab") {
-      const index = CREATE_FIELDS.indexOf(this.field);
+      const fields = this.fields();
+      const index = Math.max(0, fields.indexOf(this.field));
       const step = event.shift ? -1 : 1;
-      this.field = CREATE_FIELDS[(index + step + CREATE_FIELDS.length) % CREATE_FIELDS.length];
+      this.field = fields[(index + step + fields.length) % fields.length];
       return false;
     }
 
@@ -454,6 +552,11 @@ export class NewSessionModal {
         }
         this.manualInput.handle(event);
         this.provisioner.manualRepo = this.manualInput.value;
+        return false;
+      case "provider":
+        if (event.name === "enter" || event.name === "space" || event.name === "down") {
+          this.openProviderPopup();
+        } else if (event.name === "left" || event.name === "right") this.stepProvider();
         return false;
       case "environment":
         // Enter and Space open the list; the arrows step without opening it.
@@ -503,6 +606,11 @@ export class NewSessionModal {
       this.field = "manual";
       return false;
     }
+    if (id === "new.provider") {
+      this.field = "provider";
+      this.openProviderPopup();
+      return false;
+    }
     if (id === "new.environment") {
       this.field = "environment";
       this.openEnvironmentPopup();
@@ -525,7 +633,7 @@ export class NewSessionModal {
       return false;
     }
     if (id.startsWith("new.vm:")) {
-      const vm = this.provisioner.existingVMs[Number(id.slice("new.vm:".length))];
+      const vm = this.workspace.availableVMs[Number(id.slice("new.vm:".length))];
       if (vm) {
         this.workspace.reopen(vm);
         return true;
@@ -538,7 +646,7 @@ export class NewSessionModal {
     if (this.mode === "reopen") {
       this.vmIndex = Math.max(
         0,
-        Math.min(this.provisioner.existingVMs.length - 1, this.vmIndex + delta),
+        Math.min(this.workspace.availableVMs.length - 1, this.vmIndex + delta),
       );
       return;
     }
@@ -628,7 +736,7 @@ export class NewSessionModal {
     if (!result) return false; // the failure is shown in place
     this.workspace.addSession({
       title: result.title,
-      provider: this.workspace.provider,
+      provider: this.workspace.providerFor(this.providerID),
       destination: result.destination,
       bootstrap: result.bootstrap,
       vmName: result.vmName,

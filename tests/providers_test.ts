@@ -92,6 +92,7 @@ Deno.test("recordFromExeVM fills the destination in from either field", () => {
     destination: "box.exe.xyz",
     webURL: "https://box.exe.xyz",
     status: "running",
+    provider: "exe",
   });
   assertEquals(recordFromExeVM({ vm_name: "box" }).destination, "box.exe.xyz");
 });
@@ -104,6 +105,7 @@ Deno.test("recordFromSprite keeps the URL the API gave, since the name lacks it"
       destination: "s",
       webURL: "https://org.sprites.dev/s",
       status: "running",
+      provider: "sprites",
     },
   );
 });

@@ -16,25 +16,31 @@ function stubSession(id: string, name: string, unseen: boolean): TerminalSession
   } as unknown as TerminalSession;
 }
 
+function stubVM(name: string, provider: "exe" | "sprites") {
+  return { name, destination: name, webURL: null, status: "running", provider };
+}
+
 function stubWorkspace(
   sessions: TerminalSession[],
   selected: string | null,
-  vmListError: string | null = null,
+  vmListErrors: Array<{ provider: "exe" | "sprites"; reason: string }> = [],
+  options: { vms?: ReturnType<typeof stubVM>[]; providers?: Array<"exe" | "sprites"> } = {},
 ): Workspace {
   return {
     sessions,
-    unopenedVMs: [],
+    unopenedVMs: options.vms ?? [],
     loadingVMs: false,
     selectedSessionID: selected,
-    vmListError,
-    config: { effectiveToken: "token" },
+    vmListErrors,
+    hasAnyToken: true,
+    configuredProviders: options.providers ?? ["exe"],
   } as unknown as Workspace;
 }
 
-function rows(workspace: Workspace): string[] {
+function rows(workspace: Workspace, width = 26): string[] {
   const sidebar = new SessionSidebar(workspace);
   return sidebar
-    .render({ x: 0, y: 0, width: 26, height: 10 }, new HitMap(), false)
+    .render({ x: 0, y: 0, width, height: 10 }, new HitMap(), false)
     .map(stripAnsi);
 }
 
@@ -58,14 +64,23 @@ Deno.test("the session you are looking at never claims unseen output", () => {
 });
 
 Deno.test("a failed VM listing says so where the VMs would have been", () => {
-  const lines = rows(stubWorkspace([], null, "401 Unauthorized"));
+  // Wide enough for the whole reason; a narrow sidebar elides it, which is the
+  // widget's job rather than this test's subject.
+  const lines = rows(
+    stubWorkspace([], null, [{ provider: "sprites", reason: "401 Unauthorized" }]),
+    44,
+  );
   const text = lines.join("\n");
   assert(text.toLowerCase().includes("existing"), "the section should still appear");
+  // Named, because with both providers listed "which one" is half the answer.
+  assert(text.includes("sprites.dev"), `no provider named: ${text}`);
   assert(text.includes("401 Unauthorized"), `no reason shown: ${text}`);
 });
 
 Deno.test("the notice isn't something the keyboard can land on", () => {
-  const workspace = stubWorkspace([stubSession("a", "alpha", false)], "a", "network is down");
+  const workspace = stubWorkspace([stubSession("a", "alpha", false)], "a", [
+    { provider: "exe", reason: "network is down" },
+  ]);
   const sidebar = new SessionSidebar(workspace);
   sidebar.render({ x: 0, y: 0, width: 26, height: 10 }, new HitMap(), true);
   // Rows: Sessions header, alpha, Existing header, notice. Walking off the end
@@ -82,4 +97,18 @@ Deno.test("the dot doesn't crowd out the name it sits beside", () => {
   assert(row, "no marked row");
   assertEquals(row.length, 26);
   assert(row.includes("…"), `a name that long should elide: ${row}`);
+});
+
+Deno.test("a VM row says which account it is on, but only when there are two", () => {
+  const vms = [stubVM("box", "exe"), stubVM("sprite-one", "sprites")];
+  const both = rows(stubWorkspace([], null, [], { vms, providers: ["exe", "sprites"] }), 34);
+  const box = both.find((line) => line.includes("box"));
+  const sprite = both.find((line) => line.includes("sprite-one"));
+  assert(box?.trimEnd().endsWith("exe"), `no badge on the exe.dev VM: ${box}`);
+  assert(sprite?.trimEnd().endsWith("spr"), `no badge on the sprites.dev VM: ${sprite}`);
+
+  // With one account configured the badge is noise, so it isn't drawn.
+  const one = rows(stubWorkspace([], null, [], { vms, providers: ["exe"] }), 34);
+  const only = one.find((line) => line.includes("box"));
+  assert(only && !only.trimEnd().endsWith("exe"), `badge shown for one account: ${only}`);
 });

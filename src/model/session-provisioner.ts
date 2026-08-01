@@ -11,7 +11,7 @@ import { describe, type GatewayModel } from "./llm-gateway.ts";
 import { normalizeRepo } from "../github/repo-reference.ts";
 import { cachedRepos, type GitHubRepo, listGitHubRepos } from "../github/repos.ts";
 import { TOKEN_VARIABLE, tokenIsStale } from "./auto-name.ts";
-import type { GatewaySelection, RemoteVMRecord, VMProvider } from "../providers/types.ts";
+import type { GatewaySelection, VMProvider } from "../providers/types.ts";
 
 export type ProvisionPhase = "picking" | "working" | "failed" | "done";
 
@@ -29,10 +29,6 @@ export class SessionProvisioner {
 
   /** User-supplied name; also used as the VM name. */
   sessionName = "";
-
-  // Existing VMs that can be reopened.
-  existingVMs: RemoteVMRecord[] = [];
-  loadingVMs = false;
 
   // Model picker state. The catalogue is remote, so it can be slow or absent;
   // "Custom" is always offered regardless.
@@ -139,19 +135,6 @@ export class SessionProvisioner {
     this.onChange();
   }
 
-  /** Existing VMs on the account, offered for reconnection. */
-  async loadExistingVMs(): Promise<void> {
-    this.loadingVMs = true;
-    this.onChange();
-    try {
-      this.existingVMs = await this.provider.listVMs();
-    } catch {
-      this.existingVMs = [];
-    }
-    this.loadingVMs = false;
-    this.onChange();
-  }
-
   /**
    * Run provisioning. On success returns the launch descriptor and a tab title;
    * on failure sets `errorMessage` and returns null. Repos are optional — a
@@ -174,9 +157,9 @@ export class SessionProvisioner {
       const setup = await this.provider.prepareGitHub(chosen);
       const tags = setup.tags;
 
-      // Re-read the VM list rather than trusting `existingVMs`, which is only
-      // populated while the reconnect list is on screen. A failed lookup just
-      // means no names to avoid.
+      // Read the VM list fresh: the names to avoid are this provider's, and
+      // the workspace's combined list spans both. A failed lookup just means
+      // no names to avoid.
       const taken = new Set(
         await this.provider.listVMs().then((vms) => vms.map((vm) => vm.name)).catch(() => []),
       );

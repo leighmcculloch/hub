@@ -42,8 +42,10 @@ the environment for tokens, reach the provider and GitHub APIs, and spawn `ssh`
 Three panes, all resizable (drag the dividers) and hideable:
 
 - **Left — sessions.** One row per open session; click to switch. Below them,
-  under **EXISTING**, the VMs already on your account — nothing is connected
-  until you click one. `Alt+S` toggles the pane.
+  under **EXISTING**, the VMs already on your accounts — nothing is connected
+  until you click one. With a token for both providers, exe.dev and sprites.dev
+  VMs are listed together, each row tagged with the account it lives on.
+  `Alt+S` toggles the pane.
 - **Middle — the terminal.** A tab strip above the pane, one tab per tmux pane.
   The app is the tmux client, so every tmux window (and every pane of a split)
   is its own tab — they appear and disappear as tmux's windows do, however they
@@ -145,12 +147,14 @@ browser instead, which is the one thing a terminal can't do for itself.
 
 ### The VM provider and token
 
-Choose a provider in **Settings** (`Alt+,`): **exe.dev** or **sprites.dev**. New
-sessions provision on the chosen provider; existing sessions keep the provider
-they were opened with, and switching reloads the **EXISTING** list.
+Set a token for either provider — or both — in **Settings** (`Alt+,`) or via an
+environment variable; it is stored in the config file, never in this repo.
 
-Set the active provider's token in Settings or via an environment variable; it
-is stored in the config file, never in this repo.
+**Both providers work at once.** With a token for each, the sidebar lists the
+VMs from both accounts together, the New Session dialog gains a **Provider**
+dropdown for choosing where the next VM goes, and every session keeps the
+provider it was opened with. The **Default** setting only picks which provider
+that dropdown starts on; it is not a switch that turns the other one off.
 
 | Provider | Env var | Notes |
 | --- | --- | --- |

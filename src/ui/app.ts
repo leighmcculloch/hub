@@ -213,7 +213,7 @@ export class App {
       layout.middle,
       this.hits,
       this.focus === "terminal",
-      this.config.effectiveToken !== "",
+      this.workspace.hasAnyToken,
     );
     this.terminalContent = middle.content;
     this.reportTerminalSize();
