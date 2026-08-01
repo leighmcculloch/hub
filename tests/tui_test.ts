@@ -173,8 +173,22 @@ Deno.test("the decoder reports pointer motion and its modifiers", () => {
 
 Deno.test("the decoder holds a sequence split across reads", () => {
   const decoder = new InputDecoder();
-  assertEquals(decoder.feed(encoder.encode("\x1b[")).length, 0);
-  assertEquals(names(decoder.feed(encoder.encode("B"))), ["down"]);
+  // Split anywhere past the introducer, which can only be a sequence.
+  assertEquals(decoder.feed(encoder.encode("\x1b[1;3")).length, 0);
+  assertEquals(names(decoder.feed(encoder.encode("D"))), ["left"]);
+});
+
+Deno.test("a read ending at the introducer is Alt+[, not half a sequence", () => {
+  // `\x1b[` alone has to be decided one way or the other: it is both Alt+[ and
+  // the start of every CSI sequence. Terminals write a key's whole sequence in
+  // one go, so surviving a read intact makes it the keystroke — the same call
+  // the decoder already makes for a solitary ESC. The cost is that a terminal
+  // splitting `\x1b[B` at exactly that point reads as Alt+[ then "B"; the
+  // benefit is that Alt+[ works at all instead of hanging and eating the next
+  // key.
+  const decoder = new InputDecoder();
+  assertEquals(names(decoder.feed(encoder.encode("\x1b["))), ["["]);
+  assertEquals(names(decoder.feed(encoder.encode("B"))), ["B"]);
 });
 
 Deno.test("bracketed paste arrives as one event, not as keystrokes", () => {
@@ -295,4 +309,34 @@ function backgroundsIn(text: string): string[] {
     index += 1;
   }
   return [...seen];
+}
+
+Deno.test("Alt+[ is decoded, even though its bytes are the CSI introducer", () => {
+  const decoder = new InputDecoder();
+  // `ESC [` starts every CSI sequence, so it is only Alt+[ once a whole read
+  // has gone by with nothing following it.
+  assertEquals(chords(decoder.feed(new Uint8Array([0x1b, 0x5b]))), ["alt+["]);
+  // And it must not swallow whatever is typed next.
+  assertEquals(chords(decoder.feed(new Uint8Array([0x1b, 0x5d]))), ["alt+]"]);
+});
+
+Deno.test("a real CSI sequence is still a sequence, whole or split", () => {
+  assertEquals(chords(new InputDecoder().feed(bytes(0x1b, 0x5b, 0x31, 0x3b, 0x33, 0x44))), [
+    "alt+left",
+  ]);
+  // Split after `ESC [ 1`, which can only be a sequence in progress.
+  const decoder = new InputDecoder();
+  assertEquals(chords(decoder.feed(bytes(0x1b, 0x5b, 0x31))), []);
+  assertEquals(chords(decoder.feed(bytes(0x3b, 0x33, 0x44))), ["alt+left"]);
+});
+
+function bytes(...values: number[]): Uint8Array {
+  return new Uint8Array(values);
+}
+
+/** Key names with their Alt modifier spelled out, which is the point here. */
+function chords(events: ReturnType<InputDecoder["feed"]>): string[] {
+  return events.map((event) =>
+    event.type === "key" ? `${event.alt ? "alt+" : ""}${event.name}` : event.type
+  );
 }

@@ -119,7 +119,18 @@ export class InputDecoder {
     const events: InputEvent[] = [];
     while (this.pending.length > 0) {
       const consumed = this.step(events);
-      if (consumed === 0) break; // incomplete sequence; wait for more bytes
+      if (consumed === 0) {
+        // `ESC [` is both Alt+[ and the start of every CSI sequence, so it can
+        // only be told apart by what follows. Surviving a whole read with
+        // nothing after it makes it the keystroke — the same rule a solitary
+        // ESC is decoded by, and without it Alt+[ waits forever and swallows
+        // whatever is typed next.
+        if (this.pending.length === 2 && this.pending[0] === 0x1b && this.pending[1] === 0x5b) {
+          events.push(key("[", this.pending, { alt: true }));
+          this.pending = new Uint8Array();
+        }
+        break; // otherwise an incomplete sequence; wait for more bytes
+      }
       this.pending = this.pending.slice(consumed);
     }
     return events;

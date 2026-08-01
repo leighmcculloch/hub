@@ -923,8 +923,10 @@ export class App {
       return;
     }
     this.focus = next;
-    if (step > 0) this.pane(next).focusFirst();
-    else this.pane(next).focusLast();
+    // Always the pane's first control, whichever way you came from: this is a
+    // "go to that pane" key, not a ring, and arriving on a sidebar's footer
+    // button looks like nothing happened.
+    this.pane(next).focusFirst();
   }
 
   /**
