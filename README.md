@@ -205,12 +205,12 @@ The app never runs an interactive `tmux attach`. It runs `tmux -C` — control
 mode — over the provider's transport:
 
 - **exe.dev** — `ssh` to `<name>.exe.xyz`, with ControlMaster multiplexing.
-- **sprites.dev** — the `sprite exec` CLI, non-TTY, with
-  `--max-run-after-disconnect=0` so a dropped connection reattaches to a live
-  session.
+- **sprites.dev** — the `sprite exec` CLI, non-TTY.
 
 Neither asks for a remote TTY: the control protocol is a byte stream on stdout,
-and a PTY would only translate it. Keystrokes go back as `send-keys -H`, byte
+and a PTY would only translate it. Neither needs to ask for the session to
+outlive a dropped connection either — the remote tmux server daemonises, so
+reconnecting is just another `new-session -A` onto the session still running. Keystrokes go back as `send-keys -H`, byte
 for byte, so the pane's program sees exactly what your terminal produced. The
 pane's screen is read back with `capture-pane -e` whenever it changes, which is
 why the app carries no terminal emulator of its own.
