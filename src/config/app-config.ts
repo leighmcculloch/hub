@@ -85,20 +85,30 @@ export function decodeConfig(raw: unknown): AppConfigData {
     )
     : [];
 
+  // An empty list would leave nothing to select or edit, so it's treated as
+  // absent rather than honoured. A stored list keeps every edit it carries, but
+  // gains any default that has been added since it was written — those have
+  // fixed ids precisely so a new one can be recognised as missing.
+  const reconciled = environments.length > 0
+    ? reconcileDefaults(environments)
+    : { environments: defaults.environments, moved: new Map<string, string>() };
+
+  const storedSelection = typeof entry.selectedEnvironmentID === "string"
+    ? entry.selectedEnvironmentID
+    : null;
+
   return {
     exeToken: text("exeToken", defaults.exeToken),
     provider: entry.provider === "sprites" ? "sprites" : "exe",
     spritesToken: text("spritesToken", defaults.spritesToken),
     renameToken: text("renameToken", defaults.renameToken),
     renameTokenMinted: decodeMinted(entry.renameTokenMinted),
-    // An empty list would leave nothing to select or edit, so it's treated as
-    // absent rather than honoured. A stored list keeps every edit it carries,
-    // but gains any default that has been added since it was written — those
-    // have fixed ids precisely so a new one can be recognised as missing.
-    environments: environments.length > 0 ? withNewDefaults(environments) : defaults.environments,
-    selectedEnvironmentID: typeof entry.selectedEnvironmentID === "string"
-      ? entry.selectedEnvironmentID
-      : null,
+    environments: reconciled.environments,
+    // A selection pointing at a duplicate that was just removed follows the
+    // entry that replaced it, rather than silently falling back to the first.
+    selectedEnvironmentID: storedSelection === null
+      ? null
+      : reconciled.moved.get(storedSelection.toLowerCase()) ?? storedSelection,
     model: decodeModel(entry.model),
     globalEnvironment: envVarsFrom(entry.globalEnvironment),
     claudeSettings: text("claudeSettings", defaults.claudeSettings),
@@ -106,17 +116,66 @@ export function decodeConfig(raw: unknown): AppConfigData {
 }
 
 /**
- * The stored environments plus any built-in one they predate.
+ * UUIDs are case-insensitive, and this config file has been written by two
+ * programs that disagree about the case: Swift's `UUID.uuidString` is upper
+ * case, this app writes lower case. Comparing them literally is what made an
+ * upgraded install grow a second "Claude Code".
+ */
+export function sameEnvironmentID(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+/** Whether an environment is an untouched copy of a built-in, id aside. */
+function isPristine(environment: SessionEnvironment, builtIn: SessionEnvironment): boolean {
+  return environment.name === builtIn.name &&
+    environment.setupScript === builtIn.setupScript &&
+    environment.startCommand === builtIn.startCommand &&
+    environment.environment.length === builtIn.environment.length &&
+    environment.environment.every((variable, index) =>
+      variable.key === builtIn.environment[index].key &&
+      variable.value === builtIn.environment[index].value
+    );
+}
+
+/**
+ * The stored environments, minus duplicates an earlier build added, plus any
+ * built-in they predate.
  *
  * Appended rather than merged: an environment the user has edited keeps every
  * edit, and one they deleted stays deleted only until the next upgrade — which
  * is the trade that lets a new default (pi, say) reach existing installs at
  * all.
+ *
+ * The removal half repairs the damage from comparing ids case-sensitively: a
+ * config written by the Swift app carries upper-case ids, so every built-in
+ * looked missing and was appended beside the one already there. Only an
+ * *untouched* copy of a built-in that shares its name with an earlier entry is
+ * dropped, so nothing the user has edited can be lost. `moved` reports what was
+ * removed and what stood in its place, so a selection pointing at the casualty
+ * follows the survivor.
  */
-function withNewDefaults(stored: SessionEnvironment[]): SessionEnvironment[] {
-  const known = new Set(stored.map((environment) => environment.id));
-  const added = defaultEnvironments().filter((one) => !known.has(one.id));
-  return added.length === 0 ? stored : [...stored, ...added];
+function reconcileDefaults(
+  stored: SessionEnvironment[],
+): { environments: SessionEnvironment[]; moved: Map<string, string> } {
+  const defaults = defaultEnvironments();
+  const moved = new Map<string, string>();
+
+  const kept = stored.filter((environment, index) => {
+    const builtIn = defaults.find((one) => sameEnvironmentID(one.id, environment.id));
+    if (!builtIn || !isPristine(environment, builtIn)) return true;
+    const earlier = stored.find((other, at) => at < index && other.name === environment.name);
+    if (!earlier) return true;
+    moved.set(environment.id.toLowerCase(), earlier.id);
+    return false;
+  });
+
+  const known = new Set(kept.map((one) => one.id.toLowerCase()));
+  const names = new Set(kept.map((one) => one.name));
+  // Both an id and a name have to be new for a built-in to be worth adding: an
+  // id can drift, and adding a second environment by the same name is exactly
+  // the bug this is repairing.
+  const added = defaults.filter((one) => !known.has(one.id.toLowerCase()) && !names.has(one.name));
+  return { environments: added.length === 0 ? kept : [...kept, ...added], moved };
 }
 
 /** Accepts both the epoch number this app writes and the ISO date Swift wrote. */
@@ -162,7 +221,10 @@ export class AppConfig {
    * or missing selection still yields something runnable.
    */
   get selectedEnvironment(): SessionEnvironment {
-    const chosen = this.data.environments.find((one) => one.id === this.data.selectedEnvironmentID);
+    const selected = this.data.selectedEnvironmentID;
+    const chosen = selected === null
+      ? undefined
+      : this.data.environments.find((one) => sameEnvironmentID(one.id, selected));
     return chosen ?? this.data.environments[0] ?? {
       id: crypto.randomUUID(),
       name: "",

@@ -182,6 +182,7 @@ const HELP_ROWS: HelpRow[] = [
 
   { kind: "heading", text: "The terminal" },
   { kind: "binding", keys: "Alt+T", description: "New tmux window in this session" },
+  { kind: "binding", keys: "Alt+⇧W", description: "Close this tmux window" },
   { kind: "binding", keys: "Alt+← / →", description: "Previous / next terminal tab" },
   { kind: "binding", keys: "Alt+PgUp/Dn", description: "Read the pane's scrollback" },
   { kind: "binding", keys: "Alt+End", description: "Back to the live screen" },

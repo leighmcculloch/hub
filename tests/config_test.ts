@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
+  AppConfig,
   decodeConfig,
   DEFAULT_CLAUDE_SETTINGS,
   defaultConfigData,
@@ -211,4 +212,93 @@ Deno.test("pi is offered out of the box, and installs itself on the VM", () => {
   assertStringIncludes(pi.setupScript, "pi.dev/install.sh");
   // Idempotent: the bootstrap re-runs it on every reconnect.
   assertStringIncludes(pi.setupScript, "command -v pi");
+});
+
+Deno.test("a config written by the Swift app doesn't grow duplicate environments", () => {
+  // Swift's UUID.uuidString is upper case and this app writes lower case; the
+  // same environment written by either must be recognised as the same one.
+  const config = decodeConfig({
+    environments: [
+      {
+        id: "8F1D4F4E-1D2B-4C1B-9E3A-000000000001",
+        name: "Claude Code",
+        setupScript: "",
+        startCommand: "claude",
+        environment: [{ key: "CLAUDE_CODE_OAUTH_TOKEN", value: "secret" }],
+      },
+      {
+        id: "8F1D4F4E-1D2B-4C1B-9E3A-000000000002",
+        name: "Codex",
+        setupScript: "",
+        startCommand: "codex",
+        environment: [],
+      },
+    ],
+  });
+  assertEquals(config.environments.map((one) => one.name), ["Claude Code", "Codex", "pi"]);
+  // The user's own copy survives, token and all — the built-in isn't merged over it.
+  assertEquals(config.environments[0].environment[0].value, "secret");
+});
+
+Deno.test("an already-duplicated config is repaired, keeping the edited copy", () => {
+  const config = decodeConfig({
+    environments: [
+      {
+        id: "8F1D4F4E-1D2B-4C1B-9E3A-000000000001",
+        name: "Claude Code",
+        setupScript: "",
+        startCommand: "claude --resume",
+        environment: [{ key: "CLAUDE_CODE_OAUTH_TOKEN", value: "secret" }],
+      },
+      // What the case-sensitive comparison appended: an untouched built-in.
+      {
+        id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000001",
+        name: "Claude Code",
+        setupScript: "",
+        startCommand: "claude",
+        environment: [{ key: "CLAUDE_CODE_OAUTH_TOKEN", value: "" }],
+      },
+    ],
+    selectedEnvironmentID: "8f1d4f4e-1d2b-4c1b-9e3a-000000000001",
+  });
+  assertEquals(config.environments.filter((one) => one.name === "Claude Code").length, 1);
+  assertEquals(config.environments[0].startCommand, "claude --resume");
+  // A selection pointing at the removed copy follows the one that replaced it.
+  assertEquals(config.selectedEnvironmentID, "8F1D4F4E-1D2B-4C1B-9E3A-000000000001");
+});
+
+Deno.test("two environments the user edited are never confused for a duplicate", () => {
+  const config = decodeConfig({
+    environments: [
+      {
+        id: "8F1D4F4E-1D2B-4C1B-9E3A-000000000002",
+        name: "Codex",
+        setupScript: "",
+        startCommand: "codex",
+        environment: [],
+      },
+      // Same name, but not a built-in: the user made this one, so it stays.
+      {
+        id: "11111111-1111-1111-1111-111111111111",
+        name: "Codex",
+        setupScript: "",
+        startCommand: "codex --sandbox",
+        environment: [],
+      },
+    ],
+  });
+  assertEquals(config.environments.filter((one) => one.name === "Codex").length, 2);
+});
+
+Deno.test("the selected environment resolves whatever case its id was written in", () => {
+  const data = decodeConfig({
+    environments: [{
+      id: "8F1D4F4E-1D2B-4C1B-9E3A-000000000002",
+      name: "Codex",
+      startCommand: "codex",
+    }],
+    selectedEnvironmentID: "8f1d4f4e-1d2b-4c1b-9e3a-000000000002",
+  });
+  const config = Object.assign(Object.create(AppConfig.prototype), { data }) as AppConfig;
+  assertEquals(config.selectedEnvironment.name, "Codex");
 });

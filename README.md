@@ -106,6 +106,7 @@ Everything else is an `Alt` chord, for the same reason.
 | `Alt+C` | Copy the pane's screen to the clipboard |
 | `Alt+Shift+←` / `→` | Resize the sidebar you're in |
 | `Alt+T` | New tmux window in this session |
+| `Alt+Shift+W` | Close this tmux window (leaves the session) |
 | `Alt+←` / `Alt+→` | Previous / next terminal tab |
 | `Alt+K` | Reconnect a dropped session |
 | `Alt+,` | Settings |
@@ -150,11 +151,13 @@ browser instead, which is the one thing a terminal can't do for itself.
 Set a token for either provider — or both — in **Settings** (`Alt+,`) or via an
 environment variable; it is stored in the config file, never in this repo.
 
-**Both providers work at once.** With a token for each, the sidebar lists the
-VMs from both accounts together, the New Session dialog gains a **Provider**
-dropdown for choosing where the next VM goes, and every session keeps the
-provider it was opened with. The **Default** setting only picks which provider
-that dropdown starts on; it is not a switch that turns the other one off.
+**Both providers work at once.** The New Session dialog always shows a
+**Provider** row — `exe.dev` and `sprites.dev` side by side — so where the next
+VM goes is one click or one arrow key away. With a token for each, the sidebar
+lists the VMs from both accounts together, tagged with the one they live on, and
+every session keeps the provider it was opened with. The **Default** setting
+only picks which provider that row starts on; it is not a switch that turns the
+other one off.
 
 | Provider | Env var | Notes |
 | --- | --- | --- |

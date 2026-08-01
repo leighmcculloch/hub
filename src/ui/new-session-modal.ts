@@ -23,7 +23,7 @@ import type { SessionProvisioner } from "../model/session-provisioner.ts";
 import type { AppConfig } from "../config/app-config.ts";
 import type { Workspace } from "../model/workspace.ts";
 import type { VMProviderID } from "../providers/types.ts";
-import { providerLabel } from "../model/provider-label.ts";
+import { ALL_PROVIDERS, providerLabel } from "../model/provider-label.ts";
 
 type Field =
   | "provider"
@@ -56,8 +56,9 @@ export class NewSessionModal {
   private repoOffset = 0;
   private vmIndex = 0;
   /**
-   * Which account a new VM goes on. Starts at the configured default and is
-   * only choosable when both providers have a token.
+   * Which account a new VM goes on. Starts at the configured default; both
+   * providers are always offered, since a provider you have no token for is
+   * one you may simply not have set up yet.
    */
   private providerID: VMProviderID;
   private hovered: string | null = null;
@@ -71,15 +72,6 @@ export class NewSessionModal {
     private onOpenPopup: (popup: SelectPopup) => void,
   ) {
     this.providerID = config.data.provider;
-  }
-
-  /**
-   * The fields Tab walks. The provider row is only one of them when there is
-   * more than one account to choose between.
-   */
-  private fields(): Field[] {
-    if (this.workspace.configuredProviders.length > 1) return CREATE_FIELDS;
-    return CREATE_FIELDS.filter((field) => field !== "provider");
   }
 
   /** Which account new VMs go on, and the heading that says so. */
@@ -110,25 +102,11 @@ export class NewSessionModal {
     this.provisioner = next;
   }
 
-  private openProviderPopup(): void {
-    const options = this.workspace.configuredProviders.map((id) => ({
-      label: providerLabel(id),
-      detail: id === this.config.data.provider ? "default" : undefined,
-    }));
-    const providers = this.workspace.configuredProviders;
-    this.onOpenPopup(
-      new SelectPopup("Provider", options, providers.indexOf(this.providerID), (index) => {
-        this.selectProvider(providers[index]);
-      }),
-    );
-  }
-
-  /** Step to the other configured account without opening the list. */
-  private stepProvider(): void {
-    const providers = this.workspace.configuredProviders;
-    if (providers.length < 2) return;
-    const at = providers.indexOf(this.providerID);
-    this.selectProvider(providers[(at + 1) % providers.length]);
+  /** Step to the next provider chip, wrapping. */
+  private stepProvider(step: number): void {
+    const at = ALL_PROVIDERS.indexOf(this.providerID);
+    const next = (at + step + ALL_PROVIDERS.length) % ALL_PROVIDERS.length;
+    this.selectProvider(ALL_PROVIDERS[next]);
   }
 
   /** Kick off the loads the picker needs. Safe to call once, on open. */
@@ -219,19 +197,29 @@ export class NewSessionModal {
       return this.renderReopen(lines, width, height, originX, originY, hits);
     }
 
-    // Which account to create on. Only shown when there is a choice to make —
-    // with one token configured there is nothing to pick.
-    if (this.workspace.configuredProviders.length > 1) {
-      register("new.provider");
-      put(
-        ` ${styled("Provider   ", { fg: Color.dim, bg: Color.panel })} ` +
-          dropdown(providerLabel(this.providerID), width - 14, {
-            focused: this.field === "provider",
-            hovered: this.hovered === "new.provider",
-          }),
-      );
-      put("");
+    // Which account to create on. Always shown, and as chips rather than a
+    // dropdown: with a list you have to open it to discover the app can talk to
+    // two providers at all, which is exactly the thing worth being obvious.
+    let chipX = originX + 11;
+    let chips = ` ${styled("Provider  ", { fg: Color.dim, bg: Color.panel })}`;
+    for (const id of ALL_PROVIDERS) {
+      const label = ` ${providerLabel(id)} `;
+      const chipID = `new.provider:${id}`;
+      hits.add({ x: chipX, y: originY + lines.length, width: label.length, height: 1 }, chipID);
+      chips += control(label, {
+        active: id === this.providerID,
+        focused: this.field === "provider" && id === this.providerID,
+        hovered: this.hovered === chipID,
+      }) + " ";
+      chipX += label.length + 1;
     }
+    // A provider with no token is still offered: selecting it is how you find
+    // out what it needs, and the line below says so.
+    if (!this.config.tokenFor(this.providerID)) {
+      chips += styled("no token", { fg: Color.orange, bg: Color.panel });
+    }
+    put(chips);
+    put("");
 
     // Name.
     put(` ${styled("Session name", { fg: Color.dim, bg: Color.panel })}`);
@@ -520,10 +508,9 @@ export class NewSessionModal {
     }
 
     if (event.name === "tab") {
-      const fields = this.fields();
-      const index = Math.max(0, fields.indexOf(this.field));
+      const index = Math.max(0, CREATE_FIELDS.indexOf(this.field));
       const step = event.shift ? -1 : 1;
-      this.field = fields[(index + step + fields.length) % fields.length];
+      this.field = CREATE_FIELDS[(index + step + CREATE_FIELDS.length) % CREATE_FIELDS.length];
       return false;
     }
 
@@ -554,9 +541,12 @@ export class NewSessionModal {
         this.provisioner.manualRepo = this.manualInput.value;
         return false;
       case "provider":
-        if (event.name === "enter" || event.name === "space" || event.name === "down") {
-          this.openProviderPopup();
-        } else if (event.name === "left" || event.name === "right") this.stepProvider();
+        if (
+          event.name === "left" || event.name === "right" ||
+          event.name === "enter" || event.name === "space"
+        ) {
+          this.stepProvider(event.name === "left" ? -1 : 1);
+        }
         return false;
       case "environment":
         // Enter and Space open the list; the arrows step without opening it.
@@ -606,9 +596,9 @@ export class NewSessionModal {
       this.field = "manual";
       return false;
     }
-    if (id === "new.provider") {
+    if (id.startsWith("new.provider:")) {
       this.field = "provider";
-      this.openProviderPopup();
+      this.selectProvider(id.slice("new.provider:".length) as VMProviderID);
       return false;
     }
     if (id === "new.environment") {

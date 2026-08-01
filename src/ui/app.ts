@@ -621,6 +621,11 @@ export class App {
       case "w":
         if (session) this.workspace.closeSession(session);
         return true;
+      case "W":
+        // Shift narrows the scope: Alt+W closes the session, Alt+Shift+W the
+        // one tmux window inside it.
+        this.closeCurrentTab();
+        return true;
       case "d":
         this.confirmDelete();
         return true;
@@ -771,6 +776,12 @@ export class App {
         run: () => this.renameSession(),
       },
       {
+        label: "Close Terminal Tab",
+        shortcut: "Alt+Shift+W",
+        enabled: (session?.tabs.length ?? 0) > 1,
+        run: () => this.closeCurrentTab(),
+      },
+      {
         label: "Close Session",
         shortcut: "Alt+W",
         enabled: session !== null,
@@ -865,6 +876,27 @@ export class App {
         ? `Copied the first ${sent} characters — the rest is too long for the terminal`
         : `Copied ${text.split("\n").length} lines from the pane`,
     );
+  }
+
+  /**
+   * Close the tmux window on screen, leaving the session and its other windows
+   * running. The tab goes when tmux reports the pane gone, so a refused kill
+   * leaves it where it was.
+   */
+  private closeCurrentTab(): void {
+    const session = this.workspace.selectedSession;
+    const tab = session?.selectedTab;
+    if (!session || !tab) {
+      this.say("No window to close");
+      return;
+    }
+    if (session.tabs.length === 1) {
+      // Killing the last pane ends the tmux session, which is a different and
+      // much larger thing than what this key says it does.
+      this.say("That's the last window — Alt+W closes the session");
+      return;
+    }
+    session.closeTab(tab);
   }
 
   /** Widen or narrow whichever sidebar has the keyboard. */
