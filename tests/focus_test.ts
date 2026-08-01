@@ -54,16 +54,22 @@ function stubSession(): TerminalSession {
   } as unknown as TerminalSession;
 }
 
-Deno.test("the sessions sidebar walks its list then its button", () => {
+Deno.test("the sessions sidebar walks its list, the group toggle, then its button", () => {
   const sidebar = new SessionSidebar(stubWorkspace());
   sidebar.focusFirst();
   assertEquals(sidebar.onNewButton, false);
+  assertEquals(sidebar.onGroupToggle, false);
+  assertEquals(sidebar.advance(1), true);
+  assertEquals(sidebar.onGroupToggle, true);
   assertEquals(sidebar.advance(1), true);
   assertEquals(sidebar.onNewButton, true);
   // Past the last control, so the app knows to move to the next pane.
   assertEquals(sidebar.advance(1), false);
   assertEquals(sidebar.advance(-1), true);
   assertEquals(sidebar.onNewButton, false);
+  assertEquals(sidebar.advance(-1), true);
+  assertEquals(sidebar.onGroupToggle, false);
+  // Back on the list.
   assertEquals(sidebar.advance(-1), false);
 });
 
@@ -80,6 +86,8 @@ Deno.test("the sidebar's keys navigate the list and report activation", () => {
   assertEquals(sidebar.key("enter"), "activate");
   assertEquals(sidebar.key("delete"), "delete");
   assertEquals(sidebar.key("x"), "ignored");
+  // Plain `g` cycles the grouping from the list.
+  assertEquals(sidebar.key("g"), "group");
   sidebar.focusLast();
   assertEquals(sidebar.key("enter"), "activate");
   // Arrow keys mean nothing on a button.

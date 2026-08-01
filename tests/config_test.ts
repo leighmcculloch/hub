@@ -128,12 +128,14 @@ Deno.test("LayoutStore round-trips the pane sizes and what was showing", async (
       filesHeight: 12,
       showSessionSidebar: false,
       showDiffSidebar: true,
+      sidebarGrouping: "repo",
     });
     const loaded = store.load();
     assertEquals(loaded.sidebarWidth, 34);
     assertEquals(loaded.filesHeight, 12);
     assertEquals(loaded.showSessionSidebar, false);
     assertEquals(loaded.showDiffSidebar, true);
+    assertEquals(loaded.sidebarGrouping, "repo");
   } finally {
     await Deno.remove(directory, { recursive: true });
   }
@@ -150,6 +152,10 @@ Deno.test("decodeLayout falls back per field and refuses a nonsense size", () =>
   // A pane can never be persisted to nothing; the layout pass clamps from here.
   assertEquals(decodeLayout({ sidebarWidth: -5, scopeHeight: 0.4 }).sidebarWidth, 1);
   assertEquals(decodeLayout({ scopeHeight: 0.4 }).scopeHeight, 1);
+  // A grouping the app doesn't know — written by a newer version, say — falls
+  // back to the default rather than surfacing as an unknown mode.
+  assertEquals(decodeLayout({ sidebarGrouping: "by-mood" }).sidebarGrouping, "provider");
+  assertEquals(decodeLayout({}).sidebarGrouping, "provider");
 });
 
 Deno.test("normalizeRepo accepts owner/repo and the URLs people paste", () => {

@@ -178,6 +178,7 @@ const HELP_ROWS: HelpRow[] = [
   { kind: "binding", keys: "Alt+N", description: "New session on a fresh VM" },
   { kind: "binding", keys: "Alt+L", description: "New local shell" },
   { kind: "binding", keys: "Alt+G", description: "Go to a session or VM by name" },
+  { kind: "binding", keys: "g", description: "In the sidebar: group by provider, repo or state" },
   { kind: "binding", keys: "Alt+1…9", description: "Select a session (9 is the last)" },
   { kind: "binding", keys: "Alt+M", description: "Rename the session" },
   { kind: "binding", keys: "Alt+⇧W", description: "Close the session (leaves the VM running)" },

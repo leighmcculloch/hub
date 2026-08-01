@@ -2,10 +2,21 @@ import { assert, assertEquals } from "@std/assert";
 import { stripAnsi } from "../src/tui/ansi.ts";
 import { HitMap } from "../src/tui/widgets.ts";
 import { SessionSidebar } from "../src/ui/session-sidebar.ts";
+import type { SidebarGrouping } from "../src/config/layout-store.ts";
 import type { Workspace } from "../src/model/workspace.ts";
 import type { TerminalSession } from "../src/model/terminal-session.ts";
 
-function stubSession(id: string, name: string, unseen: boolean): TerminalSession {
+function stubSession(
+  id: string,
+  name: string,
+  unseen: boolean,
+  options: {
+    provider?: "exe" | "sprites";
+    destination?: string | null;
+    workingDirectory?: string | null;
+  } = {},
+): TerminalSession {
+  const provider = options.provider ?? "exe";
   return {
     id,
     displayName: name,
@@ -13,6 +24,9 @@ function stubSession(id: string, name: string, unseen: boolean): TerminalSession
     isDisconnected: false,
     isConnecting: false,
     elapsedMs: 0,
+    provider: { id: provider },
+    destination: options.destination !== undefined ? options.destination : `${name}.exe.xyz`,
+    workingDirectory: options.workingDirectory ?? null,
   } as unknown as TerminalSession;
 }
 
@@ -37,8 +51,9 @@ function stubWorkspace(
   } as unknown as Workspace;
 }
 
-function rows(workspace: Workspace, width = 26): string[] {
+function rows(workspace: Workspace, width = 26, grouping: SidebarGrouping = "none"): string[] {
   const sidebar = new SessionSidebar(workspace);
+  sidebar.grouping = grouping;
   return sidebar
     .render({ x: 0, y: 0, width, height: 10 }, new HitMap(), false)
     .map(stripAnsi);
@@ -111,4 +126,160 @@ Deno.test("a VM row says which account it is on, but only when there are two", (
   const one = rows(stubWorkspace([], null, [], { vms, providers: ["exe"] }), 34);
   const only = one.find((line) => line.includes("box"));
   assert(only && !only.trimEnd().endsWith("exe"), `badge shown for one account: ${only}`);
+});
+
+Deno.test("grouping by provider puts a heading per host, with sessions and VMs together", () => {
+  const sessions = [
+    stubSession("a", "alpha", false, { provider: "exe" }),
+    stubSession("b", "bravo", false, { provider: "sprites", destination: "bravo.spr" }),
+  ];
+  const vms = [stubVM("sprite-one", "sprites"), stubVM("box", "exe")];
+  const lines = rows(
+    stubWorkspace(sessions, "a", [], { vms, providers: ["exe", "sprites"] }),
+    30,
+    "provider",
+  );
+  const text = lines.join("\n");
+  // Both hosts have a heading, so which account an instance is on is the first
+  // thing you read — the point of grouping by provider.
+  assert(text.includes("EXE.DEV"), `no exe.dev heading: ${text}`);
+  assert(text.includes("SPRITES.DEV"), `no sprites.dev heading: ${text}`);
+  // An open session and a reopenable VM on the same host sit under the same
+  // heading, so the host's instances are in one place.
+  const spritesStart = lines.findIndex((line) => line.includes("SPRITES.DEV"));
+  const alphaLine = lines.findIndex((line) => line.includes("alpha"));
+  const boxLine = lines.findIndex((line) => line.includes("box"));
+  assert(alphaLine > -1 && boxLine > -1, "exe.dev session and VM both present");
+  assert(
+    alphaLine < spritesStart && boxLine < spritesStart,
+    `exe.dev items not under the exe.dev heading: ${text}`,
+  );
+});
+
+Deno.test("grouping by provider gives local sessions their own heading", () => {
+  const sessions = [
+    stubSession("local", "Local", false, { provider: "exe", destination: null }),
+    stubSession("vm", "vm-one", false, { provider: "exe" }),
+  ];
+  const lines = rows(stubWorkspace(sessions, "local"), 30, "provider");
+  const text = lines.join("\n");
+  assert(text.includes("LOCAL"), `no Local heading: ${text}`);
+  assert(text.includes("EXE.DEV"), `no exe.dev heading: ${text}`);
+});
+
+Deno.test("grouping by provider drops the per-row badge, since the host is the heading", () => {
+  const vms = [stubVM("box", "exe"), stubVM("sprite-one", "sprites")];
+  const lines = rows(
+    stubWorkspace([], null, [], { vms, providers: ["exe", "sprites"] }),
+    34,
+    "provider",
+  );
+  const box = lines.find((line) => line.includes("box"));
+  const sprite = lines.find((line) => line.includes("sprite-one"));
+  assert(box && !box.trimEnd().endsWith("exe"), `badge shown under a provider heading: ${box}`);
+  assert(
+    sprite && !sprite.trimEnd().endsWith("spr"),
+    `badge shown under a provider heading: ${sprite}`,
+  );
+});
+
+Deno.test("grouping by repo names the session's working directory as the heading", () => {
+  const sessions = [
+    stubSession("a", "alpha", false, { workingDirectory: "/home/u/leigh/hub" }),
+    stubSession("b", "bravo", false, { workingDirectory: "/home/u/leigh/pi" }),
+  ];
+  const lines = rows(stubWorkspace(sessions, "a"), 30, "repo");
+  const text = lines.join("\n");
+  assert(text.includes("LEIGH/HUB"), `no repo heading: ${text}`);
+  assert(text.includes("LEIGH/PI"), `no second repo heading: ${text}`);
+});
+
+Deno.test("grouping by repo collects repo-less sessions under No repo", () => {
+  const sessions = [
+    stubSession("a", "alpha", false, { workingDirectory: null }),
+    stubSession("b", "bravo", false, { workingDirectory: "/home/u/leigh/hub" }),
+  ];
+  const lines = rows(stubWorkspace(sessions, "a"), 30, "repo");
+  const text = lines.join("\n");
+  assert(text.includes("NO REPO"), `no No repo heading: ${text}`);
+  assert(text.includes("LEIGH/HUB"), `no repo heading for the repo'd session: ${text}`);
+});
+
+Deno.test("grouping by repo keeps two sessions in the same repo under one heading", () => {
+  // A repo shared by two sessions must not split into two headings just
+  // because another repo's session sorts between them on the first pass.
+  const sessions = [
+    stubSession("a", "alpha", false, { workingDirectory: "/home/u/leigh/hub" }),
+    stubSession("b", "bravo", false, { workingDirectory: "/home/u/leigh/pi" }),
+    stubSession("c", "charlie", false, { workingDirectory: "/home/u/leigh/hub" }),
+  ];
+  const lines = rows(stubWorkspace(sessions, "a"), 30, "repo");
+  const hubHeaders = lines.filter((line) => line.includes("LEIGH/HUB"));
+  assertEquals(hubHeaders.length, 1, `repo heading repeated: ${lines.join("\n")}`);
+  // And both sessions sit under that one heading, with nothing between them.
+  const hubIndex = lines.findIndex((line) => line.includes("LEIGH/HUB"));
+  const alphaIndex = lines.findIndex((line) => line.includes("alpha"));
+  const charlieIndex = lines.findIndex((line) => line.includes("charlie"));
+  const piIndex = lines.findIndex((line) => line.includes("LEIGH/PI"));
+  assert(alphaIndex > hubIndex && charlieIndex > hubIndex, "sessions not under the hub heading");
+  assert(
+    alphaIndex < piIndex && charlieIndex < piIndex,
+    "hub sessions came after the pi heading",
+  );
+});
+
+Deno.test("grouping by state separates connecting, waiting and output-ready sessions", () => {
+  const sessions = [
+    stubSession("a", "alpha", false), // waiting (live, no unseen)
+    stubSession("b", "bravo", true), // output ready (has unseen)
+  ];
+  // Make `bravo` live so it isn't "connecting": unseen output implies content.
+  (sessions[1] as unknown as { hasContent: boolean }).hasContent = true;
+  const lines = rows(stubWorkspace(sessions, "a"), 30, "state");
+  const text = lines.join("\n");
+  assert(text.includes("WAITING"), `no Waiting heading: ${text}`);
+  assert(text.includes("OUTPUT READY"), `no Output ready heading: ${text}`);
+});
+
+Deno.test("grouping by state puts a disconnected session under Disconnected", () => {
+  const sessions = [
+    stubSession("a", "alpha", false),
+    stubSession("b", "bravo", false),
+  ];
+  (sessions[1] as unknown as { isDisconnected: boolean }).isDisconnected = true;
+  const lines = rows(stubWorkspace(sessions, "a"), 30, "state");
+  const text = lines.join("\n");
+  assert(text.includes("DISCONNECTED"), `no Disconnected heading: ${text}`);
+  assert(text.includes("WAITING"), `no Waiting heading for the live one: ${text}`);
+});
+
+Deno.test("the grouping toggle cycles through every mode and wraps", () => {
+  const sidebar = new SessionSidebar(stubWorkspace([], null));
+  const modes = ["provider", "repo", "state", "none"] as const;
+  for (let index = 0; index < modes.length; index += 1) {
+    assertEquals(sidebar.grouping, modes[index], `mode ${index} should be ${modes[index]}`);
+    sidebar.cycleGrouping();
+  }
+  // After none it wraps back to provider.
+  assertEquals(sidebar.grouping, "provider");
+});
+
+Deno.test("plain g from the list reports the group action for the app to apply", () => {
+  const sidebar = new SessionSidebar(stubWorkspace([], null));
+  sidebar.focusFirst();
+  assertEquals(sidebar.key("g"), "group");
+  // From the group toggle row, enter and g both act on the toggle.
+  sidebar.part = "group";
+  assertEquals(sidebar.key("enter"), "group");
+  assertEquals(sidebar.key("g"), "group");
+});
+
+Deno.test("the grouping toggle is a stop on the focus ring", () => {
+  const sidebar = new SessionSidebar(stubWorkspace([], null));
+  sidebar.focusFirst();
+  assert(!sidebar.onGroupToggle, "starts on the list, not the toggle");
+  sidebar.advance(1);
+  assert(sidebar.onGroupToggle, "one step lands on the group toggle");
+  sidebar.advance(1);
+  assert(sidebar.onNewButton, "a second step lands on the new-session button");
 });

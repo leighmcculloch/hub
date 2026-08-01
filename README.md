@@ -37,7 +37,9 @@ deno task start
 
 Both providers work at once: with a token for each, the sidebar lists the VMs
 from both accounts together, tagged with the one they live on, and every session
-keeps the provider it was opened with.
+keeps the provider it was opened with. Press `g` in the sidebar to group the
+rows — by provider (which host each instance is on), by GitHub repo, or by
+state (connecting, waiting, output ready, disconnected).
 
 ## Keys
 
@@ -59,6 +61,7 @@ keeps the provider it was opened with.
 | `Alt+C` | Copy the pane's screen to the clipboard |
 | `Alt+S` / `Alt+R` | Toggle the sessions / diff pane |
 | `Alt+Z` | Zen mode — the terminal, edge to edge |
+| `g` | In the sidebar: group by provider, repo or state |
 | `Alt+P` | Command palette — everything, by name |
 | `Alt+←` / `Alt+→` | Move between the three panes |
 | `Alt+↑` / `Alt+↓` | Within a pane: sessions, or the diff's stacked panes |

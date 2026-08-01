@@ -15,7 +15,7 @@ import { AppConfig } from "../config/app-config.ts";
 import { LayoutStore } from "../config/layout-store.ts";
 import { Workspace } from "../model/workspace.ts";
 import { openInBrowser } from "../providers/process.ts";
-import { SessionSidebar } from "./session-sidebar.ts";
+import { groupingLabel, SessionSidebar } from "./session-sidebar.ts";
 import { TerminalPane } from "./terminal-pane.ts";
 import { DiffSidebar } from "./diff-sidebar.ts";
 import { NewSessionModal } from "./new-session-modal.ts";
@@ -87,6 +87,7 @@ export class App {
     this.diff.filesHeight = layout.filesHeight;
     this.workspace.showSessionSidebar = layout.showSessionSidebar;
     this.workspace.showDiffSidebar = layout.showDiffSidebar;
+    this.sessions.grouping = layout.sidebarGrouping;
   }
 
   private persistLayout(): void {
@@ -97,6 +98,7 @@ export class App {
       filesHeight: this.diff.filesHeight,
       showSessionSidebar: this.workspace.showSessionSidebar,
       showDiffSidebar: this.workspace.showDiffSidebar,
+      sidebarGrouping: this.sessions.grouping,
     });
   }
 
@@ -824,6 +826,15 @@ export class App {
         run: () => this.toggleSessionSidebar(),
       },
       {
+        label: `Group Sessions by ${groupingLabel(this.sessions.grouping)} → Next`,
+        enabled: this.workspace.showSessionSidebar,
+        run: () => {
+          this.sessions.cycleGrouping();
+          this.persistLayout();
+          this.say(`Grouped by ${groupingLabel(this.sessions.grouping)}`);
+        },
+      },
+      {
         label: this.workspace.showDiffSidebar ? "Hide Diff Sidebar" : "Show Diff Sidebar",
         shortcut: "Alt+R",
         run: () => this.toggleDiffSidebar(),
@@ -1032,6 +1043,11 @@ export class App {
       case "delete":
         this.confirmDeleteRow(this.sessions.current);
         return;
+      case "group":
+        this.sessions.cycleGrouping();
+        this.persistLayout();
+        this.say(`Grouped by ${groupingLabel(this.sessions.grouping)}`);
+        return;
       default:
         return;
     }
@@ -1143,6 +1159,13 @@ export class App {
       if (id === "sidebar.new") {
         this.sessions.focusLast();
         this.openNewSession();
+        return;
+      }
+      if (id === "sidebar.group") {
+        this.sessions.part = "group";
+        this.sessions.cycleGrouping();
+        this.persistLayout();
+        this.say(`Grouped by ${groupingLabel(this.sessions.grouping)}`);
         return;
       }
       this.sessions.focusFirst();

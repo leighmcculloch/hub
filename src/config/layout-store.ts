@@ -10,6 +10,15 @@
 
 import { configPath, readJSON, writeJSON } from "./paths.ts";
 
+/**
+ * How the sessions sidebar groups its rows. `provider` is the default because
+ * the first question with two accounts configured is "which host is this on?";
+ * `repo` and `state` answer the other two questions a growing sidebar raises.
+ */
+export type SidebarGrouping = "none" | "provider" | "repo" | "state";
+
+export const SIDEBAR_GROUPINGS: SidebarGrouping[] = ["none", "provider", "repo", "state"];
+
 export interface PersistedLayout {
   sidebarWidth: number;
   diffWidth: number;
@@ -17,6 +26,7 @@ export interface PersistedLayout {
   filesHeight: number;
   showSessionSidebar: boolean;
   showDiffSidebar: boolean;
+  sidebarGrouping: SidebarGrouping;
 }
 
 export function defaultLayout(): PersistedLayout {
@@ -27,6 +37,7 @@ export function defaultLayout(): PersistedLayout {
     filesHeight: 8,
     showSessionSidebar: true,
     showDiffSidebar: true,
+    sidebarGrouping: "provider",
   };
 }
 
@@ -49,6 +60,7 @@ export function decodeLayout(raw: unknown): PersistedLayout {
   const flag = (key: keyof PersistedLayout, fallback: boolean) =>
     typeof entry[key] === "boolean" ? entry[key] as boolean : fallback;
 
+  const grouping = entry.sidebarGrouping;
   return {
     sidebarWidth: size("sidebarWidth", defaults.sidebarWidth),
     diffWidth: size("diffWidth", defaults.diffWidth),
@@ -56,6 +68,9 @@ export function decodeLayout(raw: unknown): PersistedLayout {
     filesHeight: size("filesHeight", defaults.filesHeight),
     showSessionSidebar: flag("showSessionSidebar", defaults.showSessionSidebar),
     showDiffSidebar: flag("showDiffSidebar", defaults.showDiffSidebar),
+    sidebarGrouping: SIDEBAR_GROUPINGS.includes(grouping as SidebarGrouping)
+      ? (grouping as SidebarGrouping)
+      : defaults.sidebarGrouping,
   };
 }
 
