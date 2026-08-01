@@ -6,8 +6,8 @@
  *
  * Non-TTY: tmux's control protocol is a byte stream on stdout, and a remote PTY
  * would only translate it — the same reason `SSHTransport` passes no `-t`.
- * `--max-run-after-disconnect=0` keeps the tmux session alive if the app's
- * connection drops, so a reconnect reattaches via tmux's `-A`.
+ * The sprite keeps its tmux server running between `exec` invocations on its
+ * own, so a dropped connection reattaches via tmux's `-A` with no extra flag.
  */
 
 import type { RemoteProcessSpec, RemoteTransport } from "./types.ts";
@@ -24,7 +24,6 @@ export class SpritesCLITransport implements RemoteTransport {
         "exec",
         "-s",
         this.name,
-        "--max-run-after-disconnect=0",
         "--",
         "bash",
         "-l",

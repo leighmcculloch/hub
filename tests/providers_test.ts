@@ -142,10 +142,14 @@ Deno.test("the SSH transport multiplexes and never asks for a tty", () => {
   assert(transport.oneshotSpec("git status").arguments.includes("BatchMode=yes"));
 });
 
-Deno.test("the sprite transport keeps the session alive across a disconnect", () => {
+Deno.test("the sprite transport runs exec with the sprite name and no unknown flags", () => {
   const spec = new SpritesCLITransport("mysprite").interactiveSpec("tmux -C");
   assertEquals(spec.arguments.slice(0, 4), ["sprite", "exec", "-s", "mysprite"]);
-  assert(spec.arguments.includes("--max-run-after-disconnect=0"));
+  // `sprite exec` has no keep-alive flag; passing one makes the CLI print its
+  // usage and refuse to run, so the transport must not invent one.
+  assertEquals(spec.arguments.includes("--max-run-after-disconnect=0"), false);
+  assertEquals(spec.arguments[4], "--");
+  assertEquals(spec.arguments[spec.arguments.length - 1], "tmux -C");
 });
 
 Deno.test("gateway environment blanks the OAuth token so the gateway wins", () => {
