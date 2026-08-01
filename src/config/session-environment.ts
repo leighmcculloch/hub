@@ -43,6 +43,15 @@ export function defaultEnvironments(): SessionEnvironment[] {
       startCommand: "codex",
       environment: [],
     },
+    {
+      id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000003",
+      name: "pi",
+      // The pi.dev CLI isn't on the VM images, so the setup step installs it;
+      // the installer is idempotent, and this runs again on every reconnect.
+      setupScript: "command -v pi >/dev/null 2>&1 || curl -fsSL https://pi.dev/install.sh | sh",
+      startCommand: "pi",
+      environment: [],
+    },
   ];
 }
 

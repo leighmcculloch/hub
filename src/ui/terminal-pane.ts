@@ -8,8 +8,20 @@
  */
 
 import { Color, fit, styled } from "../tui/ansi.ts";
-import { control, type HitMap, placeholder, type Rect, rule, wrap } from "../tui/widgets.ts";
-import { tabDisplayName, type TerminalSession } from "../model/terminal-session.ts";
+import {
+  control,
+  type HitMap,
+  placeholder,
+  type Rect,
+  rule,
+  spinnerFrame,
+  wrap,
+} from "../tui/widgets.ts";
+import {
+  type SessionPhase,
+  tabDisplayName,
+  type TerminalSession,
+} from "../model/terminal-session.ts";
 
 export interface TerminalGeometry {
   /** Where the pane's own screen starts, and how big tmux should make it. */
@@ -76,7 +88,7 @@ export class TerminalPane {
           width,
           rect.height,
           "No session open",
-          "Alt+T starts one on a fresh VM · Alt+L opens a local shell · F1 for keys",
+          "Alt+N starts one on a fresh VM · Alt+L opens a local shell · F1 for keys",
         ),
         content: emptyContent,
       };
@@ -97,16 +109,18 @@ export class TerminalPane {
       return { lines, content };
     }
 
+    // A connecting session has nothing to draw — and for a reconnect that is
+    // the *normal* case for several seconds, because the bootstrap it runs
+    // prints almost nothing. Say what is happening rather than showing a blank
+    // rectangle that looks identical to a hang.
+    if (session.isConnecting) {
+      lines.push(...connectingPanel(session, width, contentHeight));
+      return { lines, content };
+    }
+
     const tab = session.selectedTab;
     if (!tab) {
-      lines.push(
-        ...placeholder(
-          width,
-          contentHeight,
-          `Connecting to ${session.destination ?? "the shell"}…`,
-          "tmux is starting; the first pane appears when it does.",
-        ),
-      );
+      lines.push(...placeholder(width, contentHeight, "No pane", "tmux reported no panes."));
       return { lines, content };
     }
 
@@ -195,4 +209,100 @@ export class TerminalPane {
   static describe(text: string, width: number): string[] {
     return wrap(text, width);
   }
+}
+
+/** What each phase is waiting for, in words. */
+const PHASES: Array<{ phase: SessionPhase; label: string; detail: string }> = [
+  {
+    phase: "spawning",
+    label: "Opening the connection",
+    detail: "Reaching the VM and starting tmux.",
+  },
+  {
+    phase: "attaching",
+    label: "Attaching to tmux",
+    detail: "Connected — waiting for the session's panes.",
+  },
+  {
+    phase: "warming",
+    label: "Running the setup",
+    detail: "The pane is up. The bootstrap prints little, so this can look quiet.",
+  },
+];
+
+/**
+ * The connecting panel: a checklist of the stages, the elapsed time, and
+ * whatever the transport last said.
+ *
+ * The stages are shown all at once, ticked off as they pass, so the wait has a
+ * shape — you can see what is done, what is happening, and what is left.
+ */
+export function connectingPanel(
+  session: TerminalSession,
+  width: number,
+  height: number,
+): string[] {
+  const elapsed = session.elapsedMs;
+  const frame = spinnerFrame(elapsed);
+  const current = session.phase;
+  const reached = PHASES.findIndex((one) => one.phase === current);
+
+  const body: string[] = [];
+  body.push(styled(`${frame} Connecting to ${session.destination ?? "the shell"}`, {
+    fg: Color.fg,
+    bold: true,
+  }));
+  body.push("");
+
+  for (let index = 0; index < PHASES.length; index += 1) {
+    const stage = PHASES[index];
+    const done = index < reached;
+    const active = index === reached;
+    const mark = done ? "✓" : active ? frame : "·";
+    const colour = done ? Color.green : active ? Color.accent : Color.dimmer;
+    body.push(
+      `${styled(mark, { fg: colour })} ${
+        styled(stage.label, { fg: active ? Color.fg : Color.dim, bold: active })
+      }`,
+    );
+  }
+
+  const stage = PHASES[Math.max(0, reached)];
+  body.push("");
+  body.push(styled(stage.detail, { fg: Color.dimmer }));
+  if (session.progressNote) {
+    body.push(styled(session.progressNote, { fg: Color.orange }));
+  }
+  body.push("");
+  body.push(
+    styled(`${(elapsed / 1000).toFixed(0)}s elapsed · Alt+K reconnects`, { fg: Color.dimmer }),
+  );
+
+  // Centred as a block, so the stages line up with each other rather than each
+  // being centred on its own width.
+  const inner = Math.max(1, width - 4);
+  const rendered: string[] = [];
+  for (const line of body) {
+    for (const wrapped of line ? wrap(stripForWidth(line), inner) : [""]) {
+      rendered.push(wrapped === stripForWidth(line) ? line : wrapped);
+    }
+  }
+  const left = Math.max(0, Math.floor((width - widestOf(rendered)) / 2));
+  const top = Math.max(0, Math.floor((height - rendered.length) / 2));
+
+  const lines: string[] = [];
+  for (let row = 0; row < height; row += 1) {
+    const entry = rendered[row - top];
+    lines.push(entry === undefined ? fit("", width) : fit(" ".repeat(left) + entry, width));
+  }
+  return lines;
+}
+
+function stripForWidth(text: string): string {
+  // deno-lint-ignore no-control-regex
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function widestOf(lines: string[]): number {
+  return lines.reduce((widest, line) => Math.max(widest, stripForWidth(line).length), 0);
 }

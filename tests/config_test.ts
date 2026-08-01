@@ -1,5 +1,9 @@
-import { assert, assertEquals } from "@std/assert";
-import { decodeConfig, DEFAULT_CLAUDE_SETTINGS } from "../src/config/app-config.ts";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  decodeConfig,
+  DEFAULT_CLAUDE_SETTINGS,
+  defaultConfigData,
+} from "../src/config/app-config.ts";
 import { mergeEnv } from "../src/config/env-var.ts";
 import { restorable, restorableSelection, SessionStore } from "../src/config/session-store.ts";
 import { normalizeRepo } from "../src/github/repo-reference.ts";
@@ -10,11 +14,11 @@ Deno.test("decodeConfig falls back field by field, not file by file", () => {
   assertEquals(config.exeToken, "");
   assertEquals(config.provider, "sprites");
   assertEquals(config.claudeSettings, "{}");
-  assertEquals(config.environments.length, 2);
+  assertEquals(config.environments.length, 3);
 });
 
 Deno.test("decodeConfig treats an empty environment list as absent", () => {
-  assertEquals(decodeConfig({ environments: [] }).environments.length, 2);
+  assertEquals(decodeConfig({ environments: [] }).environments.length, 3);
 });
 
 Deno.test("decodeConfig defaults an unknown provider to exe.dev", () => {
@@ -150,4 +154,25 @@ Deno.test("the default Claude settings bypass permissions and onboarding", () =>
   const settings = JSON.parse(DEFAULT_CLAUDE_SETTINGS);
   assertEquals(settings.permissions.defaultMode, "bypassPermissions");
   assert(settings.hasCompletedOnboarding);
+});
+
+Deno.test("a stored environment list gains defaults added since it was written", () => {
+  const stored = decodeConfig({
+    environments: [{ id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000001", name: "Mine", startCommand: "x" }],
+  }).environments;
+  // The user's edit survives…
+  assertEquals(stored[0].name, "Mine");
+  assertEquals(stored[0].startCommand, "x");
+  // …and the environments they predate arrive alongside it.
+  assert(stored.some((one) => one.name === "pi"), "pi should be added to an older config");
+  assert(stored.some((one) => one.name === "Codex"));
+});
+
+Deno.test("pi is offered out of the box, and installs itself on the VM", () => {
+  const pi = defaultConfigData().environments.find((one) => one.name === "pi");
+  assert(pi !== undefined);
+  assertEquals(pi.startCommand, "pi");
+  assertStringIncludes(pi.setupScript, "pi.dev/install.sh");
+  // Idempotent: the bootstrap re-runs it on every reconnect.
+  assertStringIncludes(pi.setupScript, "command -v pi");
 });

@@ -62,6 +62,8 @@ export class App {
   private statusUntil = 0;
   private renderQueued = false;
   private running = true;
+  /** Runs only while something is connecting; see `syncAnimation`. */
+  private animation: ReturnType<typeof setInterval> | null = null;
   /** The pane rect tmux is sized to, so a resize is reported once. */
   private terminalContent: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
@@ -99,6 +101,8 @@ export class App {
 
   private shutdown(): void {
     this.running = false;
+    if (this.animation !== null) clearInterval(this.animation);
+    this.animation = null;
     this.diff.stop();
     this.workspace.shutdown();
     this.screen.stop();
@@ -140,7 +144,23 @@ export class App {
     });
   }
 
+  /**
+   * Repaint on a timer while anything is connecting, so the progress panel's
+   * spinner turns and its clock counts. Stopped as soon as nothing needs it —
+   * an idle app should draw only when something actually changes.
+   */
+  private syncAnimation(): void {
+    const wanted = this.workspace.sessions.some((session) => session.isConnecting);
+    if (wanted && this.animation === null) {
+      this.animation = setInterval(() => this.requestRender(), 120);
+    } else if (!wanted && this.animation !== null) {
+      clearInterval(this.animation);
+      this.animation = null;
+    }
+  }
+
   private render(): void {
+    this.syncAnimation();
     this.screen.measure();
     const cols = this.screen.cols;
     const rows = this.screen.rows;
@@ -245,7 +265,7 @@ export class App {
     // The hint follows the keyboard: the one thing worth knowing in the
     // terminal is how to get out of it, and everywhere else that Tab moves on.
     const hint = this.focus === "terminal" && this.terminal.inBody
-      ? "Alt+F focus · Alt+T new · F1 keys "
+      ? "Alt+F focus · Alt+N new · F1 keys "
       : "Tab moves · Enter selects · Esc terminal · F1 keys ";
     const right = styled(hint, { fg: Color.dimmer });
     const used = displayWidth(left) + displayWidth(middle) + displayWidth(right);
@@ -474,7 +494,7 @@ export class App {
   private async globalShortcut(event: KeyEvent): Promise<boolean> {
     const session = this.workspace.selectedSession;
     switch (event.name) {
-      case "t":
+      case "n":
         this.openNewSession();
         return true;
       case "l":
@@ -497,7 +517,7 @@ export class App {
         this.workspace.showDiffSidebar = !this.workspace.showDiffSidebar;
         this.screen.invalidate();
         return true;
-      case "n":
+      case "t":
         session?.newTab();
         return true;
       case "k":

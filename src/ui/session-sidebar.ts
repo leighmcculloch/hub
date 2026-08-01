@@ -14,6 +14,7 @@ import {
   scrollbar,
   scrollToShow,
   sectionHeader,
+  spinnerFrame,
 } from "../tui/widgets.ts";
 import type { Workspace } from "../model/workspace.ts";
 import type { RemoteVMRecord } from "../providers/types.ts";
@@ -67,7 +68,7 @@ export class SessionSidebar {
 
     if (this.rows.length === 0) {
       lines.push(
-        ...placeholder(width, listHeight, "No sessions", "Start one on a fresh VM with Alt+T."),
+        ...placeholder(width, listHeight, "No sessions", "Start one on a fresh VM with Alt+N."),
       );
     } else {
       this.selection = Math.min(Math.max(0, this.selection), this.rows.length - 1);
@@ -114,7 +115,7 @@ export class SessionSidebar {
       fit(
         ` ${styled("+ New Session", { fg: Color.accent, bold: true, bg: background })}` +
           `${" ".repeat(Math.max(1, width - 20))}${
-            styled("Alt+T", { fg: Color.dimmer, bg: background })
+            styled("Alt+N", { fg: Color.dimmer, bg: background })
           }`,
         width,
         { bg: background },
@@ -144,8 +145,12 @@ export class SessionSidebar {
   private rowText(entry: SidebarRow, width: number): string {
     if (entry.kind === "session") {
       const session = entry.session;
+      // The same spinner the pane shows, so a session still connecting is
+      // obvious from the list without opening it.
       const icon = session.isDisconnected
         ? styled("!", { fg: Color.orange, bold: true })
+        : session.isConnecting
+        ? styled(spinnerFrame(session.elapsedMs), { fg: Color.accent })
         : styled("›", { fg: Color.accent });
       const name = elideMiddle(session.displayName, Math.max(6, width - 4));
       const style = session.isDisconnected ? { fg: Color.dim } : { fg: Color.fg };

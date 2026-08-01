@@ -92,8 +92,10 @@ export function decodeConfig(raw: unknown): AppConfigData {
     renameToken: text("renameToken", defaults.renameToken),
     renameTokenMinted: decodeMinted(entry.renameTokenMinted),
     // An empty list would leave nothing to select or edit, so it's treated as
-    // absent rather than honoured.
-    environments: environments.length > 0 ? environments : defaults.environments,
+    // absent rather than honoured. A stored list keeps every edit it carries,
+    // but gains any default that has been added since it was written — those
+    // have fixed ids precisely so a new one can be recognised as missing.
+    environments: environments.length > 0 ? withNewDefaults(environments) : defaults.environments,
     selectedEnvironmentID: typeof entry.selectedEnvironmentID === "string"
       ? entry.selectedEnvironmentID
       : null,
@@ -101,6 +103,20 @@ export function decodeConfig(raw: unknown): AppConfigData {
     globalEnvironment: envVarsFrom(entry.globalEnvironment),
     claudeSettings: text("claudeSettings", defaults.claudeSettings),
   };
+}
+
+/**
+ * The stored environments plus any built-in one they predate.
+ *
+ * Appended rather than merged: an environment the user has edited keeps every
+ * edit, and one they deleted stays deleted only until the next upgrade — which
+ * is the trade that lets a new default (pi, say) reach existing installs at
+ * all.
+ */
+function withNewDefaults(stored: SessionEnvironment[]): SessionEnvironment[] {
+  const known = new Set(stored.map((environment) => environment.id));
+  const added = defaultEnvironments().filter((one) => !known.has(one.id));
+  return added.length === 0 ? stored : [...stored, ...added];
 }
 
 /** Accepts both the epoch number this app writes and the ISO date Swift wrote. */

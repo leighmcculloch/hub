@@ -84,7 +84,7 @@ Everything else is an `Alt` chord, for the same reason.
 | `Enter` | Activate; on the tab strip, start typing |
 | `Alt+F` | Leave the terminal |
 | `Esc` | Back to typing in the terminal |
-| `Alt+T` | New session on a fresh VM |
+| `Alt+N` | New session on a fresh VM |
 | `Alt+L` | New local shell |
 | `Alt+W` | Close the session (leaves the VM running) |
 | `Alt+D` | Delete the session and destroy its VM |
@@ -92,7 +92,7 @@ Everything else is an `Alt` chord, for the same reason.
 | `Alt+S` / `Alt+R` | Toggle the left / right pane |
 | `Alt+1`…`Alt+9` | Select a session (9 is the last) |
 | `Alt+[` / `Alt+]` | Previous / next session |
-| `Alt+N` | New tmux window in this session |
+| `Alt+T` | New tmux window in this session |
 | `Alt+←` / `Alt+→` | Previous / next terminal tab |
 | `Alt+K` | Reconnect a dropped session |
 | `Alt+,` | Settings |
@@ -157,7 +157,7 @@ The exe.dev token needs these command permissions (`cmds`):
 
 ### Your first session
 
-`Alt+T` opens the picker:
+`Alt+N` opens the picker:
 
 - a **name** (optional — leave it blank and the VM names itself after the
   agent's first prompt);

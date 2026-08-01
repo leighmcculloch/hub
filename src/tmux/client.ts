@@ -16,6 +16,14 @@ export interface TmuxClientHandlers {
   /** Every event from one read, in order. */
   onEvents(events: TmuxEvent[]): void;
   /**
+   * A line the transport or tmux wrote to stderr, as it arrives.
+   *
+   * Reported live rather than only at exit so a connection that is taking its
+   * time can say why — ssh retrying a booting VM, a host key being accepted, a
+   * missing `sprite` CLI — instead of the pane sitting blank.
+   */
+  onProgress?(line: string): void;
+  /**
    * The process ended. `message` is the transport's or tmux's complaint, when
    * they made one — a VM that is gone, or a tmux that failed to install.
    */
@@ -122,7 +130,10 @@ export class TmuxClient {
     const decoder = new TextDecoder();
     try {
       for await (const chunk of process.stderr) {
-        this.errorOutput += decoder.decode(chunk, { stream: true });
+        const text = decoder.decode(chunk, { stream: true });
+        this.errorOutput += text;
+        const line = text.split(/[\r\n]/).map((one) => one.trim()).filter((one) => one).pop();
+        if (line) this.handlers.onProgress?.(line);
       }
     } catch {
       // Same as stdout.

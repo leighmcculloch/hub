@@ -248,6 +248,18 @@ export function dropdown(
   );
 }
 
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/**
+ * The spinner frame for a given age in milliseconds.
+ *
+ * Derived from elapsed time rather than a counter, so every spinner on screen
+ * turns in step and none of them needs state of its own.
+ */
+export function spinnerFrame(elapsedMs: number): string {
+  return SPINNER[Math.floor(elapsedMs / 90) % SPINNER.length];
+}
+
 /** Centred placeholder text for an empty pane. */
 export function placeholder(
   width: number,

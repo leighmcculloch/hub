@@ -50,6 +50,25 @@ export function tabDisplayName(tab: TerminalTab): string {
   return tab.title || "Terminal";
 }
 
+/**
+ * How far a session has got towards showing you something.
+ *
+ * Worth tracking because the honest answer for a reconnect is "the pane exists
+ * and is empty": tmux attaches in a second, but the bootstrap it runs — the
+ * setup script, the trust pass, the harness config, the clones — prints almost
+ * nothing, so the pane is legitimately blank for a while. Without a phase to
+ * show, that is indistinguishable from the app having hung.
+ */
+export type SessionPhase =
+  /** The transport process has been spawned; tmux hasn't answered yet. */
+  | "spawning"
+  /** tmux answered, but hasn't reported any panes. */
+  | "attaching"
+  /** A pane exists and has printed nothing yet. */
+  | "warming"
+  /** There is something on screen. */
+  | "live";
+
 type PendingReply =
   | { kind: "panes" }
   | { kind: "capture"; paneID: string }
@@ -91,6 +110,13 @@ export class TerminalSession {
   /** One tab per tmux pane, in tmux's own window and pane order. */
   tabs: TerminalTab[] = [];
   selectedTabID: string | null = null;
+
+  /** When the current connection attempt began, for the elapsed counter. */
+  startedAt = Date.now();
+  /** The most recent thing the transport said, shown while connecting. */
+  progressNote: string | null = null;
+  /** Set once tmux has answered anything, so "spawning" can end. */
+  private heardFromTmux = false;
 
   /** Replaced when the VM is renamed, so a reconnect dials a host that exists. */
   private bootstrap: string;
@@ -143,6 +169,31 @@ export class TerminalSession {
   }
 
   /**
+   * How far the connection has got. `live` the moment any pane has drawn
+   * something; until then the pane is blank for a reason worth naming.
+   */
+  get phase(): SessionPhase {
+    if (!this.heardFromTmux) return "spawning";
+    if (this.tabs.length === 0) return "attaching";
+    return this.hasContent ? "live" : "warming";
+  }
+
+  /** Whether any pane has printed anything yet. */
+  get hasContent(): boolean {
+    return this.tabs.some((tab) => tab.screen.some((line) => line.trim().length > 0));
+  }
+
+  /** True while there is nothing to look at and no reason to think it failed. */
+  get isConnecting(): boolean {
+    return !this.isDisconnected && this.phase !== "live";
+  }
+
+  /** How long the current attempt has been running. */
+  get elapsedMs(): number {
+    return Date.now() - this.startedAt;
+  }
+
+  /**
    * The transport this session's commands run over — the provider's for a VM,
    * the local shell's for a local session. The diff sidebar and the rename poll
    * ride on this, so their work shares the terminal's own connection.
@@ -160,6 +211,9 @@ export class TerminalSession {
     this.pendingReplies = [];
     this.reportedSize = null;
     this.lastActivePaneID = null;
+    this.startedAt = Date.now();
+    this.progressNote = null;
+    this.heardFromTmux = false;
     // Pane tabs are rebuilt from the pane listing rather than reused: on a
     // reconnect the panes have moved on without us, and each tab's screen is
     // restored as it reappears.
@@ -168,7 +222,12 @@ export class TerminalSession {
 
     const client = new TmuxClient(this.transport, this.bootstrap, {
       onEvents: (events) => {
+        this.heardFromTmux = true;
         for (const event of events) this.handle(event);
+        this.onChange();
+      },
+      onProgress: (line) => {
+        this.progressNote = line;
         this.onChange();
       },
       onExit: (message) => {
