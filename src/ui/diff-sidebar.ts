@@ -931,6 +931,16 @@ export class DiffSidebar {
   }
 
   /**
+   * Move down (or up) the sidebar's stacked panes, wrapping. Unlike `advance`
+   * this never hands the keyboard to another pane: Alt+↑/↓ is for moving
+   * *within* the sidebar, and Alt+←/→ is how you leave it.
+   */
+  cyclePart(step: number): void {
+    const next = PARTS.indexOf(this.part) + step;
+    this.part = PARTS[(next + PARTS.length) % PARTS.length];
+  }
+
+  /**
    * Keyboard navigation for whichever control has the keyboard. The repo
    * dropdown answers "openRepos" so the app can draw the list over everything.
    */

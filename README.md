@@ -90,24 +90,25 @@ Everything else is an `Alt` chord, for the same reason.
 | `Alt+F` | Leave the terminal |
 | `Esc` | Back to typing in the terminal |
 | `Alt+P` | Command palette — everything, by name |
+| `Alt+←` / `Alt+→` | Move between the three panes |
+| `Alt+↑` / `Alt+↓` | Within a pane: sessions, or the diff's stacked panes |
 | `Alt+N` | New session on a fresh VM |
 | `Alt+L` | New local shell |
 | `Alt+M` | Rename the session |
-| `Alt+W` | Close the session (leaves the VM running) |
+| `Alt+Shift+W` | Close the session (leaves the VM running) |
 | `Alt+D` | Delete the session and destroy its VM |
 | `Alt+O` | Open this VM's URL in the system browser |
 | `Alt+S` / `Alt+R` | Toggle the left / right pane |
 | `Alt+Z` | Zen mode — the terminal, edge to edge |
 | `Alt+1`…`Alt+9` | Select a session (9 is the last) |
-| `Alt+[` / `Alt+]` | Previous / next session |
 | `Alt+G` | Go to a session or VM by name |
 | `Alt+PgUp` / `Alt+PgDn` | Read the terminal's scrollback |
 | `Alt+End` | Back to the live screen |
 | `Alt+C` | Copy the pane's screen to the clipboard |
 | `Alt+Shift+←` / `→` | Resize the sidebar you're in |
 | `Alt+T` | New tmux window in this session |
-| `Alt+Shift+W` | Close this tmux window (leaves the session) |
-| `Alt+←` / `Alt+→` | Previous / next terminal tab |
+| `Alt+W` | Close this tmux window; on the last one, the session |
+| `Alt+[` / `Alt+]` | Previous / next tmux window |
 | `Alt+K` | Reconnect a dropped session |
 | `Alt+,` | Settings |
 | `/` `n` `p` | In the diff: search, next / previous match |

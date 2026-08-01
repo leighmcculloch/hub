@@ -186,3 +186,19 @@ Deno.test("y asks the app to copy, from every part of the diff pane", async () =
     assertEquals(await sidebar.key(diffKey("y", false)), "copy");
   }
 });
+
+Deno.test("Alt+↑/↓ walks the diff sidebar's stacked panes and wraps", () => {
+  const sidebar = new DiffSidebar(() => {});
+  sidebar.focusFirst();
+  assertEquals(sidebar.part, "repo");
+  for (const expected of ["scope", "files", "diff"]) {
+    sidebar.cyclePart(1);
+    assertEquals(sidebar.part, expected);
+  }
+  // Wrapping, because this key moves within the sidebar — Alt+←/→ is how you
+  // leave it, so running off the end here should never strand the keyboard.
+  sidebar.cyclePart(1);
+  assertEquals(sidebar.part, "repo");
+  sidebar.cyclePart(-1);
+  assertEquals(sidebar.part, "diff");
+});

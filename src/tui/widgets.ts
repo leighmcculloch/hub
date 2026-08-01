@@ -435,7 +435,10 @@ export class TextInput {
    */
   render(width: number, focused: boolean, hint = "", hovered = false): string {
     const inner = TextInput.innerWidth(width);
-    const background = focused ? Color.panelAlt : hovered ? Color.hover : Color.panel;
+    // The same three shades a dropdown uses, so every control that takes input
+    // reads as one kind of thing and the panel behind them as another. A
+    // resting field on `panel` would be the panel — invisible as a field.
+    const background = focused ? Color.selection : hovered ? Color.hover : Color.panelAlt;
     if (!this.value && hint) {
       return fit(
         ` ${styled(elideHead(hint, inner), { fg: Color.dimmer, bg: background })}`,

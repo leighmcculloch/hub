@@ -10,6 +10,7 @@ import {
   setClipboard,
   setWindowTitle,
   stripAnsi,
+  styled,
   truncate,
 } from "../src/tui/ansi.ts";
 import {
@@ -251,3 +252,47 @@ Deno.test("the window title never carries a control character", () => {
 Deno.test("the clipboard sequence carries base64, not the text", () => {
   assertEquals(setClipboard("aGk="), "\x1b]52;c;aGk=\x07");
 });
+
+Deno.test("a row with a background stays that colour across its whole width", () => {
+  // Every `styled()` run ends with a reset. Without re-asserting the row's own
+  // style after each one, the terminal's background shows through the gaps
+  // between runs and across the trailing padding — which is what made panels
+  // look patchy.
+  const row = fit(` ${styled("label", { fg: "15" })}  ${styled("value", { fg: "244" })}`, 40, {
+    bg: "235",
+  });
+  assertEquals(displayWidth(row), 40);
+  assertEquals(backgroundsIn(row), ["235"]);
+});
+
+Deno.test("an unstyled row is left exactly as it was", () => {
+  // The terminal pane passes tmux's own capture through here; re-asserting a
+  // style it never asked for would repaint the program's colours.
+  const passed = fit(`${styled("x", { fg: "9" })}y`, 4);
+  assertEquals(stripAnsi(passed), "xy  ");
+  assertEquals(backgroundsIn(passed), []);
+});
+
+/** Every distinct background colour a rendered string actually paints with. */
+function backgroundsIn(text: string): string[] {
+  const seen = new Set<string>();
+  let background: string | null = null;
+  let index = 0;
+  while (index < text.length) {
+    const match = /^\x1b\[([0-9;]*)m/.exec(text.slice(index));
+    if (match) {
+      const parts = match[1].split(";");
+      if (match[1] === "" || match[1] === "0") background = null;
+      for (let at = 0; at < parts.length; at += 1) {
+        if (parts[at] === "48" && parts[at + 1] === "5") background = parts[at + 2];
+        if (parts[at] === "49" || parts[at] === "0") background = null;
+      }
+      index += match[0].length;
+      continue;
+    }
+    // Only cells that actually carry a colour count; trailing padding included.
+    if (background !== null) seen.add(background);
+    index += 1;
+  }
+  return [...seen];
+}

@@ -270,10 +270,20 @@ export function fit(text: string, width: number, style?: Style): string {
   if (width <= 0) return "";
   const clipped = truncate(text, width);
   const padding = width - displayWidth(clipped);
-  const body = padding > 0 ? clipped + " ".repeat(padding) : clipped;
-  // The reset goes last so a sequence left open inside `text` — capture-pane
-  // output routinely ends mid-colour — can't bleed into the next segment.
-  return style ? `${sgr(style)}${body}${resetStyle}` : `${body}${resetStyle}`;
+  if (!style) {
+    // The reset goes last so a sequence left open inside `text` — capture-pane
+    // output routinely ends mid-colour — can't bleed into the next segment.
+    return `${padding > 0 ? clipped + " ".repeat(padding) : clipped}${resetStyle}`;
+  }
+  const prefix = sgr(style);
+  // `text` is composed of `styled()` runs, and every one of them ends with a
+  // reset — which would otherwise strip this row's background off everything
+  // that follows, leaving the terminal's own colour showing through the gaps
+  // between runs and across the trailing padding. Re-asserting the row's style
+  // after each reset is what makes a row one solid colour.
+  const restored = prefix ? clipped.replaceAll(resetStyle, resetStyle + prefix) : clipped;
+  const tail = padding > 0 ? `${prefix}${" ".repeat(padding)}` : "";
+  return `${prefix}${restored}${tail}${resetStyle}`;
 }
 
 /** `text` centred in `width` cells. */

@@ -619,12 +619,13 @@ export class App {
         this.workspace.newLocalSession();
         return true;
       case "w":
-        if (session) this.workspace.closeSession(session);
+        // Closes the window you're looking at. On the last one there is no
+        // window left to close without also ending the session, so it does
+        // that instead — which is what "close this" means at that point.
+        this.closeCurrentTab();
         return true;
       case "W":
-        // Shift narrows the scope: Alt+W closes the session, Alt+Shift+W the
-        // one tmux window inside it.
-        this.closeCurrentTab();
+        if (session) this.workspace.closeSession(session);
         return true;
       case "d":
         this.confirmDelete();
@@ -670,23 +671,27 @@ export class App {
       case "q":
         this.quit();
         return true;
+      // The arrows navigate the layout: left and right across the three panes,
+      // up and down within whichever one you're in. The brackets stay inside
+      // the session, on its tmux windows.
       case "[":
-        this.workspace.selectAdjacentSession(-1);
-        this.sessions.syncSelection();
+        session?.selectAdjacentTab(-1);
         return true;
       case "]":
-        this.workspace.selectAdjacentSession(1);
-        this.sessions.syncSelection();
+        session?.selectAdjacentTab(1);
         return true;
       case "left":
       case "right": {
-        // Shift resizes the sidebar you're in, so the layout is reachable
-        // without the mouse; without a sidebar in focus it switches tabs.
         const step = event.name === "left" ? -1 : 1;
+        // Shift resizes the pane you're in rather than leaving it.
         if (event.shift && this.resizeFocusedSidebar(step * 2)) return true;
-        session?.selectAdjacentTab(step);
+        this.focusAdjacentPane(step);
         return true;
       }
+      case "up":
+      case "down":
+        this.moveWithinPane(event.name === "up" ? -1 : 1);
+        return true;
       case "pageup":
         // Scrollback from the keyboard, in the app's own namespace so the
         // program in the pane keeps its own PageUp.
@@ -776,14 +781,16 @@ export class App {
         run: () => this.renameSession(),
       },
       {
-        label: "Close Terminal Tab",
-        shortcut: "Alt+Shift+W",
-        enabled: (session?.tabs.length ?? 0) > 1,
+        label: (session?.tabs.length ?? 0) > 1
+          ? "Close Terminal Window"
+          : "Close Terminal Window (the last — ends the session)",
+        shortcut: "Alt+W",
+        enabled: session !== null,
         run: () => this.closeCurrentTab(),
       },
       {
         label: "Close Session",
-        shortcut: "Alt+W",
+        shortcut: "Alt+Shift+W",
         enabled: session !== null,
         run: () => {
           if (session) this.workspace.closeSession(session);
@@ -882,21 +889,56 @@ export class App {
    * Close the tmux window on screen, leaving the session and its other windows
    * running. The tab goes when tmux reports the pane gone, so a refused kill
    * leaves it where it was.
+   *
+   * On the last window it closes the session instead: killing that pane would
+   * end the tmux session anyway, and leaving a tab that can't be closed would
+   * be a worse answer than doing the obvious thing.
    */
   private closeCurrentTab(): void {
     const session = this.workspace.selectedSession;
-    const tab = session?.selectedTab;
-    if (!session || !tab) {
-      this.say("No window to close");
+    if (!session) {
+      this.say("No session to close");
       return;
     }
-    if (session.tabs.length === 1) {
-      // Killing the last pane ends the tmux session, which is a different and
-      // much larger thing than what this key says it does.
-      this.say("That's the last window — Alt+W closes the session");
+    const tab = session.selectedTab;
+    if (!tab || session.tabs.length <= 1) {
+      this.workspace.closeSession(session);
       return;
     }
     session.closeTab(tab);
+  }
+
+  /**
+   * Move the keyboard to the pane left or right of this one, wrapping. Hidden
+   * panes are skipped, and arriving at the terminal means arriving *in* it —
+   * this is a pane switcher, so it puts you where the work is.
+   */
+  private focusAdjacentPane(step: number): void {
+    const available = this.focusablePanes();
+    if (available.length === 0) return;
+    const current = available.indexOf(this.focus);
+    const next = available[(current + step + available.length) % available.length];
+    if (next === "terminal") {
+      this.enterTerminal();
+      return;
+    }
+    this.focus = next;
+    if (step > 0) this.pane(next).focusFirst();
+    else this.pane(next).focusLast();
+  }
+
+  /**
+   * Up and down mean "the next thing down in this pane". In the diff sidebar
+   * that's its stacked panes; everywhere else — the session list, the terminal
+   * — it's the next session, which is the list running down the left.
+   */
+  private moveWithinPane(step: number): void {
+    if (this.focus === "diff") {
+      this.diff.cyclePart(step);
+      return;
+    }
+    this.workspace.selectAdjacentSession(step);
+    this.sessions.syncSelection();
   }
 
   /** Widen or narrow whichever sidebar has the keyboard. */
