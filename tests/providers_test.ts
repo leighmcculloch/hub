@@ -7,6 +7,7 @@ import { SSHTransport, summarizeSSH } from "../src/providers/ssh-transport.ts";
 import { SpritesCLITransport } from "../src/providers/sprites-cli-transport.ts";
 import { NamespaceCLITransport } from "../src/providers/namespace-cli-transport.ts";
 import {
+  DEVBOX_LOGIN,
   failureMessage,
   isLoginFailure,
   NamespaceError,
@@ -258,6 +259,14 @@ Deno.test("a refused login is marked, so the app can offer the way back in", () 
   assert(isLoginFailure("not logged in, run `devbox login` to authenticate"));
   assert(isLoginFailure("Unauthorized"));
   assert(!isLoginFailure("quota exceeded"));
+});
+
+Deno.test("being denied a resource is not a refused login", () => {
+  // A create the account isn't entitled to: logging in again fixes none of it.
+  const denied = "rpc error: code = PermissionDenied desc = access denied (rid=0dhd5u88c3j9su5)";
+  assert(!isLoginFailure(denied));
+  assert(!new NamespaceError(denied, isLoginFailure(denied)).credentialFailure);
+  assert(!failureMessage("create dev box vm-4dd07e", 1, denied).includes(DEVBOX_LOGIN));
 });
 
 Deno.test("namespace clones from github.com with the box's own token", () => {

@@ -36,9 +36,17 @@ export class NamespaceError extends Error {
   }
 }
 
-/** Whether a CLI message is about the login rather than the request. */
+/**
+ * Whether a CLI message is about the login rather than the request.
+ *
+ * Only failures of *authentication* count. Being refused something the account
+ * simply isn't entitled to — `PermissionDenied`, `access denied`, a 403 — means
+ * the login worked and the answer was still no, and treating that as a dead
+ * credential sends the user to `devbox login` to fix a thing logging in cannot
+ * fix, on top of dropping a working credential from the cache.
+ */
 export function isLoginFailure(reason: string): boolean {
-  return /not logged in|unauthenticated|unauthorized|not authenticated|log ?in again|permission denied|403|401/i
+  return /not logged in|unauthenticated|unauthorized|not authenticated|log ?in again|401/i
     .test(reason);
 }
 
