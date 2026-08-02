@@ -12,6 +12,7 @@
  */
 
 import { DEVBOX_BINARY, DEVBOX_LOGIN } from "./namespace-cli.ts";
+import { shellQuote } from "../model/shell.ts";
 import type { RemoteProcessSpec, RemoteTransport } from "./types.ts";
 
 export class NamespaceCLITransport implements RemoteTransport {
@@ -26,10 +27,31 @@ export class NamespaceCLITransport implements RemoteTransport {
     return this.spec(command);
   }
 
+  /**
+   * `devbox ssh` is ssh: it joins everything after the box name with spaces and
+   * hands the result to a shell on the far end, which parses it afresh. So the
+   * command is quoted, unlike on sprites.dev, where `sprite exec` delivers argv
+   * as argv and quoting it would make the whole script one command name.
+   *
+   * Unquoted, the remote shell re-split the bootstrap at the first space and ran
+   * `bash -l -c printf` — printf with no arguments, a usage error — while the
+   * rest of the pipeline wrote an empty script that then did nothing: no host
+   * environment, no clones, and no setup step to install the harness with.
+   */
   private spec(command: string): RemoteProcessSpec {
     return {
       executable: "/usr/bin/env",
-      arguments: [DEVBOX_BINARY, "ssh", "-T", this.name, "--", "bash", "-l", "-c", command],
+      arguments: [
+        DEVBOX_BINARY,
+        "ssh",
+        "-T",
+        this.name,
+        "--",
+        "bash",
+        "-l",
+        "-c",
+        shellQuote(command),
+      ],
     };
   }
 

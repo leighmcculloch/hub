@@ -168,7 +168,22 @@ Deno.test("the namespace transport runs the command through `devbox ssh`", () =>
   // would only translate it.
   assert(!spec.arguments.includes("-t"));
   assertEquals(spec.arguments[4], "--");
-  assertEquals(spec.arguments[spec.arguments.length - 1], "tmux -C");
+  assertEquals(spec.arguments[spec.arguments.length - 1], "'tmux -C'");
+});
+
+Deno.test("a devbox command survives the far-end shell re-parsing it", () => {
+  // `devbox ssh` joins its remote arguments with spaces, so an unquoted
+  // bootstrap was split at the first space: `bash -l -c printf`, and an empty
+  // script written by the rest of the pipeline.
+  const command = `printf %s YmFzZQ== | base64 -d > /tmp/x && chmod +x /tmp/x`;
+  const spec = new NamespaceCLITransport("box").oneshotSpec(command);
+  const joined = spec.arguments.join(" ");
+  assertStringIncludes(joined, `-c '${command}'`);
+});
+
+Deno.test("a quote in the command doesn't end the quoting early", () => {
+  const spec = new NamespaceCLITransport("box").oneshotSpec(`echo 'hi'`);
+  assertEquals(spec.arguments[spec.arguments.length - 1], `'echo '\\''hi'\\'''`);
 });
 
 Deno.test("a devbox failure is summarized with the way out of it", () => {
