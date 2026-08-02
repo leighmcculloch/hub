@@ -43,6 +43,11 @@ state (connecting, waiting, output ready, disconnected).
 
 ## Keys
 
+Every pane wears a title bar, and the pane holding the keyboard lights its own —
+along with the dividers beside it and the status bar, which names it. `Alt+←`/`→`
+moves between the panes, landing on what each is for (the session list, the
+terminal, the diff's scopes); `Tab` walks the controls inside the pane you're in.
+
 | Key | Action |
 | --- | --- |
 | `Alt+N` | New session on a fresh VM |
@@ -78,7 +83,8 @@ state (connecting, waiting, output ready, disconnected).
 | `F1` | Full key map |
 | `Alt+Q` | Quit |
 
-Mouse works throughout: click to select, drag dividers to resize, wheel to scroll.
+Mouse works throughout: click anywhere in a pane to put the keyboard there, click
+a row to select it, drag dividers to resize, wheel to scroll.
 
 ## How it works
 

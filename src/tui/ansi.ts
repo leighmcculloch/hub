@@ -105,12 +105,11 @@ export const Color = {
   hover: "237",
   border: "238",
   /**
-   * The background of the pane that has the keyboard: its empty rows and
-   * structural fills carry this tint, so the focus is legible at a glance
-   * without colouring the content itself (a selected row, a dropdown, the
-   * terminal's own screen all keep their own colours). One shade darker than
-   * `panelAlt` so it reads as "this pane is active" rather than "this pane is
-   * a panel".
+   * The title bar of the pane that has the keyboard. Every pane wears a title
+   * bar on `panelAlt`; the focused one lifts to this shade and grows an accent
+   * edge, so where the keyboard is reads at a glance from one row that all
+   * three panes have — including the terminal, whose body carries tmux's own
+   * colours and can't be tinted at all.
    */
   paneFocus: "239",
   black: "232",

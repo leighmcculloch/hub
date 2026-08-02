@@ -172,7 +172,11 @@ const HELP_ROWS: HelpRow[] = [
     keys: "Alt+↑ / ↓",
     description: "Within a pane: sessions, or the diff's panes",
   },
-  { kind: "binding", keys: "Mouse", description: "Click, drag the dividers, wheel to scroll" },
+  {
+    kind: "binding",
+    keys: "Mouse",
+    description: "Click a pane to work there, drag dividers, wheel to scroll",
+  },
 
   { kind: "heading", text: "Sessions" },
   { kind: "binding", keys: "Alt+N", description: "New session on a fresh VM" },

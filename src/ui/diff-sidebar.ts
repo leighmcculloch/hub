@@ -18,7 +18,10 @@ import {
 } from "../tui/ansi.ts";
 import {
   dropdown,
+  focusEdge,
+  headerBackground,
   type HitMap,
+  paneHeader,
   placeholder,
   type Rect,
   row as listRow,
@@ -480,35 +483,22 @@ export class DiffSidebar {
   render(rect: Rect, hits: HitMap, focused: boolean): string[] {
     const lines: string[] = [];
     const width = rect.width;
-    // The pane that has the keyboard lifts its empty rows and headings onto a
-    // focus tint; the content rows keep their own colours.
-    const paneBg = focused ? Color.paneFocus : undefined;
 
     if (this.session === null) {
-      return placeholder(
-        width,
-        rect.height,
-        "No session selected",
-        "Pick a session on the left to inspect its worktree.",
-        paneBg,
-      );
+      return [
+        this.renderHeader(width, focused),
+        ...placeholder(
+          width,
+          rect.height - 1,
+          "No session selected",
+          "Pick a session on the left to inspect its worktree.",
+        ),
+      ];
     }
 
-    // Header
     const destination = this.session.destination ?? "local shell";
-    lines.push(
-      fit(
-        ` ${styled("Worktree Diff", { bold: true, fg: Color.fg, bg: paneBg })} ` +
-          styled(this.loadingRepos ? "◌" : "", { fg: Color.dim, bg: paneBg }),
-        width,
-        { bg: paneBg },
-      ),
-    );
-    lines.push(
-      fit(` ${styled(elideMiddle(destination, width - 2), { fg: Color.dim, bg: paneBg })}`, width, {
-        bg: paneBg,
-      }),
-    );
+    lines.push(this.renderHeader(width, focused));
+    lines.push(fit(` ${styled(elideMiddle(destination, width - 2), { fg: Color.dim })}`, width));
 
     // The repo filter: a dropdown, so the whole list is one click away.
     const label = this.selectedRepo === null ? "All repos" : shortRepoLabel(this.selectedRepo);
@@ -522,16 +512,14 @@ export class DiffSidebar {
 
     if (this.connectionError) {
       for (const line of wrap(`Can't reach ${destination}: ${this.connectionError}`, width - 2)) {
-        lines.push(
-          fit(` ${styled(line, { fg: Color.orange, bg: paneBg })}`, width, { bg: paneBg }),
-        );
+        lines.push(fit(` ${styled(line, { fg: Color.orange })}`, width));
         if (lines.length > 6) break;
       }
     }
-    lines.push(rule(width, { bg: paneBg }));
+    lines.push(rule(width));
 
     const remaining = rect.height - lines.length;
-    if (remaining <= 3) return pad(lines, rect.height, width, paneBg);
+    if (remaining <= 3) return pad(lines, rect.height, width);
 
     if (this.repos.length === 0) {
       return pad(
@@ -542,12 +530,10 @@ export class DiffSidebar {
             remaining,
             this.loadingRepos ? "Looking for repos…" : "No git repos in ~",
             this.loadingRepos ? undefined : "The VM may still be cloning.",
-            paneBg,
           ),
         ],
         rect.height,
         width,
-        paneBg,
       );
     }
 
@@ -557,29 +543,49 @@ export class DiffSidebar {
     const diffHeight = remaining - scopeHeight - filesHeight - 2;
 
     const scopeTop = rect.y + lines.length;
-    lines.push(...this.renderScopes(rect, scopeTop, scopeHeight, hits, focused, paneBg));
+    lines.push(...this.renderScopes(rect, scopeTop, scopeHeight, hits, focused));
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.splitScope");
-    lines.push(this.splitHandle(width, "diff.splitScope", paneBg));
+    lines.push(this.splitHandle(width, "diff.splitScope"));
 
     const filesTop = rect.y + lines.length;
-    lines.push(...this.renderFiles(rect, filesTop, filesHeight, hits, focused, paneBg));
+    lines.push(...this.renderFiles(rect, filesTop, filesHeight, hits, focused));
     hits.add({ x: rect.x, y: rect.y + lines.length, width, height: 1 }, "diff.splitFiles");
-    lines.push(this.splitHandle(width, "diff.splitFiles", paneBg));
+    lines.push(this.splitHandle(width, "diff.splitFiles"));
 
     const diffTop = rect.y + lines.length;
-    lines.push(...this.renderDiff(rect, diffTop, diffHeight, hits, paneBg));
+    lines.push(...this.renderDiff(rect, diffTop, diffHeight, hits, focused));
 
-    return pad(lines, rect.height, width, paneBg);
+    return pad(lines, rect.height, width);
+  }
+
+  /** The pane's title bar, carrying the focus cue every pane carries. */
+  private renderHeader(width: number, focused: boolean): string {
+    const bg = headerBackground(focused);
+    return paneHeader(
+      width,
+      styled("WORKTREE DIFF", { bold: true, fg: focused ? Color.fg : Color.dim, bg }) +
+        styled(this.loadingRepos ? " ◌" : "", { fg: Color.dim, bg }),
+      focused,
+    );
+  }
+
+  /**
+   * Whether the keyboard is on one of the pane's stacked sections. Each
+   * section's caption carries the same edge marker the pane's title bar does,
+   * so which one Enter and the arrows belong to is never a guess.
+   */
+  private onPart(part: DiffPart, focused: boolean): boolean {
+    return focused && this.part === part;
   }
 
   /**
    * The rule between two of the stacked panes. It drags, so it says so under
    * the pointer rather than looking like a plain border.
    */
-  private splitHandle(width: number, id: string, bg?: string): string {
-    if (this.hoverRow !== id) return rule(width, { bg });
+  private splitHandle(width: number, id: string): string {
+    if (this.hoverRow !== id) return rule(width);
     const grip = "─".repeat(Math.max(0, Math.floor((width - 4) / 2)));
-    return fit(styled(`${grip}════${grip}`, { fg: Color.accent, bg }), width, { bg });
+    return fit(styled(`${grip}════${grip}`, { fg: Color.accent }), width);
   }
 
   /**
@@ -593,33 +599,31 @@ export class DiffSidebar {
     height: number,
     hits: HitMap,
     focused: boolean,
-    paneBg?: string,
   ): string[] {
     const width = rect.width;
     const rows = this.buildScopeRows();
     this.scopeRows = rows;
 
-    const caption = this.captionForScopes(paneBg);
+    const listFocused = this.onPart("scope", focused);
     const listHeight = height - 1;
     this.scopeOffset = scrollToShow(this.scopeOffset, this.scopeSelection, listHeight, rows.length);
 
-    const lines = [caption(width)];
+    const lines = [this.scopeCaption(width, listFocused)];
     const bar = scrollbar(this.scopeOffset, listHeight, rows.length);
     for (let index = 0; index < listHeight; index += 1) {
       const entry = rows[this.scopeOffset + index];
       if (!entry) {
-        lines.push(fit("", width, { bg: paneBg }));
+        lines.push(fit("", width));
         continue;
       }
       const id = `diff.scope:${this.scopeOffset + index}`;
       const y = top + 1 + index;
       hits.add({ x: rect.x, y, width, height: 1 }, id);
-      const listFocused = focused && this.part === "scope";
-      const onCursor = listFocused && this.scopeOffset + index === this.scopeSelection;
       lines.push(
         fit(
           listRow(this.scopeRowText(entry, width - 2), width - 1, {
-            selected: this.isScopeSelected(entry) || onCursor,
+            selected: this.isScopeSelected(entry),
+            cursor: listFocused && this.scopeOffset + index === this.scopeSelection,
             hovered: this.hoverRow === id,
             focused: listFocused,
           }) + bar[index],
@@ -655,19 +659,19 @@ export class DiffSidebar {
     return rows;
   }
 
-  private captionForScopes(bg?: string): (width: number) => string {
+  private scopeCaption(width: number, active: boolean): string {
     const total = [...this.statusByRepo.values()].reduce(
       (sum, status) => sum + status.log.commits.length,
       0,
     );
     const base = this.visibleRepos.length === 1 ? this.logIn(this.visibleRepos[0]).base : "";
-    return (width: number) =>
-      fit(
-        ` ${styled(total === 1 ? "1 commit" : `${total} commits`, { fg: Color.dim, bg })}` +
-          (base ? ` ${styled(`ahead of ${base}`, { fg: Color.dimmer, bg })}` : ""),
-        width,
-        { bg },
-      );
+    return fit(
+      `${focusEdge(active)}${
+        styled(total === 1 ? "1 commit" : `${total} commits`, { fg: Color.dim })
+      }` +
+        (base ? ` ${styled(`ahead of ${base}`, { fg: Color.dimmer })}` : ""),
+      width,
+    );
   }
 
   private scopeRowText(entry: ScopeRow, width: number): string {
@@ -725,19 +729,18 @@ export class DiffSidebar {
     height: number,
     hits: HitMap,
     focused: boolean,
-    paneBg?: string,
   ): string[] {
     const width = rect.width;
     const files = this.scopeFiles;
     this.fileRows = files.changes.map((change) => change.path);
 
+    const listFocused = this.onPart("files", focused);
     const label = this.scope ? targetLabel(this.scope, this.logIn(this.scope.repo)) : "";
     const lines = [
       fit(
-        ` ${styled("Files", { fg: Color.dim, bold: true, bg: paneBg })} ` +
-          styled(elideMiddle(label, Math.max(0, width - 9)), { fg: Color.dimmer, bg: paneBg }),
+        `${focusEdge(listFocused)}${styled("Files", { fg: Color.dim, bold: true })} ` +
+          styled(elideMiddle(label, Math.max(0, width - 9)), { fg: Color.dimmer }),
         width,
-        { bg: paneBg },
       ),
     ];
 
@@ -750,7 +753,6 @@ export class DiffSidebar {
           listHeight,
           this.loadingFiles ? "Listing files…" : "No changed files",
           this.scope === null ? "Pick a scope above." : undefined,
-          paneBg,
         ),
       ];
     }
@@ -765,7 +767,7 @@ export class DiffSidebar {
     for (let index = 0; index < listHeight; index += 1) {
       const change = files.changes[this.filesOffset + index];
       if (!change) {
-        lines.push(fit("", width, { bg: paneBg }));
+        lines.push(fit("", width));
         continue;
       }
       const id = `diff.file:${this.filesOffset + index}`;
@@ -776,12 +778,11 @@ export class DiffSidebar {
       const room = Math.max(6, width - 6 - displayWidth(statText));
       const text = `${styled(status.letter, { fg: status.color, bold: true })} ` +
         `${styled(elideHead(change.path, room), { fg: Color.fg })} ${statText}`;
-      const listFocused = focused && this.part === "files";
-      const onCursor = listFocused && this.filesOffset + index === this.filesSelection;
       lines.push(
         fit(
           listRow(text, width - 1, {
-            selected: this.selectedFile === change.path || onCursor,
+            selected: this.selectedFile === change.path,
+            cursor: listFocused && this.filesOffset + index === this.filesSelection,
             hovered: this.hoverRow === id,
             focused: listFocused,
           }) + bar[index],
@@ -798,7 +799,7 @@ export class DiffSidebar {
     top: number,
     height: number,
     hits: HitMap,
-    paneBg?: string,
+    focused: boolean,
   ): string[] {
     const width = rect.width;
     if (height <= 1) return [];
@@ -816,7 +817,7 @@ export class DiffSidebar {
       this.searchCursor = { x: rect.x + this.search.cursorOffset(width), y: top };
     } else {
       this.searchCursor = null;
-      lines.push(this.diffHeader(width, parsed, bodyHeight, paneBg));
+      lines.push(this.diffHeader(width, parsed, bodyHeight, this.onPart("diff", focused)));
     }
 
     if (parsed.rows.length === 0) {
@@ -827,7 +828,6 @@ export class DiffSidebar {
           bodyHeight,
           this.loadingDiff ? "Loading diff…" : "No line changes",
           this.scope === null ? "Pick a scope above to read its diff." : undefined,
-          paneBg,
         ),
       ];
     }
@@ -841,7 +841,7 @@ export class DiffSidebar {
     for (let index = 0; index < bodyHeight; index += 1) {
       const diffRow = parsed.rows[this.diff.offset + index];
       if (!diffRow) {
-        lines.push(fit("", width, { bg: paneBg }));
+        lines.push(fit("", width));
         continue;
       }
       lines.push(renderDiffRow(diffRow, width, gutter, this.query));
@@ -857,39 +857,32 @@ export class DiffSidebar {
     width: number,
     parsed: ParsedDiff,
     bodyHeight: number,
-    paneBg?: string,
+    active: boolean,
   ): string {
     const title = this.selectedFile ??
       (this.scope ? targetLabel(this.scope, this.logIn(this.scope.repo)) : "");
     const stats =
-      `${
-        parsed.additions > 0 ? styled(`+${parsed.additions}`, { fg: Color.green, bg: paneBg }) : ""
-      }` +
-      `${
-        parsed.deletions > 0
-          ? ` ${styled(`−${parsed.deletions}`, { fg: Color.red, bg: paneBg })}`
-          : ""
-      }`;
+      `${parsed.additions > 0 ? styled(`+${parsed.additions}`, { fg: Color.green }) : ""}` +
+      `${parsed.deletions > 0 ? ` ${styled(`−${parsed.deletions}`, { fg: Color.red })}` : ""}`;
 
     const tail = this.query
       ? styled(
         this.matches.length === 0
           ? `⌕ ${this.query}: none`
           : `⌕ ${matchOrdinal(this.matches, this.diff.offset)}/${this.matches.length}`,
-        { fg: this.matches.length === 0 ? Color.orange : Color.accent, bg: paneBg },
+        { fg: this.matches.length === 0 ? Color.orange : Color.accent },
       )
       : styled(scrollLabel(this.diff.offset, bodyHeight, parsed.rows.length), {
         fg: Color.dimmer,
-        bg: paneBg,
       });
 
     const tailWidth = displayWidth(tail);
     const room = Math.max(4, width - 14 - tailWidth);
-    const head = ` ${
-      styled(elideHead(title || "Diff", room), { bold: true, bg: paneBg })
+    const head = `${focusEdge(active)}${
+      styled(elideHead(title || "Diff", room), { bold: true })
     } ${stats}`;
     const gap = Math.max(1, width - displayWidth(head) - tailWidth - 1);
-    return fit(`${head}${" ".repeat(gap)}${tail}`, width, { bg: paneBg });
+    return fit(`${head}${" ".repeat(gap)}${tail}`, width);
   }
 
   // MARK: - Interaction
@@ -960,6 +953,15 @@ export class DiffSidebar {
 
   focusLast(): void {
     this.part = PARTS[PARTS.length - 1];
+  }
+
+  /**
+   * Where Alt+←/→ lands: the scope list, which is what a diff is picked from.
+   * The repo filter above it is a filter — reached with Tab or Alt+↑ once the
+   * pane has the keyboard, not the thing you came here to do.
+   */
+  focusMain(): void {
+    this.part = "scope";
   }
 
   advance(step: number): boolean {
@@ -1237,8 +1239,8 @@ function statLabel(stat: GitLineStat): string {
   return parts.join(" ");
 }
 
-function pad(lines: string[], height: number, width: number, bg?: string): string[] {
-  while (lines.length < height) lines.push(fit("", width, { bg }));
+function pad(lines: string[], height: number, width: number): string[] {
+  while (lines.length < height) lines.push(fit("", width));
   return lines.slice(0, height);
 }
 

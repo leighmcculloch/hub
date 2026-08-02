@@ -8,13 +8,16 @@
  * (connecting, waiting, output ready, disconnected). Grouping is what keeps a
  * growing sidebar legible: with two providers configured the first question is
  * "which account is this?", and grouping by provider answers it without a row
- * having to carry a badge. `Alt+G`-while-in-the-pane (plain `g`) cycles the
- * grouping, and the footer control does the same for the mouse.
+ * having to carry a badge. Plain `g` cycles the grouping from anywhere in the
+ * pane, and the chip in the title bar does the same for the mouse.
  */
 
 import { Color, displayWidth, elideMiddle, fit, styled } from "../tui/ansi.ts";
 import {
+  control,
+  headerBackground,
   type HitMap,
+  paneHeader,
   placeholder,
   type Rect,
   row as listRow,
@@ -37,8 +40,8 @@ type SidebarRow =
   /** Why the list below is short — a failed listing, not an empty account. */
   | { kind: "notice"; text: string };
 
-/** The stops Tab visits inside this pane, in order. */
-const PARTS = ["list", "group", "new"] as const;
+/** The stops Tab visits inside this pane, top to bottom on screen. */
+const PARTS = ["group", "list", "new"] as const;
 type Part = typeof PARTS[number];
 
 /** The label shown for each grouping mode, and the order `g` cycles through. */
@@ -121,6 +124,17 @@ export class SessionSidebar {
     this.part = PARTS[PARTS.length - 1];
   }
 
+  /** Put the keyboard on the list, at `index` when one is given. */
+  focusList(index?: number): void {
+    this.part = "list";
+    if (index !== undefined) this.selection = index;
+  }
+
+  /** Where Alt+←/→ lands: the list, which is what this pane is for. */
+  focusMain(): void {
+    this.focusList();
+  }
+
   /**
    * Move to the next control in the pane. False when there isn't one, which is
    * the app's cue to move on to the next pane.
@@ -143,10 +157,9 @@ export class SessionSidebar {
     const width = rect.width;
     this.rows = this.buildRows();
 
-    const lines: string[] = [];
-    // The list, the grouping toggle, the rule, and the new-session footer.
-    const footerHeight = 3;
-    const listHeight = rect.height - footerHeight;
+    // The title bar, the list, then the rule and the new-session button.
+    const lines: string[] = [this.renderHeader(rect, hits, focused)];
+    const listHeight = rect.height - 3;
 
     if (this.rows.length === 0) {
       // Nothing here and no token is a setup step, not an empty list.
@@ -157,26 +170,20 @@ export class SessionSidebar {
           Math.max(0, listHeight),
           configured ? "No sessions" : "No token yet",
           configured ? "Start one on a fresh VM with Alt+N." : "Add one in Settings, with Alt+,",
-          focused ? Color.paneFocus : undefined,
         ),
       );
     } else {
       this.selection = Math.min(Math.max(0, this.selection), this.rows.length - 1);
       this.offset = scrollToShow(this.offset, this.selection, listHeight, this.rows.length);
       const bar = scrollbar(this.offset, listHeight, this.rows.length);
-      // The pane that has the keyboard lifts its empty rows and headings onto a
-      // focus tint, so where the focus landed is legible without colouring the
-      // content rows themselves (the selection bar and badges keep their own
-      // colours).
-      const paneBg = focused ? Color.paneFocus : undefined;
       for (let index = 0; index < listHeight; index += 1) {
         const entry = this.rows[this.offset + index];
         if (!entry) {
-          lines.push(fit("", width, { bg: paneBg }));
+          lines.push(fit("", width));
           continue;
         }
         if (entry.kind === "header") {
-          lines.push(sectionHeader(entry.title, width, entry.busy ? "◌" : "", paneBg));
+          lines.push(sectionHeader(entry.title, width, entry.busy ? "◌" : ""));
           continue;
         }
         if (entry.kind === "notice") {
@@ -184,27 +191,24 @@ export class SessionSidebar {
           // pointer would promise otherwise.
           lines.push(
             fit(
-              ` ${styled("!", { fg: Color.orange, bg: paneBg })} ` +
-                styled(elideMiddle(entry.text, Math.max(6, width - 4)), {
-                  fg: Color.dim,
-                  bg: paneBg,
-                }),
+              ` ${styled("!", { fg: Color.orange })} ` +
+                styled(elideMiddle(entry.text, Math.max(6, width - 4)), { fg: Color.dim }),
               width,
-              { bg: paneBg },
             ),
           );
           continue;
         }
         const id = `sidebar.row:${this.offset + index}`;
-        hits.add({ x: rect.x, y: rect.y + index, width, height: 1 }, id);
+        hits.add({ x: rect.x, y: rect.y + 1 + index, width, height: 1 }, id);
         const listFocused = focused && this.part === "list";
-        // The row the keyboard is on is marked even when it isn't the open
-        // session, so arrowing through the list is visible.
-        const onCursor = listFocused && this.offset + index === this.selection;
+        // Two different things: the open session carries the selection, and the
+        // row the keyboard is on carries the cursor. They are usually the same
+        // row, and while they aren't the difference is the whole point.
         lines.push(
           fit(
             listRow(this.rowText(entry, width - 2), width - 1, {
-              selected: this.isSelected(entry) || onCursor,
+              selected: this.isSelected(entry),
+              cursor: listFocused && this.offset + index === this.selection,
               hovered: this.hovered === id,
               focused: listFocused,
             }) + bar[index],
@@ -214,49 +218,51 @@ export class SessionSidebar {
       }
     }
 
-    // The grouping toggle. `g` cycles it from the keyboard; the mouse clicks
-    // the row, which is tinted on hover and when the pane has the keyboard.
-    hits.add({ x: rect.x, y: rect.y + rect.height - 3, width, height: 1 }, "sidebar.group");
-    const groupFocused = focused && this.part === "group";
-    const groupBg = groupFocused
-      ? Color.selection
-      : this.hovered === "sidebar.group"
-      ? Color.hover
-      : focused
-      ? Color.paneFocus
-      : undefined;
-    {
-      const label = styled(`Group: ${groupingLabel(this.grouping)}`, {
-        fg: Color.accent,
-        bg: groupBg,
-      });
-      const hint = styled("g", { fg: Color.dimmer, bg: groupBg });
-      const used = displayWidth(label) + 1 + displayWidth(hint);
-      const gap = " ".repeat(Math.max(1, width - used));
-      lines.push(fit(` ${label}${gap}${hint}`, width, { bg: groupBg }));
-    }
-
-    lines.push(rule(width, { bg: focused ? Color.paneFocus : undefined }));
+    lines.push(rule(width));
     hits.add({ x: rect.x, y: rect.y + rect.height - 1, width, height: 1 }, "sidebar.new");
+    // A button, drawn like one: the label lights up, the row it sits on doesn't.
+    // Painting the whole row made the footer read as a pane of its own rather
+    // than as one control inside this one.
     const newFocused = focused && this.part === "new";
-    const background = newFocused
-      ? Color.selection
-      : this.hovered === "sidebar.new"
-      ? Color.hover
-      : focused
-      ? Color.paneFocus
-      : undefined;
-    lines.push(
-      fit(
-        ` ${styled("+ New Session", { fg: Color.accent, bold: true, bg: background })}` +
-          `${" ".repeat(Math.max(1, width - 20))}${
-            styled("Alt+N", { fg: Color.dimmer, bg: background })
-          }`,
-        width,
-        { bg: background },
-      ),
-    );
+    const button = styled(" + New Session ", {
+      fg: newFocused ? Color.black : Color.accent,
+      bg: newFocused ? Color.accent : this.hovered === "sidebar.new" ? Color.hover : undefined,
+      bold: true,
+    });
+    // The shortcut only when it fits whole: half of one reads as a broken word.
+    const hint = width - displayWidth(button) >= 7 ? styled("Alt+N", { fg: Color.dimmer }) : "";
+    const gap = Math.max(1, width - displayWidth(button) - displayWidth(hint) - 1);
+    lines.push(fit(`${button}${" ".repeat(gap)}${hint}`, width));
     return lines.slice(0, rect.height);
+  }
+
+  /**
+   * The pane's title bar: what this pane is, and how its list is grouped.
+   *
+   * The grouping control lives up here because it describes the whole list —
+   * as a full-width row in the footer it looked like one more session, and its
+   * focus styling was the one a selected row wears.
+   */
+  private renderHeader(rect: Rect, hits: HitMap, focused: boolean): string {
+    const width = rect.width;
+    const bg = headerBackground(focused);
+    const title = styled("SESSIONS", { fg: focused ? Color.fg : Color.dim, bold: true, bg });
+    // What's left after the header's own edge, the title, and a gap.
+    const room = width - 1 - displayWidth(title) - 1;
+    const label = groupingLabel(this.grouping);
+    // Narrow enough and the chip keeps only its glyph: the mode is named by the
+    // status line when it changes, and a chopped-up word says less than none.
+    const text = room >= displayWidth(label) + 4 ? ` ≡ ${label} ` : room >= 3 ? " ≡ " : "";
+    if (text === "") return paneHeader(width, title, focused);
+
+    const chip = control(text, {
+      focused: focused && this.part === "group",
+      hovered: this.hovered === "sidebar.group",
+    });
+    const span = displayWidth(text);
+    hits.add({ x: rect.x + width - span, y: rect.y, width: span, height: 1 }, "sidebar.group");
+    const gap = " ".repeat(Math.max(1, width - 1 - displayWidth(title) - span));
+    return paneHeader(width, `${title}${gap}${chip}`, focused);
   }
 
   private buildRows(): SidebarRow[] {
@@ -486,8 +492,15 @@ export class SessionSidebar {
 
   /** The row a hit id refers to, if it is one of ours. */
   rowFor(id: string): SidebarRow | null {
+    const index = this.indexFor(id);
+    return index === null ? null : this.rows[index];
+  }
+
+  /** Where in the list a hit id lands, so a click can move the keyboard there. */
+  indexFor(id: string): number | null {
     if (!id.startsWith("sidebar.row:")) return null;
-    return this.rows[Number(id.slice("sidebar.row:".length))] ?? null;
+    const index = Number(id.slice("sidebar.row:".length));
+    return this.rows[index] ? index : null;
   }
 
   /** The row the keyboard selection is on. */
@@ -500,13 +513,24 @@ export class SessionSidebar {
    * should do about it, since activating a row is the app's business.
    */
   key(name: string): "activate" | "delete" | "group" | "handled" | "ignored" {
+    // The controls above and below the list hand the arrows back to it, so a
+    // pane entered anywhere still walks its rows without a Tab first.
     if (this.part === "new") {
-      return name === "enter" || name === "space" ? "activate" : "ignored";
+      if (name === "enter" || name === "space") return "activate";
+      if (name === "up") {
+        this.part = "list";
+        return "handled";
+      }
+      return "ignored";
     }
     if (this.part === "group") {
-      // Enter or `g` cycles the grouping from the toggle row; anything else is
+      // Enter or `g` cycles the grouping from the chip; anything else is
       // ignored so the focus ring's Tab still leaves the pane.
       if (name === "enter" || name === "space" || name === "g") return "group";
+      if (name === "down") {
+        this.part = "list";
+        return "handled";
+      }
       return "ignored";
     }
     switch (name) {

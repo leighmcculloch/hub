@@ -161,36 +161,75 @@ export function rule(width: number, style: Style = {}): string {
 }
 
 /** A section heading: small, dim, uppercase. */
-export function sectionHeader(
-  title: string,
-  width: number,
-  trailing = "",
-  bg?: string,
-): string {
-  const left = styled(` ${title.toUpperCase()}`, { fg: Color.dimmer, bold: true, bg });
-  const right = trailing ? styled(`${trailing} `, { fg: Color.dimmer, bg }) : "";
+export function sectionHeader(title: string, width: number, trailing = ""): string {
+  const left = styled(` ${title.toUpperCase()}`, { fg: Color.dimmer, bold: true });
+  const right = trailing ? styled(`${trailing} `, { fg: Color.dimmer }) : "";
   const gap = Math.max(0, width - displayWidth(left) - displayWidth(right));
-  return fit(`${left}${" ".repeat(gap)}${right}`, width, { bg });
+  return fit(`${left}${" ".repeat(gap)}${right}`, width);
+}
+
+/**
+ * The background a pane's title bar carries. Lit while that pane has the
+ * keyboard — see `paneHeader` for why the title bar is where focus is shown.
+ */
+export function headerBackground(focused: boolean): string {
+  return focused ? Color.paneFocus : Color.panelAlt;
+}
+
+/**
+ * A pane's title bar, and the one place the app says which pane has the
+ * keyboard: the focused pane's bar lifts onto a brighter background and grows
+ * an accent edge, in every pane, at the same place — the top row.
+ *
+ * Focus deliberately isn't painted across a pane's body. The terminal pane's
+ * body is tmux's own rendering and can't be re-tinted without corrupting it, so
+ * a body tint could never mean the same thing in all three panes; one row that
+ * every pane has means exactly one thing everywhere.
+ *
+ * `content` is styled by the caller on `headerBackground(focused)`, since what
+ * goes in the bar differs per pane — a name here, a strip of tabs there.
+ */
+export function paneHeader(width: number, content: string, focused: boolean): string {
+  const bg = headerBackground(focused);
+  const edge = focused ? styled("▎", { fg: Color.accent, bg }) : fit(" ", 1, { bg });
+  return fit(`${edge}${fit(content, Math.max(0, width - 1), { bg })}`, width, { bg });
+}
+
+/**
+ * The edge marker for a section inside a pane: filled while the keyboard is on
+ * it. The same glyph the pane header uses, so "the keyboard is here" reads the
+ * same whether it is a whole pane or one section of one.
+ */
+export function focusEdge(active: boolean): string {
+  return active ? styled("▎", { fg: Color.accent }) : " ";
 }
 
 /**
  * A list row with the selection bar, hover tint and selected tint the whole app
  * uses, so every list reads the same way.
+ *
+ * `selected` and `cursor` are different things and are drawn differently: the
+ * selected row is the one the pane is *showing* (the open session, the diff on
+ * screen) and carries the blue bar; the cursor is where the keyboard is, and
+ * carries the accent edge. Painting both the same way left two rows looking
+ * equally chosen, with no way to tell which one Enter would act on.
  */
 export function row(
   content: string,
   width: number,
-  state: { selected?: boolean; hovered?: boolean; focused?: boolean },
+  state: { selected?: boolean; cursor?: boolean; hovered?: boolean; focused?: boolean },
 ): string {
   // Hover wins over selection, so pointing at the row you are already on still
   // shows that it responds.
   const background = state.selected
     ? (state.hovered ? Color.selectionHover : state.focused ? Color.selection : Color.selectionDim)
-    : state.hovered
+    : state.hovered || state.cursor
     ? Color.hover
     : undefined;
-  const bar = state.selected
+  const bar = state.cursor
     ? styled("▎", { fg: Color.accent, bg: background })
+    : state.selected
+    ? styled("▎", { fg: Color.dim, bg: background })
     : fit(" ", 1, { bg: background });
   return fit(`${bar}${fit(content, Math.max(0, width - 1), { bg: background })}`, width, {
     bg: background,
@@ -271,24 +310,23 @@ export function placeholder(
   height: number,
   title: string,
   detail?: string,
-  bg?: string,
 ): string[] {
   const lines: string[] = [];
-  const body = [styled(title, { fg: Color.dim, bold: true, bg })];
+  const body = [styled(title, { fg: Color.dim, bold: true })];
   if (detail) {
     for (const wrapped of wrap(detail, Math.max(4, width - 4))) {
-      body.push(styled(wrapped, { fg: Color.dimmer, bg }));
+      body.push(styled(wrapped, { fg: Color.dimmer }));
     }
   }
   const top = Math.max(0, Math.floor((height - body.length) / 2));
   for (let index = 0; index < height; index += 1) {
     const entry = body[index - top];
     if (entry === undefined) {
-      lines.push(fit("", width, { bg }));
+      lines.push(fit("", width));
       continue;
     }
     const pad = Math.max(0, Math.floor((width - displayWidth(entry)) / 2));
-    lines.push(fit(" ".repeat(pad) + entry, width, { bg }));
+    lines.push(fit(" ".repeat(pad) + entry, width));
   }
   return lines;
 }

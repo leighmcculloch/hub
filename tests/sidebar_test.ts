@@ -71,8 +71,12 @@ function rawRows(
   return sidebar.render({ x: 0, y: 0, width, height: 12 }, new HitMap(), focused);
 }
 
-/** The SGR sequence that paints the focused-pane background. */
+/** The SGR sequence that paints the focused pane's title bar. */
 const PANE_FOCUS_BG = "\x1b[48;5;239m";
+/** The background a selected row carries in a pane that has the keyboard. */
+const SELECTION_BG = "48;5;24m";
+/** The accent, which the keyboard's row wears as its edge marker. */
+const ACCENT_FG = "38;5;39m";
 
 Deno.test("a background session that has printed something carries a dot", () => {
   const lines = rows(stubWorkspace([
@@ -289,49 +293,73 @@ Deno.test("plain g from the list reports the group action for the app to apply",
   assertEquals(sidebar.key("g"), "group");
 });
 
-Deno.test("the grouping toggle is a stop on the focus ring", () => {
+Deno.test("the grouping toggle is a stop on the focus ring, above the list", () => {
   const sidebar = new SessionSidebar(stubWorkspace([], null));
   sidebar.focusFirst();
-  assert(!sidebar.onGroupToggle, "starts on the list, not the toggle");
+  assert(sidebar.onGroupToggle, "the chip in the title bar is the first stop");
   sidebar.advance(1);
-  assert(sidebar.onGroupToggle, "one step lands on the group toggle");
+  assert(!sidebar.onGroupToggle && !sidebar.onNewButton, "one step lands on the list");
   sidebar.advance(1);
   assert(sidebar.onNewButton, "a second step lands on the new-session button");
 });
 
-Deno.test("a focused sidebar paints its empty rows with the focus background", () => {
-  // A short session list leaves filler rows below it; those carry the focus
-  // tint so the pane that has the keyboard is legible at a glance.
+Deno.test("the grouping chip rides in the title bar, not in a row of its own", () => {
+  // As a full-width footer row it read as one more session to select, and lit
+  // up the way a selected row does.
+  const ws = stubWorkspace([stubSession("a", "alpha", false)], "a");
+  const lines = rows(ws, 26, "provider").map((line) => line.trimEnd());
+  const title = lines[0];
+  assert(title.includes("SESSIONS"), `the first row is not the title bar: ${title}`);
+  assert(title.includes("Provider"), `the grouping isn't shown in the title bar: ${title}`);
+  assert(
+    !lines.some((line) => line.startsWith(" Group:")),
+    `the old full-width toggle row is still drawn: ${lines.join("\n")}`,
+  );
+});
+
+Deno.test("the sidebar says it has the keyboard in its title bar alone", () => {
+  // One row, the same row every pane has. Painting the pane's empty space
+  // instead couldn't mean the same thing in the terminal pane, whose body is
+  // tmux's own rendering.
   const ws = stubWorkspace([stubSession("a", "alpha", false)], "a");
   const focused = rawRows(ws, 26, true);
   const unfocused = rawRows(ws, 26, false);
-  // The focused frame has at least one filler row carrying the focus bg.
+  assert(focused[0].includes(PANE_FOCUS_BG), `no focus tint on the title bar: ${focused[0]}`);
   assert(
-    focused.some((line) => line.includes(PANE_FOCUS_BG)),
-    "focused sidebar has no focus-tinted row",
+    focused.slice(1).every((line) => !line.includes(PANE_FOCUS_BG)),
+    "the focus tint leaked past the title bar",
   );
-  // The unfocused frame never carries it — the tint belongs to focus alone.
   assert(
     !unfocused.some((line) => line.includes(PANE_FOCUS_BG)),
     "unfocused sidebar shows the focus tint",
   );
 });
 
-Deno.test("a focused sidebar's section headings sit on the focus background", () => {
-  const ws = stubWorkspace([stubSession("a", "alpha", false)], "a");
-  const focused = rawRows(ws, 26, true);
-  const header = focused.find((line) => stripAnsi(line).includes("SESSIONS"));
-  assert(header, "no Sessions header");
-  assert(header.includes(PANE_FOCUS_BG), `header not on the focus bg: ${header}`);
-});
+Deno.test("the open session and the keyboard's row are told apart", () => {
+  // Both used to draw as "selected", which left two rows looking equally
+  // chosen and no way to see which one Enter would act on.
+  const ws = stubWorkspace([
+    stubSession("a", "alpha", false),
+    stubSession("b", "bravo", false),
+  ], "a");
+  const sidebar = new SessionSidebar(ws);
+  sidebar.grouping = "none";
+  sidebar.focusList();
+  const lines = sidebar.render({ x: 0, y: 0, width: 26, height: 8 }, new HitMap(), true);
+  const alpha = lines.find((line) => stripAnsi(line).includes("alpha"))!;
+  const bravo = lines.find((line) => stripAnsi(line).includes("bravo"))!;
+  // The open session carries the selection colour; the cursor row doesn't.
+  assert(alpha.includes(SELECTION_BG), `the open session isn't marked: ${alpha}`);
+  assert(!bravo.includes(SELECTION_BG), `an unopened row wears the selection: ${bravo}`);
 
-Deno.test("the focus background never appears when the sidebar is unfocused", () => {
-  // Covers the footer too: the grouping toggle and new-session row fall back
-  // to the focus tint only when the pane has the keyboard.
-  const ws = stubWorkspace([stubSession("a", "alpha", false)], "a");
-  const unfocused = rawRows(ws, 26, false);
+  // Move the keyboard onto the other row: it takes the accent edge, and the
+  // open session keeps its colour.
+  sidebar.move(1);
+  const moved = sidebar.render({ x: 0, y: 0, width: 26, height: 8 }, new HitMap(), true);
+  const cursorRow = moved.find((line) => stripAnsi(line).includes("bravo"))!;
+  assert(cursorRow.includes(ACCENT_FG), `the keyboard's row has no edge marker: ${cursorRow}`);
   assert(
-    !unfocused.some((line) => line.includes(PANE_FOCUS_BG)),
-    `unfocused footer carries the focus tint: ${unfocused.join("\n")}`,
+    moved.find((line) => stripAnsi(line).includes("alpha"))!.includes(SELECTION_BG),
+    "the open session lost its marking when the keyboard moved off it",
   );
 });

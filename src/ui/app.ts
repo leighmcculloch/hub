@@ -204,6 +204,14 @@ export class App {
 
     this.diff.bind(this.workspace.selectedSession);
 
+    // Each pane's whole rectangle takes clicks, registered before the pane
+    // renders so its own rows and buttons — added after — win where they
+    // overlap. Clicking a pane's empty space is still clicking that pane, and
+    // it moves the keyboard there rather than doing nothing at all.
+    if (layout.left) this.hits.add(layout.left, "pane.sessions");
+    this.hits.add(layout.middle, "pane.terminal");
+    if (layout.right) this.hits.add(layout.right, "pane.diff");
+
     const left = layout.left
       ? this.sessions.render(layout.left, this.hits, this.focus === "sessions")
       : [];
@@ -286,12 +294,13 @@ export class App {
     const id = `divider.${which}`;
     this.hits.add({ x, y, width: 1, height: 1 }, id);
     const active = this.hovered === id || this.dragging === which;
-    // The divider belongs to the pane on its side: the left divider to the
-    // sessions pane, the right divider to the diff pane. Tinting it when that
-    // pane has the keyboard is a second cue to where the focus landed.
-    const ownsFocus = (which === "left" && this.focus === "sessions") ||
-      (which === "right" && this.focus === "diff");
-    const fg = active ? Color.accent : ownsFocus ? Color.dimmer : Color.border;
+    // A divider borders two panes and lights up when either has the keyboard,
+    // so the focused pane is fenced by its own edges whichever of the three it
+    // is — the terminal sits between both, and lights both.
+    const borders = which === "left"
+      ? this.focus === "sessions" || this.focus === "terminal"
+      : this.focus === "diff" || this.focus === "terminal";
+    const fg = active ? Color.accent : borders ? Color.dim : Color.border;
     return styled(active ? "┃" : "│", { fg });
   }
 
@@ -313,15 +322,35 @@ export class App {
     const middle = message
       ? `  ${styled(message, { fg: Color.accent })}`
       : this.workingDirectoryLabel(session, Math.max(8, cols - 60));
-    // The hint follows the keyboard: the one thing worth knowing in the
-    // terminal is how to get out of it, and everywhere else that Tab moves on.
-    const hint = this.focus === "terminal" && this.terminal.inBody
-      ? "Alt+F focus · Alt+P commands · F1 keys "
-      : "Tab moves · Enter selects · Esc terminal · F1 keys ";
-    const right = styled(hint, { fg: Color.dimmer });
+    const right = this.focusHint();
     const used = displayWidth(left) + displayWidth(middle) + displayWidth(right);
     const gap = Math.max(1, cols - used);
     return fit(`${left}${middle}${" ".repeat(gap)}${right}`, cols, { bg: Color.panel });
+  }
+
+  /**
+   * The bar's right-hand end: where the keyboard is, then the keys that matter
+   * from there.
+   *
+   * It names the pane because that is the question a keyboard interface has to
+   * keep answering — the panes say it themselves in their title bars, and this
+   * is the one strip that is on screen even in zen mode.
+   */
+  private focusHint(): string {
+    const where = this.focus === "sessions"
+      ? "Sessions"
+      : this.focus === "diff"
+      ? "Diff"
+      : this.terminal.inBody
+      ? "Terminal"
+      : "Tabs";
+    const keys = this.focus === "terminal"
+      ? (this.terminal.inBody
+        ? "Alt+F leaves · Alt+P commands · F1 keys "
+        : "← → switch · Enter types · F1 keys ")
+      : "Tab moves · Enter selects · Esc terminal ";
+    return styled(`${where} `, { fg: Color.accent, bold: true }) +
+      styled(`· ${keys}`, { fg: Color.dimmer });
   }
 
   /**
@@ -595,7 +624,12 @@ export class App {
 
   private pane(
     focus: Focus,
-  ): { advance(step: number): boolean; focusFirst(): void; focusLast(): void } {
+  ): {
+    advance(step: number): boolean;
+    focusFirst(): void;
+    focusLast(): void;
+    focusMain(): void;
+  } {
     if (focus === "sessions") return this.sessions;
     if (focus === "diff") return this.diff;
     return this.terminal;
@@ -934,8 +968,10 @@ export class App {
 
   /**
    * Move the keyboard to the pane left or right of this one, wrapping. Hidden
-   * panes are skipped, and arriving at the terminal means arriving *in* it —
-   * this is a pane switcher, so it puts you where the work is.
+   * panes are skipped, and every pane is entered at the thing it is *for* —
+   * its list, or the terminal itself — rather than at whichever end of its
+   * controls the arrow came from. This is a pane switcher, so it puts you where
+   * the work is; Tab is what walks the controls once you're there.
    */
   private focusAdjacentPane(step: number): void {
     const available = this.focusablePanes();
@@ -947,8 +983,7 @@ export class App {
       return;
     }
     this.focus = next;
-    if (step > 0) this.pane(next).focusFirst();
-    else this.pane(next).focusLast();
+    this.pane(next).focusMain();
   }
 
   /**
@@ -1158,6 +1193,17 @@ export class App {
       return;
     }
 
+    // A pane's own background: the click means "work here now", and nothing
+    // more — no row is selected, nothing is opened.
+    if (id === "pane.sessions" || id === "pane.diff") {
+      this.focus = id === "pane.sessions" ? "sessions" : "diff";
+      return;
+    }
+    if (id === "pane.terminal") {
+      this.enterTerminal();
+      return;
+    }
+
     if (id.startsWith("sidebar.")) {
       // Clicking moves the keyboard there too, so the two never disagree about
       // what Enter would press.
@@ -1174,7 +1220,9 @@ export class App {
         this.say(`Grouped by ${groupingLabel(this.sessions.grouping)}`);
         return;
       }
-      this.sessions.focusFirst();
+      // The keyboard lands on the row that was clicked, not on whichever row it
+      // was on before: after a click, ↑ and ↓ carry on from what you pointed at.
+      this.sessions.focusList(this.sessions.indexFor(id) ?? undefined);
       this.activateSidebarRow(this.sessions.rowFor(id));
       return;
     }
@@ -1271,11 +1319,13 @@ export class App {
       this.settings.scroll(delta);
       return;
     }
-    if (id?.startsWith("sidebar.")) {
+    // Over a pane's empty space the wheel still belongs to that pane's list:
+    // the pointer is in the sidebar, so the sidebar scrolls.
+    if (id?.startsWith("sidebar.") || id === "pane.sessions") {
       this.sessions.scroll(delta);
       return;
     }
-    if (id?.startsWith("diff.")) {
+    if (id?.startsWith("diff.") || id === "pane.diff") {
       this.diff.scroll(id, delta);
       return;
     }
