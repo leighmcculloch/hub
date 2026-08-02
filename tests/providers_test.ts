@@ -6,7 +6,12 @@ import { recordFromSprite, spritesCloneConfig } from "../src/providers/sprites-p
 import { SSHTransport, summarizeSSH } from "../src/providers/ssh-transport.ts";
 import { SpritesCLITransport } from "../src/providers/sprites-cli-transport.ts";
 import { NamespaceCLITransport } from "../src/providers/namespace-cli-transport.ts";
-import { failureMessage, NamespaceError, parseDevBoxes } from "../src/providers/namespace-cli.ts";
+import {
+  failureMessage,
+  isLoginFailure,
+  NamespaceError,
+  parseDevBoxes,
+} from "../src/providers/namespace-cli.ts";
 import { namespaceClone, NamespaceProvider } from "../src/providers/namespace-provider.ts";
 import { LocalTransport } from "../src/providers/local-transport.ts";
 import { afterMarker, markedCommand, OUTPUT_MARKER } from "../src/git/remote-git.ts";
@@ -195,36 +200,64 @@ Deno.test("the listing survives the shapes its undocumented JSON might take", ()
     status: "running",
   }]);
   // Nothing at all is an empty list, not a failure.
-  assertEquals(parseDevBoxes(""), []);
   assertEquals(parseDevBoxes("[]"), []);
   // An entry with no name to connect to is skipped rather than guessed at.
   assertEquals(parseDevBoxes(`[{"cpu":4}]`), []);
 });
 
-Deno.test("output that isn't a listing at all is an error, not an empty list", () => {
-  // "No dev boxes" and "the CLI printed a usage message" mean opposite things
-  // to the sidebar, so they must not look the same.
-  assertThrows(() => parseDevBoxes("Usage: devbox list"), NamespaceError);
+Deno.test("prose in JSON mode means an empty account, not a broken response", () => {
+  // `-o json` is not a promise of JSON: with nothing to list the CLI says so in
+  // words, on stdout, and exits 0. Reading that as corruption put an error in
+  // the sidebar where "you have no dev boxes" was the whole story.
+  assertEquals(parseDevBoxes("No devbox available yet. Try running `devbox create`."), []);
+  assertEquals(parseDevBoxes("no Devboxes found"), []);
+});
+
+Deno.test("JSON that isn't a listing is still an error", () => {
+  // A spoken message is one thing; a structured response this can't read is a
+  // broken contract, and hiding it as "no dev boxes" would be a lie.
   assertThrows(() => parseDevBoxes(`{"error":"nope"}`), NamespaceError);
+  assertThrows(() => parseDevBoxes(`[{"name":`), NamespaceError);
 });
 
 Deno.test("a failed devbox command carries the fix, when there is one", () => {
   // The CLI already names the command here, so it isn't repeated.
   const login = failureMessage(
     "list dev boxes",
+    1,
     "not logged in, run `devbox login` to authenticate",
   );
   assertStringIncludes(login, "devbox login");
   assertEquals(login.match(/devbox login/g)?.length, 1);
   // A CLI that isn't installed comes back from `env` as a failed exit.
   assertStringIncludes(
-    failureMessage("list dev boxes", "/usr/bin/env: 'devbox': No such file or directory"),
+    failureMessage("list dev boxes", 127, "/usr/bin/env: 'devbox': No such file or directory"),
     "get.namespace.so",
   );
   // Anything else is reported as the CLI put it, with no invented advice.
-  const other = failureMessage("create dev box x", "quota exceeded");
+  const other = failureMessage("create dev box x", 1, "quota exceeded");
   assertStringIncludes(other, "quota exceeded");
   assert(!other.includes("devbox login"));
+});
+
+Deno.test("a failure explains itself from whichever stream the CLI used", () => {
+  // This CLI writes its human messages to stdout, so a failure that says
+  // nothing on stderr used to be reported as "the devbox CLI failed" — which
+  // is exactly the report that sent someone looking in the wrong place.
+  assertStringIncludes(
+    failureMessage("list dev boxes", 1, "", "not logged in, run `devbox login` to authenticate"),
+    "not logged in",
+  );
+  // Nothing on either stream: the exit code is at least something to go on.
+  const silent = failureMessage("list dev boxes", 2, "  \n", "");
+  assertStringIncludes(silent, "status 2");
+  assert(!silent.includes("failed."), `an empty failure should say what it knows: ${silent}`);
+});
+
+Deno.test("a refused login is marked, so the app can offer the way back in", () => {
+  assert(isLoginFailure("not logged in, run `devbox login` to authenticate"));
+  assert(isLoginFailure("Unauthorized"));
+  assert(!isLoginFailure("quota exceeded"));
 });
 
 Deno.test("namespace clones from github.com with the box's own token", () => {

@@ -100,7 +100,10 @@ function stateLabel(session: TerminalSession): string {
 
 /** The human label for an unopened VM's state. */
 function vmStateLabel(vm: RemoteVMRecord): string {
-  return vm.status === "running" ? "Running" : "Stopped";
+  if (vm.status === "running") return "Running";
+  // Namespace's listing carries no state at all, and connecting resumes a
+  // stopped box anyway — so "Stopped" there would be a guess dressed as a fact.
+  return vm.status === null ? "Unknown" : "Stopped";
 }
 
 export class SessionSidebar {

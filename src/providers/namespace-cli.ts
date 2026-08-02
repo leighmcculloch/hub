@@ -21,10 +21,25 @@ export const DEVBOX_LOGIN = "devbox login";
 export const INSTALL_URL = "get.namespace.so/devbox/install.sh";
 
 export class NamespaceError extends Error {
-  constructor(message: string) {
+  /**
+   * Set when the CLI's complaint was about the login rather than the request.
+   * The workspace watches for this: `devbox auth check-login` can say yes to a
+   * credential the API then refuses, and the first real call is where that
+   * shows up.
+   */
+  readonly credentialFailure: boolean;
+
+  constructor(message: string, credentialFailure = false) {
     super(message);
     this.name = "NamespaceError";
+    this.credentialFailure = credentialFailure;
   }
+}
+
+/** Whether a CLI message is about the login rather than the request. */
+export function isLoginFailure(reason: string): boolean {
+  return /not logged in|unauthenticated|unauthorized|not authenticated|log ?in again|permission denied|403|401/i
+    .test(reason);
 }
 
 /** A dev box, reduced to what this app shows and connects to. */
@@ -103,9 +118,9 @@ export class NamespaceCLI {
     } catch (error) {
       // The spawn itself refused — rare, since a missing binary comes back as
       // a failed exit from `env` rather than a throw.
-      throw new NamespaceError(failureMessage(what, String(error)));
+      throw failure(what, -1, String(error), "");
     }
-    if (result.code !== 0) throw new NamespaceError(failureMessage(what, result.stderr));
+    if (result.code !== 0) throw failure(what, result.code, result.stderr, result.stdout);
     return result.stdout;
   }
 
@@ -114,37 +129,70 @@ export class NamespaceCLI {
   }
 }
 
+/** The error for a failed devbox command, marked when it is about the login. */
+function failure(what: string, code: number, stderr: string, stdout: string): NamespaceError {
+  const message = failureMessage(what, code, stderr, stdout);
+  return new NamespaceError(message, isLoginFailure(message));
+}
+
 /**
- * One line for a failed devbox command. The CLI says what went wrong on its
- * last line; the two failures with a one-line answer — no login, no CLI — get
- * that answer appended, and everything else is reported as the CLI put it
- * rather than guessed at.
+ * One line for a failed devbox command.
+ *
+ * Both streams are read, because this CLI does not reliably use stderr: its
+ * human renderer writes to stdout, so a failure whose whole explanation went
+ * there would otherwise be reported as "the devbox CLI failed" — a sentence
+ * that helps nobody. With nothing on either stream, the exit code is at least
+ * something to go on.
  */
-export function failureMessage(what: string, stderr: string): string {
-  const lines = stderr.split(/[\r\n]/).map((line) => line.trim()).filter((line) => line.length > 0);
-  const reason = condense(lines[lines.length - 1] ?? "the devbox CLI failed");
+export function failureMessage(
+  what: string,
+  code: number,
+  stderr: string,
+  stdout = "",
+): string {
+  const reason = lastLine(stderr) ?? lastLine(stdout);
+  if (reason === null) {
+    return `Namespace couldn't ${what}: \`${DEVBOX_BINARY}\` exited with status ${code} ` +
+      `and printed nothing.`;
+  }
   let hint = "";
-  if (/no such file|not found/i.test(reason)) {
+  if (/no image found/i.test(reason)) {
+    // The image is this app's choice, not the user's, so name the command that
+    // shows what the workspace actually offers.
+    hint = ` Run \`${DEVBOX_BINARY} image list\` to see the images available.`;
+  } else if (/no such file|not found/i.test(reason)) {
     hint = ` Install it: curl -fsSL ${INSTALL_URL} | bash`;
-  } else if (/not logged in|unauthenticated|log in|login/i.test(reason)) {
+  } else if (isLoginFailure(reason)) {
     // Only when the CLI hasn't already said it, which it usually has.
     hint = reason.includes(DEVBOX_LOGIN) ? "" : ` Run \`${DEVBOX_LOGIN}\`.`;
   }
   return `Namespace couldn't ${what}: ${reason}.${hint}`;
 }
 
+/** The last thing a stream said, or null when it said nothing. */
+function lastLine(text: string): string | null {
+  const lines = text.split(/[\r\n]/).map((line) => line.trim()).filter((line) => line.length > 0);
+  return lines.length === 0 ? null : condense(lines[lines.length - 1]);
+}
+
 /**
  * The dev boxes in `devbox list -o json`.
  *
- * The CLI's JSON shape isn't part of its documented contract, so only the two
- * things this app needs are read, and each is taken from the first plausible
- * key present: a field that moves costs a status label rather than the list.
- * Anything unparseable is an error, because an empty list and a broken response
- * mean very different things to the sidebar.
+ * `-o json` is not a promise of JSON: with nothing to list the CLI prints a
+ * sentence to stdout instead ("No devbox available yet. Try running `devbox
+ * create`."), and reading that as a broken response put an error in the sidebar
+ * where an empty account was the whole story. So the exit code decides whether
+ * the command failed, and the output only decides what it *contains*: anything
+ * that doesn't open as JSON is a message about having none.
+ *
+ * The JSON shape itself isn't part of the CLI's documented contract either, so
+ * only the two things this app needs are read, each from the first plausible
+ * key present. JSON that can't be read as a listing is still an error — that is
+ * a broken response rather than a spoken one.
  */
 export function parseDevBoxes(text: string): DevBox[] {
   const trimmed = text.trim();
-  if (!trimmed) return [];
+  if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);

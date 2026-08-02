@@ -30,6 +30,16 @@ export type ProviderCredential =
   | { kind: "cli"; binary: string; loginCommand: string };
 
 /**
+ * Whether a thrown failure means the credential itself is no longer good, as
+ * opposed to the request being wrong. Read structurally so the workspace needn't
+ * know one provider's error class from another's.
+ */
+export function isCredentialFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    (error as { credentialFailure?: unknown }).credentialFailure === true;
+}
+
+/**
  * The configuration a chosen gateway model needs, per provider. exe.dev's
  * gateway is `https://llm.int.exe.xyz`; sprites.dev reaches OpenRouter through
  * an on-sprite proxy. Both share the logic in `llm-gateway.ts`.

@@ -25,7 +25,12 @@ import {
   userDisplayName,
   userNoreplyEmail,
 } from "../github/repos.ts";
-import type { RemoteVMRecord, VMProvider, VMProviderID } from "../providers/types.ts";
+import {
+  isCredentialFailure,
+  type RemoteVMRecord,
+  type VMProvider,
+  type VMProviderID,
+} from "../providers/types.ts";
 import type { GatewaySelection } from "../providers/types.ts";
 
 /** How often each connected VM is asked whether it has renamed itself. */
@@ -220,9 +225,14 @@ export class Workspace {
     // one of them being slow is no reason for the other's VMs to wait.
     const results = await Promise.all(providers.map(async (id) => {
       try {
-        return { id, vms: await this.providerFor(id).listVMs(), reason: null };
+        return { id, vms: await this.providerFor(id).listVMs(), reason: null, credential: false };
       } catch (error) {
-        return { id, vms: null, reason: failureReason(error) };
+        return {
+          id,
+          vms: null,
+          reason: failureReason(error),
+          credential: isCredentialFailure(error),
+        };
       }
     }));
 
@@ -234,6 +244,11 @@ export class Workspace {
         continue;
       }
       failures.push({ provider: result.id, reason: result.reason });
+      // A refused credential is the probe having been wrong: `devbox
+      // auth check-login` will say yes to a login the API then turns down. Put
+      // the provider back to "not set up" so the UI offers the way in rather
+      // than repeating a failure there is nothing to do about.
+      if (result.credential) this.cliReady.delete(result.id);
       // A provider that failed keeps whatever it had on screen — those VMs
       // probably still exist — so only its own rows are carried over.
       listed.push(...this.availableVMs.filter((vm) => vm.provider === result.id));
