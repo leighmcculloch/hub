@@ -108,8 +108,10 @@ export class App {
 
     // Populate the sidebar with existing VMs, then restore the tabs that were
     // open when the app last quit — after the VM list, so tabs whose VM is gone
-    // are dropped.
+    // are dropped. The CLI-held logins are probed first, since which providers
+    // are listed at all depends on the answer.
     void this.workspace.loadGitHubUser();
+    await this.workspace.refreshCLICredentials();
     await this.workspace.loadAvailableVMs();
     this.workspace.restoreSessions();
     this.workspace.startRenamePolling();
@@ -483,10 +485,11 @@ export class App {
         return;
       case "focus":
         // Regaining focus is the moment to notice a VM that dropped while the
-        // app was in the background.
+        // app was in the background — or a `devbox login` run in the terminal
+        // next door.
         if (event.focused) {
           this.workspace.reconnectDisconnectedSessions();
-          void this.workspace.loadAvailableVMs();
+          void this.workspace.refreshCLICredentials().then(() => this.workspace.loadAvailableVMs());
         }
         return;
     }
@@ -708,7 +711,11 @@ export class App {
         this.moveFocus(event.shift ? -1 : 1);
         return true;
       case ",":
-        this.settings = new SettingsModal(this.config, (popup) => this.openPopup(popup));
+        this.settings = new SettingsModal(
+          this.config,
+          this.workspace,
+          (popup) => this.openPopup(popup),
+        );
         return true;
       case "q":
         this.quit();
@@ -905,7 +912,11 @@ export class App {
         label: "Settings…",
         shortcut: "Alt+,",
         run: () => {
-          this.settings = new SettingsModal(this.config, (popup) => this.openPopup(popup));
+          this.settings = new SettingsModal(
+            this.config,
+            this.workspace,
+            (popup) => this.openPopup(popup),
+          );
         },
       },
       {

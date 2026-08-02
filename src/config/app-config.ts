@@ -17,6 +17,7 @@ import {
 import { configPath, readJSON, writeJSON } from "./paths.ts";
 import type { GatewayModel } from "../model/llm-gateway.ts";
 import type { VMProviderID } from "../providers/types.ts";
+import { providerIDFrom } from "../model/provider-label.ts";
 
 export const DEFAULT_CLAUDE_SETTINGS = `{
   "theme": "dark",
@@ -99,7 +100,9 @@ export function decodeConfig(raw: unknown): AppConfigData {
 
   return {
     exeToken: text("exeToken", defaults.exeToken),
-    provider: entry.provider === "sprites" ? "sprites" : "exe",
+    // An unknown provider — a file from a newer build, or a typo — falls back
+    // to exe.dev rather than leaving the app pointed at nothing.
+    provider: providerIDFrom(entry.provider) ?? defaults.provider,
     spritesToken: text("spritesToken", defaults.spritesToken),
     renameToken: text("renameToken", defaults.renameToken),
     renameTokenMinted: decodeMinted(entry.renameTokenMinted),
@@ -242,11 +245,18 @@ export class AppConfig {
   /**
    * Per-provider so a sprites.dev session opened while exe.dev was active still
    * authenticates with the sprites token.
+   *
+   * Namespace has no token at all — its login lives in the `devbox` CLI — so it
+   * has nothing to return here.
    */
   tokenFor(provider: VMProviderID): string {
-    if (provider === "exe") {
-      return this.data.exeToken || Deno.env.get("EXE_DEV_TOKEN") || "";
+    switch (provider) {
+      case "exe":
+        return this.data.exeToken || Deno.env.get("EXE_DEV_TOKEN") || "";
+      case "sprites":
+        return this.data.spritesToken || Deno.env.get("SPRITE_TOKEN") || "";
+      case "namespace":
+        return "";
     }
-    return this.data.spritesToken || Deno.env.get("SPRITE_TOKEN") || "";
   }
 }

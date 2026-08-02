@@ -1,16 +1,18 @@
 # hub
 
 A terminal workspace for coding agents on ephemeral cloud VMs. Each session
-opens a fresh VM on **[exe.dev](https://exe.dev)** or **[sprites.dev](https://sprites.dev)**,
-connects over SSH or the `sprite` CLI, and drives the VM's tmux from the outside
-— every tmux window and pane is its own tab. No tmux status bar, no prefix keys,
-no remote shell pretending to be your terminal.
+opens a fresh VM on **[exe.dev](https://exe.dev)**, **[sprites.dev](https://sprites.dev)**
+or a **[Namespace](https://namespace.so) dev box**, connects over SSH or that
+provider's CLI, and drives the VM's tmux from the outside — every tmux window and
+pane is its own tab. No tmux status bar, no prefix keys, no remote shell
+pretending to be your terminal.
 
 ![hub](screenshot.png)
 
 ## Install
 
-**Prerequisites:** Deno 2.x, and a VM provider account (exe.dev or sprites.dev).
+**Prerequisites:** Deno 2.x, and an account with a VM provider (exe.dev,
+sprites.dev, or Namespace).
 
 ```
 deno install --global -n hub -f \
@@ -26,20 +28,34 @@ deno task start
 
 ## First session
 
-1. Open **Settings** (`Alt+,`) and paste a token for one or both providers.
+1. Set up whichever providers you use. **Settings** (`Alt+,`) holds the tokens
+   and shows whether each one is ready.
    - exe.dev → `EXE_DEV_TOKEN` (needs `new`, `ls`, `rm`, `integrations`, `ssh-key` perms)
    - sprites.dev → `SPRITE_TOKEN` (and the `sprite` CLI installed locally)
-2. Press `Alt+N` to create a session: pick a **Provider** (`exe.dev` or
-   `sprites.dev` side by side), an environment (`claude`, `codex`, …), a model,
-   and optionally repos to clone. Leave the name blank and the VM names itself
-   from the first prompt.
+   - Namespace → no token: install the `devbox` CLI
+     (`curl -fsSL get.namespace.so/devbox/install.sh | bash`) and run `devbox login`
+2. Press `Alt+N` to create a session: pick a **Provider** (all of them side by
+   side), an environment (`claude`, `codex`, …), a model, and optionally repos to
+   clone. Leave the name blank and the VM names itself from the first prompt
+   (exe.dev only — the others keep the name they were created with).
 3. Or press `Alt+L` for a local shell, no VM needed.
 
-Both providers work at once: with a token for each, the sidebar lists the VMs
-from both accounts together, tagged with the one they live on, and every session
-keeps the provider it was opened with. Press `g` in the sidebar to group the
-rows — by provider (which host each instance is on), by GitHub repo, or by
-state (connecting, waiting, output ready, disconnected).
+Every provider you have set up works at once: the sidebar lists the VMs from all
+of them together, tagged with the one they live on, and every session keeps the
+provider it was opened with. Press `g` in the sidebar to group the rows — by
+provider (which host each instance is on), by GitHub repo, or by state
+(connecting, waiting, output ready, disconnected).
+
+### Namespace dev boxes
+
+Namespace's login lives in its own CLI rather than in a token, so hub asks
+`devbox auth check-login` at launch (and whenever the window regains focus): log
+in beside a running hub and the provider appears without a restart. New boxes are
+created with `devbox create --image builtin:agents --size m`, which is the image
+that ships the agents already installed; a box is reached with `devbox ssh`,
+which also resumes one that has stopped, and `Alt+D` expires it. Namespace
+brokers no models, so the model picker offers only "Custom" and the agents on the
+box use their own logins.
 
 ## Keys
 
@@ -101,8 +117,9 @@ so it works over SSH.
 
 A session created without a name gets a VM that names itself: the bootstrap wires
 a prompt into the provider's LLM gateway, which answers with a name, and the VM
-renames itself through a token scoped to `rename` only (exe.dev; sprites.dev has
-no rename API, so an unnamed sprites session keeps its generated name).
+renames itself through a token scoped to `rename` only. exe.dev alone supports
+this: sprites.dev and Namespace have no rename API, so an unnamed session there
+keeps the name it was created with.
 
 Config lives in `~/.config/hub` (`~/Library/Application Support/ExeDesktopApp` on
 macOS); `HUB_CONFIG_DIR` overrides. Alongside `config.json` the app keeps

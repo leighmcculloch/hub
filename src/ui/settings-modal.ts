@@ -21,6 +21,9 @@ import {
 import { SelectPopup } from "./select-popup.ts";
 import type { AppConfig } from "../config/app-config.ts";
 import type { EnvVar } from "../config/env-var.ts";
+import type { Workspace } from "../model/workspace.ts";
+import type { VMProviderID } from "../providers/types.ts";
+import { ALL_PROVIDERS, providerLabel } from "../model/provider-label.ts";
 
 /**
  * The label column every row shares, so values line up and the caret lands in
@@ -28,10 +31,19 @@ import type { EnvVar } from "../config/env-var.ts";
  */
 const LABEL_WIDTH = 18;
 
+/** How each provider is reached, beside its name in the default-provider list. */
+const PROVIDER_DETAIL: Record<VMProviderID, string> = {
+  exe: "ssh to <name>.exe.xyz",
+  sprites: "the sprite CLI",
+  namespace: "dev boxes, via the devbox CLI",
+};
+
 type Row =
   | { kind: "heading"; text: string }
   | { kind: "provider" }
   | { kind: "token"; provider: "exe" | "sprites" }
+  /** A provider whose login lives in a local CLI: a status, not a field. */
+  | { kind: "cliLogin"; provider: VMProviderID }
   | { kind: "environment" }
   | { kind: "startCommand" }
   | { kind: "setupScript" }
@@ -48,6 +60,7 @@ export class SettingsModal {
 
   constructor(
     private config: AppConfig,
+    private workspace: Workspace,
     private onOpenPopup: (popup: SelectPopup) => void,
   ) {}
 
@@ -151,6 +164,7 @@ export class SettingsModal {
       { kind: "provider" },
       { kind: "token", provider: "exe" },
       { kind: "token", provider: "sprites" },
+      { kind: "cliLogin", provider: "namespace" },
       { kind: "heading", text: "Environment" },
       { kind: "environment" },
       { kind: "startCommand" },
@@ -172,14 +186,29 @@ export class SettingsModal {
 
     switch (entry.kind) {
       case "provider":
-        // Both providers are live whenever both have a token; this only picks
-        // which one a new session starts on by default.
+        // Every provider that is set up is live at once; this only picks which
+        // one a new session starts on by default.
         return label("Default") +
-          dropdown(
-            this.config.data.provider === "exe" ? "exe.dev" : "sprites.dev",
-            field,
-            { focused: active, hovered },
-          );
+          dropdown(providerLabel(this.config.data.provider), field, {
+            focused: active,
+            hovered,
+          });
+      case "cliLogin": {
+        // Nothing to type: the credential is the CLI's. All this row can do is
+        // say whether that login is live, and name the command that fixes it.
+        const provider = this.workspace.providerFor(entry.provider);
+        const credential = provider.credential;
+        const command = credential.kind === "cli" ? credential.loginCommand : "";
+        return label(`${provider.displayName} login`) + " " +
+          (this.workspace.isConfigured(entry.provider)
+            ? styled(
+              `logged in with the ${credential.kind === "cli" ? credential.binary : ""} CLI`,
+              {
+                fg: Color.green,
+              },
+            )
+            : styled(`not logged in — run \`${command}\``, { fg: Color.orange }));
+      }
       case "token": {
         const name = entry.provider === "exe" ? "exe.dev token" : "sprites.dev token";
         if (editing) return label(name) + this.editing!.render(field, true);
@@ -312,13 +341,10 @@ export class SettingsModal {
       this.onOpenPopup(
         new SelectPopup(
           "Default provider",
-          [
-            { label: "exe.dev", detail: "ssh to <name>.exe.xyz" },
-            { label: "sprites.dev", detail: "the sprite CLI" },
-          ],
-          this.config.data.provider === "exe" ? 0 : 1,
+          ALL_PROVIDERS.map((id) => ({ label: providerLabel(id), detail: PROVIDER_DETAIL[id] })),
+          Math.max(0, ALL_PROVIDERS.indexOf(this.config.data.provider)),
           (index) => {
-            this.config.data.provider = index === 0 ? "exe" : "sprites";
+            this.config.data.provider = ALL_PROVIDERS[index];
             this.config.save();
           },
         ),
@@ -372,6 +398,11 @@ export class SettingsModal {
       }
       case "addEnvVar":
         this.editing = new TextInput("KEY=value");
+        return;
+      case "cliLogin":
+        // Nothing to edit here — but asking the CLI again is exactly what you
+        // want right after logging in in the window next door.
+        void this.workspace.refreshCLICredentials();
         return;
       default:
         // provider and environment: dropdowns, which open their list instead.

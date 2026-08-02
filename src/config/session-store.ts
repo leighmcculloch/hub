@@ -8,6 +8,7 @@
 
 import { configPath, readJSON, writeJSON } from "./paths.ts";
 import type { VMProviderID } from "../providers/types.ts";
+import { providerIDFrom } from "../model/provider-label.ts";
 
 export interface PersistedSession {
   destination: string;
@@ -63,7 +64,7 @@ function decodeSessions(value: unknown): PersistedSession[] {
       vmName: typeof entry.vmName === "string" ? entry.vmName : null,
       // A file written before providers existed has no `provider` key; it's an
       // exe.dev session.
-      provider: entry.provider === "sprites" ? "sprites" : "exe",
+      provider: providerIDFrom(entry.provider) ?? "exe",
     });
   }
   return sessions;

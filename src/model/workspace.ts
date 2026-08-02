@@ -16,6 +16,8 @@ import { SessionProvisioner } from "./session-provisioner.ts";
 import { indexForShortcut, indexFrom } from "./tab-navigation.ts";
 import { ExeProvider } from "../providers/exe-provider.ts";
 import { SpritesProvider } from "../providers/sprites-provider.ts";
+import { NamespaceProvider } from "../providers/namespace-provider.ts";
+import { ALL_PROVIDERS } from "./provider-label.ts";
 import { run as runRemote } from "../git/remote-git.ts";
 import {
   currentGitHubUser,
@@ -58,6 +60,13 @@ export class Workspace {
    */
   vmListErrors: Array<{ provider: VMProviderID; reason: string }> = [];
 
+  /**
+   * Providers whose local CLI reported a live login on the last probe. Cached
+   * because "is the devbox CLI logged in?" is a process to spawn, and the
+   * question is asked on every frame that draws a provider chip.
+   */
+  private cliReady = new Set<VMProviderID>();
+
   /** The signed-in GitHub account, used to seed git config on new VMs. */
   githubUser: GitHubUser | null = null;
 
@@ -83,13 +92,41 @@ export class Workspace {
   }
 
   /**
-   * Every provider with a token, the default one first. This is what "which
+   * Every provider that can be used, the default one first. This is what "which
    * providers is this app talking to" means everywhere else.
    */
   get configuredProviders(): VMProviderID[] {
     const preferred = this.config.data.provider;
-    const other: VMProviderID = preferred === "exe" ? "sprites" : "exe";
-    return [preferred, other].filter((id) => this.config.tokenFor(id) !== "");
+    const order = [preferred, ...ALL_PROVIDERS.filter((id) => id !== preferred)];
+    return order.filter((id) => this.isConfigured(id));
+  }
+
+  /**
+   * Whether a provider is usable right now: a token for the ones with an API to
+   * hold it, and a logged-in CLI for the ones whose credential lives there.
+   * Synchronous because it is read while rendering — the CLI answer comes from
+   * the last probe (see `refreshCLICredentials`).
+   */
+  isConfigured(id: VMProviderID): boolean {
+    const provider = this.providerFor(id);
+    if (provider.credential.kind === "cli") return this.cliReady.has(id);
+    return provider.effectiveToken() !== "";
+  }
+
+  /**
+   * Ask each CLI-authenticated provider whether it is logged in, and remember
+   * the answer. Run at launch and whenever the app regains focus, so logging in
+   * beside a running hub takes effect without a restart.
+   */
+  async refreshCLICredentials(): Promise<void> {
+    for (const id of ALL_PROVIDERS) {
+      const provider = this.providerFor(id);
+      if (provider.credential.kind !== "cli") continue;
+      const ready = await provider.checkAvailable().catch(() => false);
+      if (ready) this.cliReady.add(id);
+      else this.cliReady.delete(id);
+    }
+    this.onChange();
   }
 
   /** Whether anything can be provisioned or listed at all. */
@@ -98,8 +135,14 @@ export class Workspace {
   }
 
   providerFor(id: VMProviderID): VMProvider {
-    if (id === "exe") return new ExeProvider(() => this.config.tokenFor("exe"));
-    return new SpritesProvider(() => this.config.tokenFor("sprites"));
+    switch (id) {
+      case "exe":
+        return new ExeProvider(() => this.config.tokenFor("exe"));
+      case "sprites":
+        return new SpritesProvider(() => this.config.tokenFor("sprites"));
+      case "namespace":
+        return new NamespaceProvider();
+    }
   }
 
   get selectedSession(): TerminalSession | null {
@@ -241,10 +284,11 @@ export class Workspace {
    */
   private reconnectBootstrap(provider: VMProvider): string {
     const environment = this.config.selectedEnvironment;
+    // Null wiring means the provider brokers no models (Namespace), so the
+    // harnesses on the VM keep their own configuration.
     const model = this.config.data.model;
-    const gateway: GatewaySelection | null = model
-      ? { model, wiring: provider.harnessWiring(model) }
-      : null;
+    const wiring = model ? provider.harnessWiring(model) : null;
+    const gateway: GatewaySelection | null = model && wiring ? { model, wiring } : null;
     return bootstrapCommand({
       setupScript: environment.setupScript,
       claudeSettings: this.config.data.claudeSettings,

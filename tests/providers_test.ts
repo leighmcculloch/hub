@@ -1,10 +1,13 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { exeFailure } from "../src/providers/exe-client.ts";
 import { apiKeyFrom, attachedTag, exeQuote, repoSlug } from "../src/providers/exe-service.ts";
 import { recordFromExeVM } from "../src/providers/exe-provider.ts";
 import { recordFromSprite, spritesCloneConfig } from "../src/providers/sprites-provider.ts";
 import { SSHTransport, summarizeSSH } from "../src/providers/ssh-transport.ts";
 import { SpritesCLITransport } from "../src/providers/sprites-cli-transport.ts";
+import { NamespaceCLITransport } from "../src/providers/namespace-cli-transport.ts";
+import { failureMessage, NamespaceError, parseDevBoxes } from "../src/providers/namespace-cli.ts";
+import { namespaceClone, NamespaceProvider } from "../src/providers/namespace-provider.ts";
 import { LocalTransport } from "../src/providers/local-transport.ts";
 import { afterMarker, markedCommand, OUTPUT_MARKER } from "../src/git/remote-git.ts";
 import { condense, tokenHint } from "../src/model/message-text.ts";
@@ -150,6 +153,92 @@ Deno.test("the sprite transport runs exec with the sprite name and no unknown fl
   assertEquals(spec.arguments.includes("--max-run-after-disconnect=0"), false);
   assertEquals(spec.arguments[4], "--");
   assertEquals(spec.arguments[spec.arguments.length - 1], "tmux -C");
+});
+
+Deno.test("the namespace transport runs the command through `devbox ssh`", () => {
+  const spec = new NamespaceCLITransport("clock-salt-5kcr").interactiveSpec("tmux -C");
+  assertEquals(spec.arguments.slice(0, 4), ["devbox", "ssh", "-T", "clock-salt-5kcr"]);
+  // No PTY: tmux's control protocol is a byte stream, and a remote terminal
+  // would only translate it.
+  assert(!spec.arguments.includes("-t"));
+  assertEquals(spec.arguments[4], "--");
+  assertEquals(spec.arguments[spec.arguments.length - 1], "tmux -C");
+});
+
+Deno.test("a devbox failure is summarized with the way out of it", () => {
+  const transport = new NamespaceCLITransport("box");
+  assertStringIncludes(
+    transport.summarize("not logged in, run `devbox login`\n", 1),
+    "devbox login",
+  );
+  assertEquals(transport.summarize("", 3), "devbox exited with status 3");
+  assertEquals(transport.summarize("boom\nno such devbox\n", 1), "no such devbox");
+});
+
+Deno.test("the devbox listing is read for the name and state of each box", () => {
+  const boxes = parseDevBoxes(`[
+    {"name":"one","status":"RUNNING"},
+    {"name":"two","status":"stopped"}
+  ]`);
+  assertEquals(boxes, [
+    { name: "one", status: "running" },
+    { name: "two", status: "stopped" },
+  ]);
+});
+
+Deno.test("the listing survives the shapes its undocumented JSON might take", () => {
+  // Wrapped in an object, keyed by id rather than name, or with the state
+  // nested: none of these is worth losing the whole list over.
+  assertEquals(parseDevBoxes(`{"devboxes":[{"id":"box-1"}]}`), [{ name: "box-1", status: null }]);
+  assertEquals(parseDevBoxes(`[{"name":"a","status":{"state":"Running"}}]`), [{
+    name: "a",
+    status: "running",
+  }]);
+  // Nothing at all is an empty list, not a failure.
+  assertEquals(parseDevBoxes(""), []);
+  assertEquals(parseDevBoxes("[]"), []);
+  // An entry with no name to connect to is skipped rather than guessed at.
+  assertEquals(parseDevBoxes(`[{"cpu":4}]`), []);
+});
+
+Deno.test("output that isn't a listing at all is an error, not an empty list", () => {
+  // "No dev boxes" and "the CLI printed a usage message" mean opposite things
+  // to the sidebar, so they must not look the same.
+  assertThrows(() => parseDevBoxes("Usage: devbox list"), NamespaceError);
+  assertThrows(() => parseDevBoxes(`{"error":"nope"}`), NamespaceError);
+});
+
+Deno.test("a failed devbox command carries the fix, when there is one", () => {
+  // The CLI already names the command here, so it isn't repeated.
+  const login = failureMessage(
+    "list dev boxes",
+    "not logged in, run `devbox login` to authenticate",
+  );
+  assertStringIncludes(login, "devbox login");
+  assertEquals(login.match(/devbox login/g)?.length, 1);
+  // A CLI that isn't installed comes back from `env` as a failed exit.
+  assertStringIncludes(
+    failureMessage("list dev boxes", "/usr/bin/env: 'devbox': No such file or directory"),
+    "get.namespace.so",
+  );
+  // Anything else is reported as the CLI put it, with no invented advice.
+  const other = failureMessage("create dev box x", "quota exceeded");
+  assertStringIncludes(other, "quota exceeded");
+  assert(!other.includes("devbox login"));
+});
+
+Deno.test("namespace clones from github.com with the box's own token", () => {
+  assertEquals(namespaceClone(null).extraConfig, "");
+  assertStringIncludes(namespaceClone("t").extraConfig, "$GITHUB_TOKEN");
+  assertEquals(namespaceClone("t").urlPrefix, "https://github.com");
+});
+
+Deno.test("namespace brokers no models, so no wiring is offered for one", () => {
+  const provider = new NamespaceProvider();
+  assertEquals(provider.harnessWiring({ provider: "anthropic", model: "m" }), null);
+  assertEquals(provider.credential.kind, "cli");
+  assertEquals(provider.effectiveToken(), "");
+  assertEquals(provider.supportsAutoNaming, false);
 });
 
 Deno.test("gateway environment blanks the OAuth token so the gateway wins", () => {

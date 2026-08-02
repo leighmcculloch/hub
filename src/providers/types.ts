@@ -14,7 +14,20 @@ import type { CloneConfig } from "../model/bootstrap.ts";
  * reconnects the same way it was opened, even after the active provider in
  * Settings has changed.
  */
-export type VMProviderID = "exe" | "sprites";
+export type VMProviderID = "exe" | "sprites" | "namespace";
+
+/**
+ * How a provider is authenticated — and what the UI has to say when it isn't.
+ *
+ * exe.dev and sprites.dev take an API token, which Settings can hold and an
+ * environment variable can supply. Namespace's login lives inside its own
+ * `devbox` CLI: there is no token to paste, so "configured" means that CLI is
+ * installed and logged in, and the fix for "it isn't" is a command to run
+ * rather than a field to fill.
+ */
+export type ProviderCredential =
+  | { kind: "token"; envVar: string }
+  | { kind: "cli"; binary: string; loginCommand: string };
 
 /**
  * The configuration a chosen gateway model needs, per provider. exe.dev's
@@ -140,8 +153,8 @@ export interface VMProvider {
    * first prompt. exe.dev can (rename + reflection); sprites.dev cannot.
    */
   readonly supportsAutoNaming: boolean;
-  /** The environment variable the token falls back to — named in UI hints. */
-  readonly tokenEnvVar: string;
+  /** Where this provider's credential comes from, for the UI to explain. */
+  readonly credential: ProviderCredential;
   /**
    * The command that asks a VM its current name (reflection), if the provider
    * supports renaming. null otherwise.
@@ -151,9 +164,22 @@ export interface VMProvider {
   /** The API token: the configured value, or the environment fallback. */
   effectiveToken(): string;
 
+  /**
+   * Whether the provider can be used right now. Async because a CLI-held login
+   * can only be answered by asking the CLI; the workspace probes once and
+   * caches, so rendering never waits on it.
+   */
+  checkAvailable(): Promise<boolean>;
+
   // LLM gateway
   listModels(): Promise<ModelListing>;
-  harnessWiring(model: GatewayModel): HarnessWiring;
+  /**
+   * How to point the VM's harnesses at `model`, or null on a provider with no
+   * model gateway — Namespace has none, and its agents authenticate
+   * themselves, so a model chosen for another provider must not rewrite their
+   * configuration.
+   */
+  harnessWiring(model: GatewayModel): HarnessWiring | null;
 
   // VM lifecycle
   listVMs(): Promise<RemoteVMRecord[]>;

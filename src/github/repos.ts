@@ -130,7 +130,7 @@ export function apiError(status: number, body: string): string {
 
 /**
  * The GitHub token the app discovered, for providers that clone from github.com
- * with it (sprites.dev). exe.dev brokers GitHub access itself.
+ * with it (sprites.dev, Namespace). exe.dev brokers GitHub access itself.
  */
 export function currentGitHubToken(): Promise<string | null> {
   return discoverToken();

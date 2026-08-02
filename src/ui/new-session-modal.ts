@@ -100,6 +100,10 @@ export class NewSessionModal {
     next.models = kept.models;
     next.modelsError = kept.modelsError;
     this.provisioner = next;
+    // The catalogue is the new provider's, not the old one's: exe.dev's gateway
+    // and OpenRouter list different models, and Namespace lists none at all.
+    // The carried-over list stays on screen until the new one answers.
+    void next.loadModels();
   }
 
   /** Step to the next provider chip, wrapping. */
@@ -213,10 +217,14 @@ export class NewSessionModal {
       }) + " ";
       chipX += label.length + 1;
     }
-    // A provider with no token is still offered: selecting it is how you find
-    // out what it needs, and the line below says so.
-    if (!this.config.tokenFor(this.providerID)) {
-      chips += styled("no token", { fg: Color.orange, bg: Color.panel });
+    // A provider that isn't set up is still offered: selecting it is how you
+    // find out what it needs, and the line below says so.
+    if (!this.workspace.isConfigured(this.providerID)) {
+      const kind = this.workspace.providerFor(this.providerID).credential.kind;
+      chips += styled(kind === "cli" ? "not logged in" : "no token", {
+        fg: Color.orange,
+        bg: Color.panel,
+      });
     }
     put(chips);
     put("");
@@ -271,13 +279,18 @@ export class NewSessionModal {
         }`,
       );
     }
-    if (!this.config.tokenFor(this.providerID)) {
+    if (!this.workspace.isConfigured(this.providerID)) {
       const provider = this.workspace.providerFor(this.providerID);
+      const credential = provider.credential;
+      // What to do about it, in the provider's own terms: a token to paste, or
+      // a command to run.
       put(
         ` ${
           styled(
-            `No ${provider.displayName} token — set one in Settings (Alt+,) or ` +
-              provider.tokenEnvVar,
+            credential.kind === "cli"
+              ? `${provider.displayName} needs the ${credential.binary} CLI — run \`${credential.loginCommand}\``
+              : `No ${provider.displayName} token — set one in Settings (Alt+,) or ` +
+                credential.envVar,
             { fg: Color.orange, bg: Color.panel },
           )
         }`,

@@ -165,10 +165,18 @@ export class SessionProvisioner {
       );
       const vmName = uniqueVMName(this.sessionName, taken);
       const environment = this.config.selectedEnvironment;
+      // A model is only wired in when the provider has a gateway to wire it to:
+      // the model setting is global, and one chosen for exe.dev must not
+      // rewrite the harness configuration on a provider that brokers no models.
       const model = this.config.data.model;
-      const gateway: GatewaySelection | null = model
-        ? { model, wiring: this.provider.harnessWiring(model) }
-        : null;
+      const wiring = model ? this.provider.harnessWiring(model) : null;
+      const gateway: GatewaySelection | null = model && wiring ? { model, wiring } : null;
+      if (model && !gateway) {
+        this.log(
+          `${this.provider.displayName} has no model gateway — ` +
+            `leaving the agent's own configuration alone.`,
+        );
+      }
 
       // A session nobody named gets its name from the work: the VM renames
       // itself once the agent has a prompt to name it after. A name that was
@@ -191,7 +199,7 @@ export class SessionProvisioner {
 
       let creating = `Creating VM ${vmName} (tags: ${tags.join(", ")}`;
       creating += `; environment: ${environment.name}`;
-      if (model) creating += `; model: ${model.provider}/${model.model}`;
+      if (gateway) creating += `; model: ${gateway.model.provider}/${gateway.model.model}`;
       if (merged.length > 0) {
         creating += `; env: ${merged.map((variable) => variable.key).join(", ")}`;
       }

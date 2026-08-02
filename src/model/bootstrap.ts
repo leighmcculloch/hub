@@ -15,14 +15,30 @@ export { shellQuote };
 /**
  * How `git clone` is run on a new VM. exe.dev clones through its
  * `github.int.exe.xyz` proxy, which needs no credentials in the VM;
- * sprites.dev clones straight from `github.com` using a token in the VM's
- * environment.
+ * sprites.dev and Namespace clone straight from `github.com` using a token in
+ * the VM's environment.
  */
 export interface CloneConfig {
   urlPrefix: string;
   /** Extra `git clone` arguments; empty for exe.dev. */
   extraConfig: string;
   failureHint: string;
+}
+
+/**
+ * Cloning from github.com with the token the VM carries in `$GITHUB_TOKEN`,
+ * passed as a header rather than in the URL so it stays out of the remote's
+ * config and out of process listings. No token means public repos only.
+ *
+ * Shared by every provider that has no GitHub brokerage of its own, which is
+ * every provider except exe.dev.
+ */
+export function tokenCloneConfig(token: string | null, failureHint: string): CloneConfig {
+  return {
+    urlPrefix: "https://github.com",
+    extraConfig: token === null ? "" : `-c "http.extraheader=Authorization: Bearer $GITHUB_TOKEN"`,
+    failureHint,
+  };
 }
 
 export const EXE_CLONE: CloneConfig = {
@@ -47,9 +63,12 @@ export const MAX_VM_NAME_LENGTH = 52;
 
 /**
  * A profile the bootstrap writes host env vars into for providers that can't
- * set them at create time (sprites.dev). The first window sources it so the
- * harness inherits the vars; for exe.dev the file is never written and the
- * source is a guarded no-op.
+ * set them at create time (sprites.dev, Namespace). The first window sources it
+ * so the harness inherits the vars; for exe.dev the file is never written and
+ * the source is a guarded no-op.
+ *
+ * Named for the provider that needed it first: renaming the file now would
+ * strand the profiles already sourcing it from `~/.bashrc` on live VMs.
  */
 export const HOST_ENV_FILE = ".sprite-env.sh";
 
@@ -182,6 +201,35 @@ export interface BootstrapOptions {
  * script, settings JSON) survives the trip through argument and remote-shell
  * parsing.
  */
+/**
+ * The shell fragment that puts host environment variables on a VM whose
+ * provider has no API to set them at create time — sprites.dev and Namespace
+ * both create a box and hand it over, with no `--env` to pass.
+ *
+ * The variables are written to a profile and sourced twice: once inside the
+ * bootstrap, so the clones see `GITHUB_TOKEN`, and again from the first window,
+ * so the harness inherits them. Future login shells pick it up from
+ * `~/.profile`/`~/.bashrc`. Values are single-quoted, so a `$` or a backtick in
+ * one stays literal instead of being expanded on the way in.
+ */
+export function profileEnvironmentSetup(
+  environment: Array<{ key: string; value: string }>,
+): string {
+  const exports = environment
+    .filter((variable) => variable.key)
+    .map((variable) => `export ${variable.key}=${shellQuote(variable.value)}`)
+    .join("\n");
+  if (!exports) return "";
+  return `
+cat > "$HOME/${HOST_ENV_FILE}" <<'HOST_ENV_EOF'
+${exports}
+HOST_ENV_EOF
+. "$HOME/${HOST_ENV_FILE}"
+for _f in "$HOME/.profile" "$HOME/.bashrc"; do [ -f "$_f" ] || continue; grep -q '${HOST_ENV_FILE}' "$_f" 2>/dev/null || printf '\\n[ -f "$HOME/${HOST_ENV_FILE}" ] && . "$HOME/${HOST_ENV_FILE}"\\n' >> "$_f"; done
+
+`;
+}
+
 export function bootstrapCommand(options: BootstrapOptions): string {
   const encoded = encodeBase64(new TextEncoder().encode(bootstrapScript(options)));
   return `printf %s '${encoded}' | base64 -d > ${SCRIPT_PATH}` +

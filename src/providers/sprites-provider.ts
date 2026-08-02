@@ -10,8 +10,7 @@
 
 import { type Sprite, SpritesClient, SpritesError } from "./sprites-client.ts";
 import { SpritesCLITransport } from "./sprites-cli-transport.ts";
-import { type CloneConfig, shellQuote } from "../model/bootstrap.ts";
-import { HOST_ENV_FILE } from "../model/bootstrap.ts";
+import { type CloneConfig, profileEnvironmentSetup, tokenCloneConfig } from "../model/bootstrap.ts";
 import {
   codexConfig,
   describe,
@@ -27,6 +26,7 @@ import type {
   HarnessWiring,
   LLMGatewayConfig,
   ModelListing,
+  ProviderCredential,
   RemoteTransport,
   RemoteVMRecord,
   VMProvider,
@@ -50,7 +50,7 @@ export class SpritesProvider implements VMProvider {
   readonly displayName = "sprites.dev";
   readonly defaultBrowserURL = "https://sprites.dev";
   readonly supportsAutoNaming = false;
-  readonly tokenEnvVar = "SPRITE_TOKEN";
+  readonly credential: ProviderCredential = { kind: "token", envVar: "SPRITE_TOKEN" };
   readonly reflectionNameCommand = null;
 
   private client: SpritesClient;
@@ -61,6 +61,10 @@ export class SpritesProvider implements VMProvider {
 
   effectiveToken(): string {
     return this.tokenProvider();
+  }
+
+  checkAvailable(): Promise<boolean> {
+    return Promise.resolve(this.effectiveToken() !== "");
   }
 
   // MARK: - LLM gateway
@@ -103,26 +107,11 @@ export class SpritesProvider implements VMProvider {
 
   /**
    * sprites.dev has no API to set host env, so the bootstrap writes the env
-   * into a profile (`~/.sprite-env.sh`) and sources it: once inside the
-   * bootstrap (so clones see `GITHUB_TOKEN`), and again from the first window
-   * (so the harness inherits it). Future login shells source it via
-   * `~/.profile`/`~/.bashrc`. Values are single-quoted so a `$` or backtick in
-   * one is literal, not expanded when sourced.
+   * into a profile and sources it — the same fragment Namespace uses, for the
+   * same reason.
    */
   hostEnvironmentSetup(environment: EnvVar[]): string {
-    const exports = environment
-      .filter((variable) => variable.key)
-      .map((variable) => `export ${variable.key}=${shellQuote(variable.value)}`)
-      .join("\n");
-    if (!exports) return "";
-    return `
-cat > "$HOME/${HOST_ENV_FILE}" <<'SPRITE_ENV_EOF'
-${exports}
-SPRITE_ENV_EOF
-. "$HOME/${HOST_ENV_FILE}"
-for _f in "$HOME/.profile" "$HOME/.bashrc"; do [ -f "$_f" ] || continue; grep -q '${HOST_ENV_FILE}' "$_f" 2>/dev/null || printf '\\n[ -f "$HOME/${HOST_ENV_FILE}" ] && . "$HOME/${HOST_ENV_FILE}"\\n' >> "$_f"; done
-
-`;
+    return profileEnvironmentSetup(environment);
   }
 
   // MARK: - VM lifecycle
@@ -211,17 +200,12 @@ for _f in "$HOME/.profile" "$HOME/.bashrc"; do [ -f "$_f" ] || continue; grep -q
   }
 }
 
-/**
- * The clone config for sprites.dev: github.com, with the token carried via
- * `http.extraheader` read from `$GITHUB_TOKEN` so it stays out of the clone URL
- * (and out of process listings). No token means public repos only.
- */
+/** The clone config for sprites.dev: github.com, with `$GITHUB_TOKEN` if there is one. */
 export function spritesCloneConfig(token: string | null): CloneConfig {
-  return {
-    urlPrefix: "https://github.com",
-    extraConfig: token === null ? "" : `-c "http.extraheader=Authorization: Bearer $GITHUB_TOKEN"`,
-    failureHint: "check the GITHUB_TOKEN in the sprite's environment, then clone again.",
-  };
+  return tokenCloneConfig(
+    token,
+    "check the GITHUB_TOKEN in the sprite's environment, then clone again.",
+  );
 }
 
 export function recordFromSprite(sprite: Sprite): RemoteVMRecord {

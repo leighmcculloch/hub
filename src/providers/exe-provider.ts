@@ -14,6 +14,7 @@ import {
   type GitHubSetup,
   type HarnessWiring,
   type ModelListing,
+  type ProviderCredential,
   type RemoteTransport,
   type RemoteVMRecord,
   type VMProvider,
@@ -26,7 +27,7 @@ export class ExeProvider implements VMProvider {
   readonly displayName = "exe.dev";
   readonly defaultBrowserURL = "https://exe.dev";
   readonly supportsAutoNaming = true;
-  readonly tokenEnvVar = "EXE_DEV_TOKEN";
+  readonly credential: ProviderCredential = { kind: "token", envVar: "EXE_DEV_TOKEN" };
 
   /**
    * The reflection integration — attached to every VM on an account by default
@@ -42,6 +43,10 @@ export class ExeProvider implements VMProvider {
 
   effectiveToken(): string {
     return this.tokenProvider();
+  }
+
+  checkAvailable(): Promise<boolean> {
+    return Promise.resolve(this.effectiveToken() !== "");
   }
 
   // MARK: - LLM gateway
