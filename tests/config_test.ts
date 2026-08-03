@@ -5,6 +5,7 @@ import {
   DEFAULT_CLAUDE_SETTINGS,
   defaultConfigData,
 } from "../src/config/app-config.ts";
+import { PI_SETUP_SCRIPT } from "../src/config/session-environment.ts";
 import { mergeEnv } from "../src/config/env-var.ts";
 import { restorable, restorableSelection, SessionStore } from "../src/config/session-store.ts";
 import { decodeLayout, defaultLayout, LayoutStore } from "../src/config/layout-store.ts";
@@ -210,13 +211,15 @@ Deno.test("a stored environment list gains defaults added since it was written",
   assert(stored.some((one) => one.name === "pi"), "pi should be added to an older config");
 });
 
-Deno.test("a fresh install starts with pi and nothing to set up", () => {
+Deno.test("a fresh install starts with pi, and says how pi gets installed", () => {
   const environments = defaultConfigData().environments;
   assertEquals(environments.length, 1);
   assertEquals(environments[0].name, "pi");
   assertEquals(environments[0].startCommand, "pi");
-  // Installing it is the bootstrap's job, not a setup script the user owns.
-  assertEquals(environments[0].setupScript, "");
+  // The same text an older install's script is migrated to, so a reset and a
+  // migration agree about what the setup script should say.
+  assertEquals(environments[0].setupScript, PI_SETUP_SCRIPT);
+  assertStringIncludes(environments[0].setupScript, "npm install -g --ignore-scripts");
 });
 
 Deno.test("a config written by the Swift app doesn't grow duplicate environments", () => {

@@ -48,10 +48,12 @@ export interface SessionEnvironment {
  * What a fresh install starts with: pi, and nothing else. Anything else is
  * added in Settings.
  *
- * There is no setup script, because installing pi is the bootstrap's job now —
- * on every provider, including one whose image is bare. A setup script is
- * configuration the user owns, and a default stored in an existing install is
- * never revisited, which is the wrong place for something that has to work.
+ * The setup script installs pi. The bootstrap does that too, and does it first,
+ * so this line finds pi already there and does nothing — but it is here to be
+ * read and changed: someone who wants a different version, a private registry,
+ * or something else installed alongside has somewhere obvious to say so. It is
+ * also what a reset restores, which is the same text an older install's script
+ * is migrated to.
  *
  * Claude Code and Codex were here too, and an install that has them keeps them:
  * only what a *fresh* config starts with is decided here.
@@ -64,7 +66,7 @@ export function defaultEnvironments(): SessionEnvironment[] {
     {
       id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000003",
       name: "pi",
-      setupScript: "",
+      setupScript: PI_SETUP_SCRIPT,
       startCommand: "pi",
       environment: [],
     },
