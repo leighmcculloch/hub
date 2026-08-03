@@ -327,3 +327,35 @@ Deno.test("a modified CSI arrow still decodes as Alt on terminals that send one"
   assertEquals(event.name, "right");
   assertEquals(event.alt, true);
 });
+
+Deno.test("a paste whose terminator is split across reads still ends", () => {
+  const decoder = new InputDecoder();
+  const encode = (text: string) => new TextEncoder().encode(text);
+  // The read boundary falls inside the six-byte terminator, which is where a
+  // pasted API key used to leave the decoder stuck in paste mode forever —
+  // swallowing every keystroke afterwards, in every session.
+  assertEquals(decoder.feed(encode("\x1b[200~sk-abc")).length, 0);
+  assertEquals(decoder.feed(encode("\x1b[201")).length, 0);
+  const events = decoder.feed(encode("~"));
+  assertEquals(events.length, 1);
+  assertEquals(events[0].type, "paste");
+  if (events[0].type !== "paste") return;
+  assertEquals(events[0].text, "sk-abc");
+});
+
+Deno.test("typing after a split paste is delivered, not swallowed", () => {
+  const decoder = new InputDecoder();
+  const encode = (text: string) => new TextEncoder().encode(text);
+  decoder.feed(encode("\x1b[200~key"));
+  decoder.feed(encode("\x1b[2"));
+  decoder.feed(encode("01~"));
+  const events = decoder.feed(encode("hi"));
+  assertEquals(events.map((one) => one.type), ["key", "key"]);
+});
+
+Deno.test("a paste arriving whole is unaffected", () => {
+  const events = new InputDecoder().feed(new TextEncoder().encode("\x1b[200~text\x1b[201~"));
+  assertEquals(events.length, 1);
+  if (events[0].type !== "paste") throw new Error("expected a paste");
+  assertEquals(events[0].text, "text");
+});

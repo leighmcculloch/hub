@@ -136,10 +136,16 @@ export class InputDecoder {
     if (this.inPaste) {
       const end = text.indexOf(PASTE_END);
       if (end === -1) {
-        // An unterminated paste can't be flushed yet, but neither can it be
-        // left to grow forever; hold it and wait for the terminator.
-        this.pasteBuffer += text;
-        return bytes.length;
+        // The terminator is six bytes and a read can land anywhere, including
+        // in the middle of it. Swallowing the whole chunk would eat the half
+        // that arrived and leave the other half unable to match — a paste that
+        // never ends, with every keystroke after it disappearing into the
+        // buffer, in this session and every other one. So keep back as much as
+        // could still turn out to be the start of a terminator.
+        const held = Math.min(PASTE_END.length - 1, text.length);
+        const settled = text.slice(0, text.length - held);
+        this.pasteBuffer += settled;
+        return byteLength(settled);
       }
       this.pasteBuffer += text.slice(0, end);
       const consumed = byteLength(text.slice(0, end + PASTE_END.length));
