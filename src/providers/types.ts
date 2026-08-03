@@ -14,7 +14,7 @@ import type { CloneConfig } from "../model/bootstrap.ts";
  * reconnects the same way it was opened, even after the active provider in
  * Settings has changed.
  */
-export type VMProviderID = "exe" | "sprites" | "namespace";
+export type VMProviderID = "exe" | "sprites" | "namespace" | "docker";
 
 /**
  * How a provider is authenticated — and what the UI has to say when it isn't.

@@ -7,7 +7,7 @@
 import { ExeClient } from "./exe-client.ts";
 import { ExeService, type ExeVM } from "./exe-service.ts";
 import { SSHTransport } from "./ssh-transport.ts";
-import { EXE_CLONE } from "../model/bootstrap.ts";
+import { tokenGitHubSetup } from "./github-setup.ts";
 import { type GatewayModel, gatewayWiring, listGatewayModels } from "../model/llm-gateway.ts";
 import {
   EXE_GATEWAY,
@@ -76,19 +76,12 @@ export class ExeProvider implements VMProvider {
   // MARK: - GitHub
 
   /**
-   * Ensure a GitHub integration exists for each repo (creating one that acts as
-   * the user if not) and return the per-repo tags that bind them to the new VM.
-   * exe.dev brokers clone access through those integrations and the
-   * `github.int.exe.xyz` proxy, so no clone credentials go in the environment.
+   * The same token every other provider clones with, rather than exe.dev's own
+   * GitHub integrations: one setup path, and nothing for a user to have
+   * authorized per repo before a session will start.
    */
-  async prepareGitHub(repos: string[]): Promise<GitHubSetup> {
-    if (repos.length === 0) return { tags: [], cloneEnvironment: [], clone: EXE_CLONE };
-    const existing = await this.service.listIntegrations();
-    const tags: string[] = [];
-    for (const repo of repos) {
-      tags.push(await this.service.ensureGithubIntegration(repo, existing));
-    }
-    return { tags, cloneEnvironment: [], clone: EXE_CLONE };
+  prepareGitHub(repos: string[]): Promise<GitHubSetup> {
+    return tokenGitHubSetup(repos);
   }
 
   // MARK: - Auto-naming

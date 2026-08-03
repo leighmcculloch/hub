@@ -12,15 +12,10 @@ import type { GatewaySelection } from "../providers/types.ts";
 
 export { shellQuote };
 
-/**
- * How `git clone` is run on a new VM. exe.dev clones through its
- * `github.int.exe.xyz` proxy, which needs no credentials in the VM;
- * sprites.dev and Namespace clone straight from `github.com` using a token in
- * the VM's environment.
- */
+/** How `git clone` is run on a new VM: from github.com, with a token. */
 export interface CloneConfig {
   urlPrefix: string;
-  /** Extra `git clone` arguments; empty for exe.dev. */
+  /** Extra `git clone` arguments; empty when there is no token. */
   extraConfig: string;
   failureHint: string;
 }
@@ -30,8 +25,7 @@ export interface CloneConfig {
  * passed as a header rather than in the URL so it stays out of the remote's
  * config and out of process listings. No token means public repos only.
  *
- * Shared by every provider that has no GitHub brokerage of its own, which is
- * every provider except exe.dev.
+ * Every provider clones this way.
  */
 export function tokenCloneConfig(token: string | null, failureHint: string): CloneConfig {
   return {
@@ -41,11 +35,9 @@ export function tokenCloneConfig(token: string | null, failureHint: string): Clo
   };
 }
 
-export const EXE_CLONE: CloneConfig = {
-  urlPrefix: "https://github.int.exe.xyz",
-  extraConfig: "",
-  failureHint: "check their GitHub integration on exe.dev, then clone again.",
-};
+/** The hint on a failed clone: the same credential on every provider now. */
+export const CLONE_FAILURE_HINT =
+  "check the GITHUB_TOKEN in the machine's environment, then clone again.";
 
 /** tmux session every VM session attaches to. */
 export const TMUX_SESSION = "exe";
@@ -89,14 +81,81 @@ export const CLAUDE_STATE = `{
 }`;
 
 /**
- * tmux has to exist before it can be started, and it can no longer be installed
- * by the bootstrap script — that now runs *inside* tmux. Output is discarded
- * because stdout is the control protocol; a failure surfaces as tmux failing to
- * start, with the transport's stderr shown on the session.
+ * `sudo` when there is a `sudo` and a reason to use it. A container running as
+ * root has neither — plain `ubuntu` doesn't ship sudo — and a VM image that
+ * gives you an unprivileged login has both.
  */
-export const INSTALL_TMUX = "command -v tmux >/dev/null 2>&1 ||" +
-  " { sudo apt-get update -qq >/dev/null 2>&1 &&" +
-  " sudo apt-get install -y -qq tmux >/dev/null 2>&1; } || true;";
+const SUDO = `_hub_sudo=""; [ "$(id -u)" -eq 0 ] || _hub_sudo=sudo;`;
+
+/**
+ * The packages a session can't proceed without: tmux to run in, git to clone
+ * with, curl to fetch the harness installer.
+ *
+ * Installed before tmux starts, because the bootstrap script runs *inside* tmux
+ * and can't be what installs it. Only what's actually missing is asked for, so
+ * an image that carries all three costs nothing. Output is discarded because
+ * stdout is the control protocol; a failure surfaces as tmux failing to start,
+ * with the transport's stderr shown on the session.
+ */
+export const INSTALL_PREREQUISITES = `${SUDO}` +
+  ` _hub_need=""; for _hub_p in tmux git curl; do command -v "$_hub_p" >/dev/null 2>&1 ||` +
+  ` _hub_need="$_hub_need $_hub_p"; done;` +
+  ` [ -z "$_hub_need" ] || { $_hub_sudo apt-get update -qq >/dev/null 2>&1 &&` +
+  ` $_hub_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq` +
+  ` ca-certificates $_hub_need >/dev/null 2>&1; } || true;`;
+
+/**
+ * Node, which pi is an npm package of. Only when what's there is too old for
+ * it: pi wants 22.19, and the `nodejs` an image was built with is usually
+ * older than that or missing entirely.
+ *
+ * NodeSource because it is the non-interactive way onto a Debian-family image,
+ * which every provider here runs — and the plain `ubuntu` the Docker provider
+ * starts from is nothing but that.
+ */
+const ENSURE_NODE = `  if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);` +
+  ` process.exit(a>22||(a===22&&b>=19)?0:1)' >/dev/null 2>&1; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | $_hub_sudo -E bash - >/dev/null 2>&1
+    $_hub_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs >/dev/null 2>&1
+  fi`;
+
+/**
+ * Install pi, for every session on every provider, unless the image already
+ * has it.
+ *
+ * Here rather than in the environment's setup script because a setup script is
+ * configuration the user owns: the default one is already stored in every
+ * install that has ever run this app, where a corrected default would never
+ * reach it. Making a working harness the app's job is also the only way a
+ * provider that starts from a bare image can work at all.
+ *
+ * The installer asks for confirmation whenever it can open \`/dev/tty\`, and
+ * this runs in a tmux pane, which has one — so it would sit on a keypress
+ * nobody sends. \`setsid\` takes the controlling terminal away, which is the
+ * installer's own signal to proceed unattended. It won't install Node without a
+ * terminal either, so Node is settled first.
+ */
+export const ENSURE_PI = `
+${SUDO}
+if ! command -v pi >/dev/null 2>&1 && [ -x "$HOME/.local/bin/pi" ]; then
+  PATH="$HOME/.local/bin:$PATH"
+fi
+if ! command -v pi >/dev/null 2>&1; then
+${ENSURE_NODE}
+  if command -v setsid >/dev/null 2>&1; then
+    setsid -w sh -c 'curl -fsSL https://pi.dev/install.sh | sh' </dev/null
+  else
+    curl -fsSL https://pi.dev/install.sh | sh
+  fi
+fi
+# The installer falls back to ~/.local when npm's global prefix isn't writable,
+# and without a terminal it has no way to offer a PATH fix. The first window
+# sources this file before it runs the start command.
+if [ -x "$HOME/.local/bin/pi" ] && ! grep -qs '.local/bin' "$HOME/${HOST_ENV_FILE}"; then
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/${HOST_ENV_FILE}"
+fi
+
+`;
 
 /**
  * Terminals send the kitty keyboard protocol for modified keys (Shift+Enter,
@@ -234,7 +293,7 @@ export function bootstrapCommand(options: BootstrapOptions): string {
   const encoded = encodeBase64(new TextEncoder().encode(bootstrapScript(options)));
   return `printf %s '${encoded}' | base64 -d > ${SCRIPT_PATH}` +
     ` && chmod +x ${SCRIPT_PATH};` +
-    ` ${INSTALL_TMUX}` +
+    ` ${INSTALL_PREREQUISITES}` +
     ` ${ENABLE_EXTENDED_KEYS}` +
     ` ${controlModeCommand(options.startCommand ?? "")}`;
 }
@@ -276,7 +335,7 @@ export function controlModeCommand(
  * because a reconnect rewrites the harness configuration it lives in.
  */
 export function bootstrapScript(options: BootstrapOptions): string {
-  const clone = options.clone ?? EXE_CLONE;
+  const clone = options.clone ?? tokenCloneConfig(null, CLONE_FAILURE_HINT);
   let script = "#!/usr/bin/env bash\n";
 
   // Seed the commit identity from the GitHub account, so commits made on the VM
@@ -324,6 +383,9 @@ fi
   // of the wiring goes into.
   if (options.autoName) script += AutoName.ARM_FRAGMENT;
   script += AutoName.installFragment();
+
+  // Before the setup script, so a setup script written against pi finds it.
+  script += ENSURE_PI;
 
   script += options.setupScript;
   script += "\n";

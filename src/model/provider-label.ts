@@ -9,18 +9,20 @@
 import type { VMProviderID } from "../providers/types.ts";
 
 /** Every provider the app knows how to talk to, in the order they're offered. */
-export const ALL_PROVIDERS: VMProviderID[] = ["exe", "sprites", "namespace"];
+export const ALL_PROVIDERS: VMProviderID[] = ["exe", "sprites", "namespace", "docker"];
 
 const LABELS: Record<VMProviderID, string> = {
   exe: "exe.dev",
   sprites: "sprites.dev",
   namespace: "namespace.so",
+  docker: "docker",
 };
 
 const BADGES: Record<VMProviderID, string> = {
   exe: "exe",
   sprites: "spr",
   namespace: "nsp",
+  docker: "dkr",
 };
 
 /** The provider's full name, where there is room for it. */

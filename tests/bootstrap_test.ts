@@ -78,14 +78,14 @@ Deno.test("controlModeCommand omits an empty start command", () => {
   assertStringIncludes(command, "/tmp/exe-bootstrap.sh;");
 });
 
-Deno.test("bootstrapCommand base64-encodes the script and installs tmux first", () => {
+Deno.test("bootstrapCommand base64-encodes the script and installs what it needs", () => {
   const command = bootstrapCommand({
     setupScript: "echo hi",
     claudeSettings: "{}",
     repos: [],
   });
   assertStringIncludes(command, "base64 -d > /tmp/exe-bootstrap.sh");
-  assertStringIncludes(command, "command -v tmux");
+  assertStringIncludes(command, "for _hub_p in tmux git curl");
   assertStringIncludes(command, "exec tmux -C new-session");
 
   const encoded = /printf %s '([^']+)'/.exec(command)?.[1] ?? "";
@@ -101,11 +101,11 @@ Deno.test("bootstrapScript clones each repo through the configured prefix", () =
   });
   assertStringIncludes(
     script,
-    "git clone --depth 1 --quiet 'https://github.int.exe.xyz/owner/one.git'",
+    "git clone --depth 1 --quiet 'https://github.com/owner/one.git'",
   );
   assertStringIncludes(
     script,
-    "git clone --depth 1 --quiet 'https://github.int.exe.xyz/owner/two.git'",
+    "git clone --depth 1 --quiet 'https://github.com/owner/two.git'",
   );
   // Failures are collected and reported rather than aborting the bootstrap.
   assertStringIncludes(script, "exe_failed_clones");

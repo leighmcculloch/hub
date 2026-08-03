@@ -17,6 +17,7 @@ import { indexForShortcut, indexFrom } from "./tab-navigation.ts";
 import { ExeProvider } from "../providers/exe-provider.ts";
 import { SpritesProvider } from "../providers/sprites-provider.ts";
 import { NamespaceProvider } from "../providers/namespace-provider.ts";
+import { DockerProvider } from "../providers/docker-provider.ts";
 import { ALL_PROVIDERS } from "./provider-label.ts";
 import { run as runRemote } from "../git/remote-git.ts";
 import {
@@ -147,6 +148,8 @@ export class Workspace {
         return new SpritesProvider(() => this.config.tokenFor("sprites"));
       case "namespace":
         return new NamespaceProvider();
+      case "docker":
+        return new DockerProvider();
     }
   }
 

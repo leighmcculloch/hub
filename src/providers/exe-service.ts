@@ -5,14 +5,6 @@ import { condense } from "../model/message-text.ts";
 import { MINT_TOKEN_COMMAND } from "../model/auto-name.ts";
 import type { EnvVar } from "../config/env-var.ts";
 
-/** One integration as returned by `integrations list --json`. */
-export interface ExeIntegration {
-  name: string;
-  type: string;
-  attachments?: string[] | null;
-  config?: { repositories?: string[] | null; act_as_user?: boolean | null } | null;
-}
-
 /** A VM as returned by `new --json` / `ls --json`. */
 export interface ExeVM {
   vm_name?: string | null;
@@ -23,20 +15,8 @@ export interface ExeVM {
   tags?: string[] | null;
 }
 
-/** The first `tag:<name>` an integration is attached to, if any. */
-export function attachedTag(integration: ExeIntegration): string | null {
-  for (const attachment of integration.attachments ?? []) {
-    if (attachment.startsWith("tag:")) return attachment.slice("tag:".length);
-  }
-  return null;
-}
-
 export class ExeService {
   constructor(readonly client: ExeClient) {}
-
-  listIntegrations(): Promise<ExeIntegration[]> {
-    return this.client.runJSON<ExeIntegration[]>("integrations list --json");
-  }
 
   /** Existing VMs on the account, so a closed session can be reopened. */
   async listVMs(): Promise<ExeVM[]> {
@@ -61,31 +41,6 @@ export class ExeService {
     const token = apiKeyFrom(body);
     if (!token) throw new ExeError(`No API key in exe.dev's reply: ${condense(body)}`);
     return token;
-  }
-
-  /**
-   * Ensure a GitHub integration exists for `repo` ("owner/name") and return the
-   * tag that binds it to a VM, creating the integration (acting as the user) if
-   * it doesn't already exist.
-   */
-  async ensureGithubIntegration(repo: string, existing: ExeIntegration[]): Promise<string> {
-    const slug = repoSlug(repo);
-
-    const match = existing.find((integration) =>
-      integration.type === "github" && (integration.config?.repositories ?? []).includes(repo)
-    );
-    if (match) {
-      const tag = attachedTag(match);
-      if (tag) return tag;
-      // Integration exists but isn't tag-attached; attach a tag we can bind.
-      await this.client.run(`integrations attach ${match.name} tag:${slug}`);
-      return slug;
-    }
-
-    await this.client.run(
-      `integrations add github --name ${slug} --repository ${repo} --act-as-user --attach tag:${slug}`,
-    );
-    return slug;
   }
 
   /**
@@ -147,17 +102,4 @@ function tokenIn(value: unknown): string | null {
  */
 export function exeQuote(argument: string): string {
   return `'${argument.replaceAll("'", "'\\''")}'`;
-}
-
-/**
- * Slug used for integration name and tag, e.g. "owner/Repo.Name" →
- * "owner-repo-name".
- *
- * exe.dev requires tag names to match `^[a-z][a-z0-9_-]*$`, so a repo whose
- * owner starts with a digit (e.g. `4d63/x`) must be prefixed rather than passed
- * through.
- */
-export function repoSlug(repo: string): string {
-  const slug = repo.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
-  return /^[a-z]/.test(slug) ? slug : `r-${slug}`;
 }

@@ -21,9 +21,9 @@
 import { NamespaceCLI, NamespaceError } from "./namespace-cli.ts";
 import { DEVBOX_LOGIN } from "./namespace-cli.ts";
 import { NamespaceCLITransport } from "./namespace-cli-transport.ts";
-import { profileEnvironmentSetup, tokenCloneConfig } from "../model/bootstrap.ts";
+import { profileEnvironmentSetup } from "../model/bootstrap.ts";
+import { tokenGitHubSetup } from "./github-setup.ts";
 import type { GatewayModel } from "../model/llm-gateway.ts";
-import { currentGitHubToken } from "../github/repos.ts";
 import type {
   GitHubSetup,
   HarnessWiring,
@@ -138,19 +138,9 @@ export class NamespaceProvider implements VMProvider {
 
   // MARK: - GitHub
 
-  /**
-   * No integration step: dev boxes clone from github.com with a token in the
-   * box's environment. The token the app already discovered for the repo picker
-   * is reused, so every provider shares one GitHub credential.
-   */
-  async prepareGitHub(repos: string[]): Promise<GitHubSetup> {
-    if (repos.length === 0) return { tags: [], cloneEnvironment: [], clone: namespaceClone(null) };
-    const token = await currentGitHubToken();
-    return {
-      tags: [],
-      cloneEnvironment: token ? [{ key: "GITHUB_TOKEN", value: token }] : [],
-      clone: namespaceClone(token),
-    };
+  /** The token every provider clones with, in the dev box's environment. */
+  prepareGitHub(repos: string[]): Promise<GitHubSetup> {
+    return tokenGitHubSetup(repos);
   }
 
   // MARK: - Auto-naming (not supported)
@@ -180,12 +170,4 @@ export class NamespaceProvider implements VMProvider {
   transportFor(destination: string): RemoteTransport {
     return new NamespaceCLITransport(destination);
   }
-}
-
-/** The clone config for Namespace: github.com, with `$GITHUB_TOKEN` if there is one. */
-export function namespaceClone(token: string | null) {
-  return tokenCloneConfig(
-    token,
-    "check the GITHUB_TOKEN in the dev box's environment, then clone again.",
-  );
 }

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   AppConfig,
   decodeConfig,
@@ -16,11 +16,11 @@ Deno.test("decodeConfig falls back field by field, not file by file", () => {
   assertEquals(config.exeToken, "");
   assertEquals(config.provider, "sprites");
   assertEquals(config.claudeSettings, "{}");
-  assertEquals(config.environments.length, 3);
+  assertEquals(config.environments.length, 1);
 });
 
 Deno.test("decodeConfig treats an empty environment list as absent", () => {
-  assertEquals(decodeConfig({ environments: [] }).environments.length, 3);
+  assertEquals(decodeConfig({ environments: [] }).environments.length, 1);
 });
 
 Deno.test("decodeConfig defaults an unknown provider to exe.dev", () => {
@@ -208,16 +208,15 @@ Deno.test("a stored environment list gains defaults added since it was written",
   assertEquals(stored[0].startCommand, "x");
   // …and the environments they predate arrive alongside it.
   assert(stored.some((one) => one.name === "pi"), "pi should be added to an older config");
-  assert(stored.some((one) => one.name === "Codex"));
 });
 
-Deno.test("pi is offered out of the box, and installs itself on the VM", () => {
-  const pi = defaultConfigData().environments.find((one) => one.name === "pi");
-  assert(pi !== undefined);
-  assertEquals(pi.startCommand, "pi");
-  assertStringIncludes(pi.setupScript, "pi.dev/install.sh");
-  // Idempotent: the bootstrap re-runs it on every reconnect.
-  assertStringIncludes(pi.setupScript, "command -v pi");
+Deno.test("a fresh install starts with pi and nothing to set up", () => {
+  const environments = defaultConfigData().environments;
+  assertEquals(environments.length, 1);
+  assertEquals(environments[0].name, "pi");
+  assertEquals(environments[0].startCommand, "pi");
+  // Installing it is the bootstrap's job, not a setup script the user owns.
+  assertEquals(environments[0].setupScript, "");
 });
 
 Deno.test("a config written by the Swift app doesn't grow duplicate environments", () => {

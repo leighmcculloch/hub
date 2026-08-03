@@ -221,7 +221,7 @@ export class NewSessionModal {
     // find out what it needs, and the line below says so.
     if (!this.workspace.isConfigured(this.providerID)) {
       const kind = this.workspace.providerFor(this.providerID).credential.kind;
-      chips += styled(kind === "cli" ? "not logged in" : "no token", {
+      chips += styled(kind === "cli" ? "not ready" : "no token", {
         fg: Color.orange,
         bg: Color.panel,
       });

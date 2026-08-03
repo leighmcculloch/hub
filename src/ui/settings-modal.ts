@@ -36,6 +36,7 @@ const PROVIDER_DETAIL: Record<VMProviderID, string> = {
   exe: "ssh to <name>.exe.xyz",
   sprites: "the sprite CLI",
   namespace: "dev boxes, via the devbox CLI",
+  docker: "containers on this machine",
 };
 
 type Row =
@@ -165,6 +166,7 @@ export class SettingsModal {
       { kind: "token", provider: "exe" },
       { kind: "token", provider: "sprites" },
       { kind: "cliLogin", provider: "namespace" },
+      { kind: "cliLogin", provider: "docker" },
       { kind: "heading", text: "Environment" },
       { kind: "environment" },
       { kind: "startCommand" },
@@ -194,20 +196,18 @@ export class SettingsModal {
             hovered,
           });
       case "cliLogin": {
-        // Nothing to type: the credential is the CLI's. All this row can do is
-        // say whether that login is live, and name the command that fixes it.
+        // Nothing to type: the credential is the CLI's — a login for Namespace,
+        // a running daemon for Docker. All this row can do is say whether that
+        // CLI answers, and name the command that says why it doesn't.
         const provider = this.workspace.providerFor(entry.provider);
         const credential = provider.credential;
         const command = credential.kind === "cli" ? credential.loginCommand : "";
         return label(`${provider.displayName} login`) + " " +
           (this.workspace.isConfigured(entry.provider)
-            ? styled(
-              `logged in with the ${credential.kind === "cli" ? credential.binary : ""} CLI`,
-              {
-                fg: Color.green,
-              },
-            )
-            : styled(`not logged in — run \`${command}\``, { fg: Color.orange }));
+            ? styled(`the ${credential.kind === "cli" ? credential.binary : ""} CLI is ready`, {
+              fg: Color.green,
+            })
+            : styled(`not ready — run \`${command}\``, { fg: Color.orange }));
       }
       case "token": {
         const name = entry.provider === "exe" ? "exe.dev token" : "sprites.dev token";

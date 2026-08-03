@@ -10,6 +10,7 @@
 
 import { EnvVar, envVarsFrom } from "./env-var.ts";
 import {
+  builtInEnvironments,
   defaultEnvironments,
   SessionEnvironment,
   sessionEnvironmentFrom,
@@ -161,10 +162,11 @@ function reconcileDefaults(
   stored: SessionEnvironment[],
 ): { environments: SessionEnvironment[]; moved: Map<string, string> } {
   const defaults = defaultEnvironments();
+  const known = builtInEnvironments();
   const moved = new Map<string, string>();
 
   const kept = stored.filter((environment, index) => {
-    const builtIn = defaults.find((one) => sameEnvironmentID(one.id, environment.id));
+    const builtIn = known.find((one) => sameEnvironmentID(one.id, environment.id));
     if (!builtIn || !isPristine(environment, builtIn)) return true;
     const earlier = stored.find((other, at) => at < index && other.name === environment.name);
     if (!earlier) return true;
@@ -172,12 +174,14 @@ function reconcileDefaults(
     return false;
   });
 
-  const known = new Set(kept.map((one) => one.id.toLowerCase()));
+  const present = new Set(kept.map((one) => one.id.toLowerCase()));
   const names = new Set(kept.map((one) => one.name));
   // Both an id and a name have to be new for a built-in to be worth adding: an
   // id can drift, and adding a second environment by the same name is exactly
   // the bug this is repairing.
-  const added = defaults.filter((one) => !known.has(one.id.toLowerCase()) && !names.has(one.name));
+  const added = defaults.filter((one) =>
+    !present.has(one.id.toLowerCase()) && !names.has(one.name)
+  );
   return { environments: added.length === 0 ? kept : [...kept, ...added], moved };
 }
 
@@ -246,8 +250,9 @@ export class AppConfig {
    * Per-provider so a sprites.dev session opened while exe.dev was active still
    * authenticates with the sprites token.
    *
-   * Namespace has no token at all — its login lives in the `devbox` CLI — so it
-   * has nothing to return here.
+   * Namespace and Docker have no token at all — one's login lives in the
+   * `devbox` CLI, the other has no account — so they have nothing to return
+   * here.
    */
   tokenFor(provider: VMProviderID): string {
     switch (provider) {
@@ -256,6 +261,7 @@ export class AppConfig {
       case "sprites":
         return this.data.spritesToken || Deno.env.get("SPRITE_TOKEN") || "";
       case "namespace":
+      case "docker":
         return "";
     }
   }

@@ -10,7 +10,8 @@
 
 import { type Sprite, SpritesClient, SpritesError } from "./sprites-client.ts";
 import { SpritesCLITransport } from "./sprites-cli-transport.ts";
-import { type CloneConfig, profileEnvironmentSetup, tokenCloneConfig } from "../model/bootstrap.ts";
+import { profileEnvironmentSetup } from "../model/bootstrap.ts";
+import { tokenGitHubSetup } from "./github-setup.ts";
 import {
   codexConfig,
   describe,
@@ -20,7 +21,6 @@ import {
   piSettings,
 } from "../model/llm-gateway.ts";
 import { PROXY_BASE_URL, proxyInstallFragment } from "../model/sprite-llm-proxy.ts";
-import { currentGitHubToken } from "../github/repos.ts";
 import type {
   GitHubSetup,
   HarnessWiring,
@@ -151,21 +151,9 @@ export class SpritesProvider implements VMProvider {
 
   // MARK: - GitHub
 
-  /**
-   * No integration step: sprites.dev clones from github.com with a token in the
-   * sprite's environment. The token the app already discovered for the repo
-   * picker is reused, so the two providers share one GitHub credential.
-   */
-  async prepareGitHub(repos: string[]): Promise<GitHubSetup> {
-    if (repos.length === 0) {
-      return { tags: [], cloneEnvironment: [], clone: spritesCloneConfig(null) };
-    }
-    const token = await currentGitHubToken();
-    return {
-      tags: [],
-      cloneEnvironment: token ? [{ key: "GITHUB_TOKEN", value: token }] : [],
-      clone: spritesCloneConfig(token),
-    };
+  /** The token every provider clones with, in the sprite's environment. */
+  prepareGitHub(repos: string[]): Promise<GitHubSetup> {
+    return tokenGitHubSetup(repos);
   }
 
   // MARK: - Auto-naming (not supported)
@@ -198,14 +186,6 @@ export class SpritesProvider implements VMProvider {
   transportFor(destination: string): RemoteTransport {
     return new SpritesCLITransport(destination);
   }
-}
-
-/** The clone config for sprites.dev: github.com, with `$GITHUB_TOKEN` if there is one. */
-export function spritesCloneConfig(token: string | null): CloneConfig {
-  return tokenCloneConfig(
-    token,
-    "check the GITHUB_TOKEN in the sprite's environment, then clone again.",
-  );
 }
 
 export function recordFromSprite(sprite: Sprite): RemoteVMRecord {

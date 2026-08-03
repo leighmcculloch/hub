@@ -19,8 +19,16 @@ export interface SessionEnvironment {
 }
 
 /**
- * What a fresh install starts with: the two harnesses this app is used with.
- * Anything else is added in Settings.
+ * What a fresh install starts with: pi, and nothing else. Anything else is
+ * added in Settings.
+ *
+ * There is no setup script, because installing pi is the bootstrap's job now —
+ * on every provider, including one whose image is bare. A setup script is
+ * configuration the user owns, and a default stored in an existing install is
+ * never revisited, which is the wrong place for something that has to work.
+ *
+ * Claude Code and Codex were here too, and an install that has them keeps them:
+ * only what a *fresh* config starts with is decided here.
  *
  * The ids are fixed rather than generated, so a config file that records only
  * which environment is selected still points at the same one after a restart.
@@ -28,12 +36,33 @@ export interface SessionEnvironment {
 export function defaultEnvironments(): SessionEnvironment[] {
   return [
     {
+      id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000003",
+      name: "pi",
+      setupScript: "",
+      startCommand: "pi",
+      environment: [],
+    },
+  ];
+}
+
+/**
+ * Every environment this app has ever shipped as a default, including the two
+ * it no longer starts with.
+ *
+ * Kept because "is this stored entry an untouched built-in?" is how a config
+ * written by the Swift app is stopped from growing a second copy of each — and
+ * an entry stops being recognisable the moment its built-in is forgotten. What
+ * a *fresh* install starts with is `defaultEnvironments`; this is only for
+ * recognising what's already there.
+ */
+export function builtInEnvironments(): SessionEnvironment[] {
+  return [
+    ...defaultEnvironments(),
+    {
       id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000001",
       name: "Claude Code",
       setupScript: "",
       startCommand: "claude",
-      // Present but blank on purpose: it's the variable to paste a token into,
-      // and an empty row is the prompt to do so.
       environment: [{ key: "CLAUDE_CODE_OAUTH_TOKEN", value: "" }],
     },
     {
@@ -41,15 +70,6 @@ export function defaultEnvironments(): SessionEnvironment[] {
       name: "Codex",
       setupScript: "",
       startCommand: "codex",
-      environment: [],
-    },
-    {
-      id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000003",
-      name: "pi",
-      // The pi.dev CLI isn't on the VM images, so the setup step installs it;
-      // the installer is idempotent, and this runs again on every reconnect.
-      setupScript: "command -v pi >/dev/null 2>&1 || curl -fsSL https://pi.dev/install.sh | sh",
-      startCommand: "pi",
       environment: [],
     },
   ];

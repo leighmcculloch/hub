@@ -1,11 +1,18 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { exeFailure } from "../src/providers/exe-client.ts";
-import { apiKeyFrom, attachedTag, exeQuote, repoSlug } from "../src/providers/exe-service.ts";
+import { apiKeyFrom, exeQuote } from "../src/providers/exe-service.ts";
 import { recordFromExeVM } from "../src/providers/exe-provider.ts";
-import { recordFromSprite, spritesCloneConfig } from "../src/providers/sprites-provider.ts";
+import { recordFromSprite } from "../src/providers/sprites-provider.ts";
 import { SSHTransport, summarizeSSH } from "../src/providers/ssh-transport.ts";
 import { SpritesCLITransport } from "../src/providers/sprites-cli-transport.ts";
 import { NamespaceCLITransport } from "../src/providers/namespace-cli-transport.ts";
+import { DockerTransport } from "../src/providers/docker-transport.ts";
+import {
+  CONTAINER_LABEL,
+  DockerProvider,
+  parseContainers,
+} from "../src/providers/docker-provider.ts";
+import { tokenCloneConfig } from "../src/model/bootstrap.ts";
 import {
   DEVBOX_LOGIN,
   failureMessage,
@@ -13,7 +20,7 @@ import {
   NamespaceError,
   parseDevBoxes,
 } from "../src/providers/namespace-cli.ts";
-import { namespaceClone, NamespaceProvider } from "../src/providers/namespace-provider.ts";
+import { NamespaceProvider } from "../src/providers/namespace-provider.ts";
 import { LocalTransport } from "../src/providers/local-transport.ts";
 import { afterMarker, markedCommand, OUTPUT_MARKER } from "../src/git/remote-git.ts";
 import { condense, tokenHint } from "../src/model/message-text.ts";
@@ -77,22 +84,9 @@ Deno.test("apiKeyFrom resolves the same way whatever the property order", () => 
   assertEquals(apiKeyFrom(`{"b":"exe0.second","a":"exe0.first"}`), "exe0.first");
 });
 
-Deno.test("repoSlug produces a tag exe.dev accepts", () => {
-  assertEquals(repoSlug("owner/Repo.Name"), "owner-repo-name");
-  assertEquals(repoSlug("4d63/x"), "r-4d63-x");
-});
-
 Deno.test("exeQuote survives spaces and quotes", () => {
   assertEquals(exeQuote("A=b c"), "'A=b c'");
   assertEquals(exeQuote("it's"), `'it'\\''s'`);
-});
-
-Deno.test("attachedTag reads the first tag attachment", () => {
-  assertEquals(
-    attachedTag({ name: "n", type: "github", attachments: ["user:me", "tag:owner-repo"] }),
-    "owner-repo",
-  );
-  assertEquals(attachedTag({ name: "n", type: "github", attachments: [] }), null);
 });
 
 Deno.test("recordFromExeVM fills the destination in from either field", () => {
@@ -119,10 +113,10 @@ Deno.test("recordFromSprite keeps the URL the API gave, since the name lacks it"
   );
 });
 
-Deno.test("the sprites clone config carries the token out of the URL", () => {
-  assertEquals(spritesCloneConfig(null).extraConfig, "");
-  assertStringIncludes(spritesCloneConfig("t").extraConfig, "$GITHUB_TOKEN");
-  assertEquals(spritesCloneConfig("t").urlPrefix, "https://github.com");
+Deno.test("the clone config carries the token out of the URL", () => {
+  assertEquals(tokenCloneConfig(null, "hint").extraConfig, "");
+  assertStringIncludes(tokenCloneConfig("t", "hint").extraConfig, "$GITHUB_TOKEN");
+  assertEquals(tokenCloneConfig("t", "hint").urlPrefix, "https://github.com");
 });
 
 Deno.test("summarizeSSH picks the informative line out of ssh's chatter", () => {
@@ -284,12 +278,6 @@ Deno.test("being denied a resource is not a refused login", () => {
   assert(!failureMessage("create dev box vm-4dd07e", 1, denied).includes(DEVBOX_LOGIN));
 });
 
-Deno.test("namespace clones from github.com with the box's own token", () => {
-  assertEquals(namespaceClone(null).extraConfig, "");
-  assertStringIncludes(namespaceClone("t").extraConfig, "$GITHUB_TOKEN");
-  assertEquals(namespaceClone("t").urlPrefix, "https://github.com");
-});
-
 Deno.test("namespace brokers no models, so no wiring is offered for one", () => {
   const provider = new NamespaceProvider();
   assertEquals(provider.harnessWiring({ provider: "anthropic", model: "m" }), null);
@@ -427,4 +415,42 @@ Deno.test("output with no marker is kept whole rather than discarded", () => {
 Deno.test("only the first marker splits, so output containing one survives", () => {
   const output = `${OUTPUT_MARKER}\nfirst\n${OUTPUT_MARKER}\nsecond\n`;
   assertEquals(afterMarker(output), `first\n${OUTPUT_MARKER}\nsecond\n`);
+});
+
+Deno.test("the docker transport starts the container before exec'ing into it", () => {
+  const spec = new DockerTransport("hub-box").interactiveSpec("tmux -C");
+  assertEquals(spec.executable, "/bin/sh");
+  const script = spec.arguments[1];
+  assertStringIncludes(script, "docker start 'hub-box'");
+  assertStringIncludes(script, "exec docker exec -i 'hub-box' bash -l -c 'tmux -C'");
+  // No PTY: the control protocol is a byte stream.
+  assert(!script.includes(" -t "));
+});
+
+Deno.test("a stopped docker daemon is named as the thing to fix", () => {
+  const transport = new DockerTransport("box");
+  assertStringIncludes(
+    transport.summarize("Cannot connect to the Docker daemon at unix:///var/run/docker.sock.", 1),
+    "start Docker",
+  );
+  assertEquals(transport.summarize("", 2), "docker exited with status 2");
+});
+
+Deno.test("docker containers are read a name and a state at a time", () => {
+  assertEquals(parseContainers("one\trunning\ntwo\tExited\n"), [
+    { name: "one", status: "running" },
+    { name: "two", status: "exited" },
+  ]);
+  assertEquals(parseContainers("\n  \n"), []);
+});
+
+Deno.test("docker brokers no models and names no account", () => {
+  const provider = new DockerProvider();
+  assertEquals(provider.harnessWiring({ provider: "anthropic", model: "m" }), null);
+  assertEquals(provider.effectiveToken(), "");
+  assertEquals(provider.supportsAutoNaming, false);
+  // Env goes on at `docker run -e`, so nothing has to be injected afterwards.
+  assertEquals(provider.hostEnvironmentSetup([{ key: "A", value: "b" }]), "");
+  assertEquals(provider.destinationForVMName("box"), "box");
+  assertStringIncludes(CONTAINER_LABEL, "hub");
 });
