@@ -22,6 +22,7 @@ import {
   wrap,
 } from "../src/tui/widgets.ts";
 import { InputDecoder, type KeyEvent, type MouseEvent } from "../src/tui/input.ts";
+import { TextArea } from "../src/tui/widgets.ts";
 
 const RED = "\x1b[31m";
 const RESET = "\x1b[0m";
@@ -374,4 +375,47 @@ Deno.test("a colour left open by a pane never paints the row's padding", () => {
   );
   // And nothing re-opens a colour after that reset.
   assert(!padding.slice(RESET.length).includes("\x1b[4"), "no colour may follow the reset");
+});
+
+Deno.test("a text area edits lines, not one folded-up string", () => {
+  const area = new TextArea("one\ntwo");
+  assertEquals(area.lines(), ["one", "two"]);
+  // Enter is a newline here, which is why Esc has to be what ends the edit.
+  area.handle({ name: "enter", ctrl: false, alt: false });
+  area.handle({ name: "a", ctrl: false, alt: false });
+  assertEquals(area.value, "one\ntwo\na");
+});
+
+Deno.test("up and down move a line at a time, keeping the column", () => {
+  const area = new TextArea("first\nsecond\nthird");
+  area.handle({ name: "home", ctrl: false, alt: false });
+  area.handle({ name: "up", ctrl: false, alt: false });
+  area.handle({ name: "up", ctrl: false, alt: false });
+  area.handle({ name: "x", ctrl: false, alt: false });
+  assertEquals(area.value, "xfirst\nsecond\nthird");
+});
+
+Deno.test("a column past the end of a shorter line lands at that line's end", () => {
+  const area = new TextArea("longer line\nab\nlonger line");
+  // Caret is at the end of the last line; up twice would overshoot line two.
+  area.handle({ name: "up", ctrl: false, alt: false });
+  area.handle({ name: "x", ctrl: false, alt: false });
+  assertEquals(area.value, "longer line\nabx\nlonger line");
+});
+
+Deno.test("a text area scrolls to keep the caret in view", () => {
+  const area = new TextArea("1\n2\n3\n4\n5\n6");
+  // The caret starts at the end, so a two-line window shows the last two.
+  assertEquals(area.render(10, 2), ["5", "6"]);
+  const cell = area.cursorCell(10, 2);
+  assertEquals(cell, { x: 1, y: 1 });
+  // And back to the top when the caret goes there.
+  for (let step = 0; step < 5; step += 1) area.handle({ name: "up", ctrl: false, alt: false });
+  assertEquals(area.render(10, 2), ["1", "2"]);
+});
+
+Deno.test("an empty text area still has a line to put a caret on", () => {
+  const area = new TextArea("");
+  assertEquals(area.lines(), [""]);
+  assertEquals(area.cursorCell(10, 3), { x: 0, y: 0 });
 });

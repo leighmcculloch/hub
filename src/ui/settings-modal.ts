@@ -1,9 +1,13 @@
 /**
- * Settings: which provider new sessions default to, the API tokens, and the
- * environments a session can be started with.
+ * Settings, in tabs: the provider new sessions default to and its credentials,
+ * the environments a session can be started with, pi's own configuration, and
+ * the variables every VM gets.
  *
- * The provider setting is a default, not a switch: a token for each means both
- * accounts are listed and usable at once.
+ * Tabs rather than one long list because these are four unrelated things, and
+ * two of them — a setup script and a JSON settings object — want the height of
+ * a page to themselves rather than a line each. The provider setting is a
+ * default, not a switch: a credential for each means every account is listed
+ * and usable at once.
  *
  * Everything here writes straight into the shared config and saves on change,
  * so a new session picks up an edit without the modal being dismissed first.
@@ -16,6 +20,7 @@ import {
   panel,
   type Rect,
   row as listRow,
+  TextArea,
   TextInput,
 } from "../tui/widgets.ts";
 import { SelectPopup } from "./select-popup.ts";
@@ -39,26 +44,36 @@ const PROVIDER_DETAIL: Record<VMProviderID, string> = {
   docker: "containers on this machine",
 };
 
+/** The pages, in the order they're offered. */
+const TABS = ["Provider", "Environments", "pi", "Variables"] as const;
+type Tab = typeof TABS[number];
+
+/** Which multi-line value a text area is editing. */
+type AreaField = "setupScript" | "piSettings";
+
 type Row =
-  | { kind: "heading"; text: string }
   | { kind: "provider" }
   | { kind: "token"; provider: "exe" | "sprites" }
-  /** A provider whose login lives in a local CLI: a status, not a field. */
+  /** A provider whose credential lives in a local CLI: a status, not a field. */
   | { kind: "cliLogin"; provider: VMProviderID }
   | { kind: "environment" }
   | { kind: "startCommand" }
-  | { kind: "setupScript" }
-  | { kind: "piSettings" }
+  /** A block that takes the rest of the page, not a line. */
+  | { kind: "textArea"; field: AreaField }
   | { kind: "envVar"; index: number }
   | { kind: "addEnvVar" };
 
 export class SettingsModal {
+  private tab: Tab = TABS[0];
   private selection = 0;
   private offset = 0;
   private editing: TextInput | null = null;
+  private area: TextArea | null = null;
   private rows: Row[] = [];
   private hovered: string | null = null;
   private caret: { x: number; y: number } | null = null;
+  /** How tall the current page's text area is; the renderer decides, the caret follows. */
+  private areaHeight = 1;
 
   constructor(
     private config: AppConfig,
@@ -81,56 +96,90 @@ export class SettingsModal {
       height,
     };
     const inner = width - 2;
-    const body = this.renderRows(inner, height - 2, rect, hits);
+    const body = this.renderBody(inner, height - 2, rect, hits);
     return { lines: panel(width, height, "Settings", body, { bg: Color.panel }), rect };
   }
 
-  private renderRows(width: number, height: number, rect: Rect, hits: HitMap): string[] {
+  private renderBody(width: number, height: number, rect: Rect, hits: HitMap): string[] {
     this.rows = this.buildRows();
-    this.selection = Math.min(Math.max(0, this.selection), this.rows.length - 1);
-    // Headings aren't selectable, and the list opens on one, so step off it.
-    while (this.rows[this.selection]?.kind === "heading" && this.selection < this.rows.length - 1) {
-      this.selection += 1;
-    }
-    // Recomputed every frame: only the row being edited carries the caret.
+    this.selection = Math.min(Math.max(0, this.selection), Math.max(0, this.rows.length - 1));
     this.caret = null;
 
-    const listHeight = height - 1;
-    if (this.selection < this.offset) this.offset = this.selection;
-    if (this.selection >= this.offset + listHeight) {
-      this.offset = this.selection - listHeight + 1;
+    const lines: string[] = [this.tabBar(width, rect, hits)];
+    // One line for the tab bar, one for the footer hint.
+    const listHeight = height - 2;
+    lines.push(...this.renderRows(width, listHeight, rect, hits));
+    lines.push(this.footer(width));
+    return lines;
+  }
+
+  /** The tab strip, and the hit targets that make it clickable. */
+  private tabBar(width: number, rect: Rect, hits: HitMap): string {
+    let text = "";
+    let column = 0;
+    for (const tab of TABS) {
+      const label = ` ${tab} `;
+      hits.add(
+        { x: rect.x + 1 + column, y: rect.y + 1, width: label.length, height: 1 },
+        `settings.tab:${tab}`,
+      );
+      text += tab === this.tab
+        ? styled(label, { fg: Color.fg, bg: Color.selection, bold: true })
+        : styled(label, { fg: Color.dimmer, bg: Color.panel });
+      column += label.length;
     }
+    return fit(text, width, { bg: Color.panel });
+  }
+
+  private footer(width: number): string {
+    const hint = this.area
+      ? "Enter adds a line · Esc saves and closes the editor"
+      : this.rows[this.selection]?.kind === "textArea"
+      ? "Enter edits · ←/→ changes tab · Esc closes"
+      : "Enter edits · ←/→ changes tab · Del removes · Esc closes";
+    return fit(` ${styled(hint, { fg: Color.dimmer, bg: Color.panel })}`, width, {
+      bg: Color.panel,
+    });
+  }
+
+  private renderRows(width: number, height: number, rect: Rect, hits: HitMap): string[] {
+    // A text area takes whatever the single-line rows above it leave behind.
+    const areaIndex = this.rows.findIndex((entry) => entry.kind === "textArea");
+    this.areaHeight = areaIndex === -1 ? 1 : Math.max(1, height - (this.rows.length - 1));
+
+    if (this.selection < this.offset) this.offset = this.selection;
+    if (this.selection >= this.offset + height) this.offset = this.selection - height + 1;
 
     const lines: string[] = [];
-    for (let index = 0; index < listHeight; index += 1) {
-      const entry = this.rows[this.offset + index];
+    let index = this.offset;
+    // `rect.y + 1` is the tab bar, so the first row sits one line below it.
+    const firstRowY = rect.y + 2;
+    while (lines.length < height) {
+      const entry = this.rows[index];
       if (!entry) {
         lines.push(fit("", width, { bg: Color.panel }));
+        index += 1;
         continue;
       }
-      if (entry.kind === "heading") {
-        lines.push(
-          fit(
-            ` ${
-              styled(entry.text.toUpperCase(), { fg: Color.dimmer, bold: true, bg: Color.panel })
-            }`,
-            width,
-            {
-              bg: Color.panel,
-            },
-          ),
-        );
+      const id = `settings.row:${index}`;
+      const active = index === this.selection;
+      const top = firstRowY + lines.length;
+
+      if (entry.kind === "textArea") {
+        const rows = Math.min(this.areaHeight, height - lines.length);
+        hits.add({ x: rect.x + 1, y: top, width, height: rows }, id);
+        lines.push(...this.renderArea(entry.field, width, rows, rect, top, active));
+        index += 1;
         continue;
       }
-      const id = `settings.row:${this.offset + index}`;
-      hits.add({ x: rect.x + 1, y: rect.y + 1 + index, width, height: 1 }, id);
-      const active = this.offset + index === this.selection;
+
+      hits.add({ x: rect.x + 1, y: top, width, height: 1 }, id);
       if (active && this.editing) {
         // The value column starts after the row's selection bar and its label.
         const fieldWidth = width - 2 - LABEL_WIDTH;
         this.caret = {
           x: rect.x + 2 + LABEL_WIDTH + this.editing.cursorOffset(fieldWidth),
-          y: rect.y + 1 + index,
+          y: top,
         };
       }
       lines.push(
@@ -144,42 +193,96 @@ export class SettingsModal {
           { bg: Color.panel },
         ),
       );
+      index += 1;
     }
-    lines.push(
-      fit(
-        ` ${
-          styled("Enter edits · Space toggles · Del removes · Esc closes", {
-            fg: Color.dimmer,
-            bg: Color.panel,
-          })
-        }`,
-        width,
-        { bg: Color.panel },
-      ),
-    );
     return lines;
   }
 
-  private buildRows(): Row[] {
-    const rows: Row[] = [
-      { kind: "heading", text: "Provider" },
-      { kind: "provider" },
-      { kind: "cliLogin", provider: "docker" },
-      { kind: "token", provider: "exe" },
-      { kind: "token", provider: "sprites" },
-      { kind: "cliLogin", provider: "namespace" },
-      { kind: "heading", text: "Environment" },
-      { kind: "environment" },
-      { kind: "startCommand" },
-      { kind: "setupScript" },
-      { kind: "piSettings" },
-      { kind: "heading", text: "Global environment variables" },
-    ];
-    for (let index = 0; index < this.config.data.globalEnvironment.length; index += 1) {
-      rows.push({ kind: "envVar", index });
+  /**
+   * The multi-line block: the stored value when it is at rest, the editor's own
+   * view of it while it is being edited.
+   */
+  private renderArea(
+    field: AreaField,
+    width: number,
+    height: number,
+    rect: Rect,
+    top: number,
+    active: boolean,
+  ): string[] {
+    const editing = active && this.area !== null;
+    const background = editing ? Color.selection : active ? Color.hover : Color.panelAlt;
+    const inner = Math.max(1, width - 2);
+    const text = editing ? null : this.areaValue(field);
+    const rows = editing
+      ? this.area!.render(inner, height - 1)
+      : (text ? text.split("\n") : []).slice(0, height - 1);
+
+    if (editing) {
+      const cell = this.area!.cursorCell(inner, height - 1);
+      if (cell) this.caret = { x: rect.x + 2 + cell.x, y: top + 1 + cell.y };
     }
-    rows.push({ kind: "addEnvVar" });
-    return rows;
+
+    const lines = [
+      fit(
+        ` ${styled(this.areaLabel(field), { fg: active ? Color.fg : Color.dim, bg: Color.panel })}`,
+        width,
+        { bg: Color.panel },
+      ),
+    ];
+    for (let index = 0; index < height - 1; index += 1) {
+      const line = rows[index] ?? "";
+      const shown = index === 0 && !editing && !text ? "(none)" : line;
+      lines.push(
+        fit(
+          ` ${styled(shown, { fg: shown === "(none)" ? Color.dimmer : Color.fg, bg: background })}`,
+          width,
+          {
+            bg: background,
+          },
+        ),
+      );
+    }
+    return lines;
+  }
+
+  private areaLabel(field: AreaField): string {
+    return field === "setupScript" ? "Setup script" : "pi settings (~/.pi/agent/settings.json)";
+  }
+
+  private areaValue(field: AreaField): string {
+    return field === "setupScript"
+      ? this.config.selectedEnvironment.setupScript
+      : this.config.data.piSettings;
+  }
+
+  private buildRows(): Row[] {
+    switch (this.tab) {
+      case "Provider":
+        return [
+          { kind: "provider" },
+          { kind: "cliLogin", provider: "docker" },
+          { kind: "token", provider: "exe" },
+          { kind: "token", provider: "sprites" },
+          { kind: "cliLogin", provider: "namespace" },
+        ];
+      case "Environments":
+        return [
+          { kind: "environment" },
+          { kind: "startCommand" },
+          { kind: "textArea", field: "setupScript" },
+        ];
+      case "pi":
+        return [{ kind: "textArea", field: "piSettings" }];
+      case "Variables": {
+        const rows: Row[] = [];
+        for (let index = 0; index < this.config.data.globalEnvironment.length; index += 1) {
+          rows.push({ kind: "envVar", index });
+        }
+        rows.push({ kind: "addEnvVar" });
+        return rows;
+      }
+    }
   }
 
   private rowText(entry: Row, width: number, active: boolean): string {
@@ -241,22 +344,6 @@ export class SettingsModal {
             ),
             { fg: Color.fg },
           );
-      case "setupScript":
-        if (editing) return label("Setup script") + this.editing!.render(field, true);
-        return label("Setup script") + " " +
-          styled(
-            elideHead(
-              oneLine(this.config.selectedEnvironment.setupScript) || "(none)",
-              field - 1,
-            ),
-            { fg: Color.fg },
-          );
-      case "piSettings":
-        if (editing) return label("pi settings") + this.editing!.render(field, true);
-        return label("pi settings") + " " +
-          styled(elideHead(oneLine(this.config.data.piSettings) || "(none)", field - 1), {
-            fg: Color.fg,
-          });
       case "envVar": {
         const variable = this.config.data.globalEnvironment[entry.index];
         if (editing) return label(variable.key || "(new)") + this.editing!.render(field, true);
@@ -268,7 +355,7 @@ export class SettingsModal {
       case "addEnvVar":
         if (editing) return label("New variable") + this.editing!.render(field, true);
         return styled(" + Add variable", { fg: Color.accent });
-      case "heading":
+      case "textArea":
         return "";
     }
   }
@@ -279,6 +366,19 @@ export class SettingsModal {
 
   /** Returns true when the modal should close. */
   key(event: { name: string; ctrl: boolean; alt: boolean; shift: boolean }): boolean {
+    // A text area owns Enter — it is how you add a line — so Esc is what ends
+    // the edit, and it saves rather than discarding: losing a script someone
+    // just typed because they reached for the usual way out is not a trade
+    // worth making.
+    if (this.area) {
+      if (event.name === "escape") {
+        this.commitArea();
+        return false;
+      }
+      this.area.handle(event);
+      return false;
+    }
+
     if (this.editing) {
       if (event.name === "escape") {
         this.editing = null;
@@ -295,6 +395,12 @@ export class SettingsModal {
     switch (event.name) {
       case "escape":
         return true;
+      case "left":
+        this.moveTab(-1);
+        return false;
+      case "right":
+        this.moveTab(1);
+        return false;
       case "up":
         this.move(-1);
         return false;
@@ -316,6 +422,11 @@ export class SettingsModal {
   }
 
   click(id: string): boolean {
+    if (id.startsWith("settings.tab:")) {
+      const tab = id.slice("settings.tab:".length) as Tab;
+      if (TABS.includes(tab)) this.selectTab(tab);
+      return false;
+    }
     if (!id.startsWith("settings.row:")) return false;
     const index = Number(id.slice("settings.row:".length));
     if (index === this.selection) {
@@ -324,6 +435,7 @@ export class SettingsModal {
     } else {
       this.selection = index;
       this.editing = null;
+      this.area = null;
     }
     return false;
   }
@@ -332,14 +444,25 @@ export class SettingsModal {
     this.offset = Math.max(0, this.offset + delta);
   }
 
-  private move(offset: number): void {
-    let next = this.selection;
-    for (let step = 0; step < this.rows.length; step += 1) {
-      next = (next + offset + this.rows.length) % this.rows.length;
-      if (this.rows[next].kind !== "heading") break;
-    }
-    this.selection = next;
+  private moveTab(step: number): void {
+    const index = TABS.indexOf(this.tab);
+    this.selectTab(TABS[(index + step + TABS.length) % TABS.length]);
+  }
+
+  private selectTab(tab: Tab): void {
+    if (tab === this.tab) return;
+    this.tab = tab;
+    this.selection = 0;
+    this.offset = 0;
     this.editing = null;
+    this.area = null;
+  }
+
+  private move(offset: number): void {
+    if (this.rows.length === 0) return;
+    this.selection = (this.selection + offset + this.rows.length) % this.rows.length;
+    this.editing = null;
+    this.area = null;
   }
 
   /** Open the list behind whichever dropdown the selection is on. */
@@ -386,6 +509,9 @@ export class SettingsModal {
     const entry = this.rows[this.selection];
     if (!entry) return;
     switch (entry.kind) {
+      case "textArea":
+        this.area = new TextArea(this.areaValue(entry.field));
+        return;
       case "token":
         this.editing = new TextInput(
           entry.provider === "exe" ? this.config.data.exeToken : this.config.data.spritesToken,
@@ -393,16 +519,6 @@ export class SettingsModal {
         return;
       case "startCommand":
         this.editing = new TextInput(this.config.selectedEnvironment.startCommand);
-        return;
-      case "setupScript":
-        // Edited as one line: a full multi-line editor is more machinery than
-        // a setup script needs here, and `; ` chains fine in a shell.
-        this.editing = new TextInput(oneLine(this.config.selectedEnvironment.setupScript));
-        return;
-      case "piSettings":
-        // One line, like the setup script: it is a small JSON object, and a
-        // full editor is more machinery than one key needs.
-        this.editing = new TextInput(oneLine(this.config.data.piSettings));
         return;
       case "envVar": {
         const variable = this.config.data.globalEnvironment[entry.index];
@@ -423,6 +539,21 @@ export class SettingsModal {
     }
   }
 
+  private commitArea(): void {
+    const entry = this.rows[this.selection];
+    const value = this.area?.value ?? "";
+    this.area = null;
+    if (entry?.kind !== "textArea") return;
+    if (entry.field === "setupScript") {
+      this.updateEnvironment((environment) => {
+        environment.setupScript = value;
+      });
+    } else {
+      this.config.data.piSettings = value;
+    }
+    this.config.save();
+  }
+
   private commitEdit(): void {
     const entry = this.rows[this.selection];
     const value = this.editing?.value ?? "";
@@ -437,14 +568,6 @@ export class SettingsModal {
         this.updateEnvironment((environment) => {
           environment.startCommand = value;
         });
-        break;
-      case "setupScript":
-        this.updateEnvironment((environment) => {
-          environment.setupScript = value;
-        });
-        break;
-      case "piSettings":
-        this.config.data.piSettings = value;
         break;
       case "envVar":
         this.config.data.globalEnvironment[entry.index] = parseEnvVar(value);
@@ -487,8 +610,4 @@ function parseEnvVar(text: string): EnvVar {
 function mask(value: string): string {
   if (value.length <= 8) return "•".repeat(value.length);
   return `${value.slice(0, 4)}${"•".repeat(6)}${value.slice(-4)}`;
-}
-
-function oneLine(text: string): string {
-  return text.split("\n").map((line) => line.trim()).filter((line) => line).join("; ");
 }

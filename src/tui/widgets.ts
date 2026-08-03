@@ -495,3 +495,143 @@ export class TextInput {
     return fit(` ${styled(window, { fg: Color.fg, bg: background })}`, width, { bg: background });
   }
 }
+
+/**
+ * A multi-line editor: a setup script or a JSON settings object, edited as the
+ * text it actually is rather than folded onto one line.
+ *
+ * The value stays a plain string with newlines in it, and the caret a single
+ * index into that string — line and column are derived. That keeps every edit
+ * a string operation and leaves nothing to disagree about between the two
+ * representations.
+ */
+export class TextArea {
+  value: string;
+  cursor: number;
+  /** First visible line; moves only as far as it must to keep the caret shown. */
+  private top = 0;
+
+  constructor(value = "") {
+    this.value = value;
+    this.cursor = value.length;
+  }
+
+  /** The value split for display. Always at least one line, so an empty area has a caret. */
+  lines(): string[] {
+    return this.value.split("\n");
+  }
+
+  /** Where the caret is, in lines and columns. */
+  private position(): { line: number; column: number } {
+    const before = this.value.slice(0, this.cursor).split("\n");
+    return { line: before.length - 1, column: before[before.length - 1].length };
+  }
+
+  /** The index a given line and column sits at, clamped to the line's end. */
+  private indexAt(line: number, column: number): number {
+    const lines = this.lines();
+    const row = Math.max(0, Math.min(lines.length - 1, line));
+    let index = 0;
+    for (let at = 0; at < row; at += 1) index += lines[at].length + 1;
+    return index + Math.min(column, lines[row].length);
+  }
+
+  /** Apply a keystroke. Returns whether it was consumed. */
+  handle(key: { name: string; ctrl: boolean; alt: boolean }): boolean {
+    if (key.alt) return false;
+    const { line, column } = this.position();
+    if (key.ctrl) {
+      switch (key.name) {
+        case "a":
+          this.cursor = this.indexAt(line, 0);
+          return true;
+        case "e":
+          this.cursor = this.indexAt(line, Number.MAX_SAFE_INTEGER);
+          return true;
+        default:
+          return false;
+      }
+    }
+    switch (key.name) {
+      case "enter":
+        this.insert("\n");
+        return true;
+      case "backspace":
+        if (this.cursor > 0) {
+          this.value = this.value.slice(0, this.cursor - 1) + this.value.slice(this.cursor);
+          this.cursor -= 1;
+        }
+        return true;
+      case "delete":
+        this.value = this.value.slice(0, this.cursor) + this.value.slice(this.cursor + 1);
+        return true;
+      case "left":
+        this.cursor = Math.max(0, this.cursor - 1);
+        return true;
+      case "right":
+        this.cursor = Math.min(this.value.length, this.cursor + 1);
+        return true;
+      case "up":
+        this.cursor = this.indexAt(line - 1, column);
+        return true;
+      case "down":
+        this.cursor = this.indexAt(line + 1, column);
+        return true;
+      case "home":
+        this.cursor = this.indexAt(line, 0);
+        return true;
+      case "end":
+        this.cursor = this.indexAt(line, Number.MAX_SAFE_INTEGER);
+        return true;
+      case "space":
+        this.insert(" ");
+        return true;
+      case "tab":
+        this.insert("  ");
+        return true;
+      default:
+        if (key.name.length === 1) {
+          this.insert(key.name);
+          return true;
+        }
+        return false;
+    }
+  }
+
+  insert(text: string): void {
+    this.value = this.value.slice(0, this.cursor) + text + this.value.slice(this.cursor);
+    this.cursor += text.length;
+  }
+
+  /** Scroll so the caret's line is inside a window `height` lines tall. */
+  private scrollTo(height: number): number {
+    const { line } = this.position();
+    if (line < this.top) this.top = line;
+    if (line >= this.top + height) this.top = line - height + 1;
+    this.top = Math.max(0, Math.min(this.top, Math.max(0, this.lines().length - height)));
+    return this.top;
+  }
+
+  /**
+   * The caret's cell, relative to the area's top-left, or null when it has
+   * scrolled out of the window — which it cannot, but the renderer shouldn't
+   * have to trust that.
+   */
+  cursorCell(width: number, height: number): { x: number; y: number } | null {
+    const top = this.scrollTo(height);
+    const { line, column } = this.position();
+    if (line < top || line >= top + height) return null;
+    return { x: Math.min(column, Math.max(0, width - 1)), y: line - top };
+  }
+
+  /** The visible lines, padded out to `height` so the block keeps its shape. */
+  render(width: number, height: number): string[] {
+    const top = this.scrollTo(height);
+    const lines = this.lines();
+    const out: string[] = [];
+    for (let index = 0; index < height; index += 1) {
+      out.push((lines[top + index] ?? "").slice(0, Math.max(0, width)));
+    }
+    return out;
+  }
+}
