@@ -25,6 +25,7 @@ import {
 } from "../tui/widgets.ts";
 import { SelectPopup } from "./select-popup.ts";
 import type { AppConfig } from "../config/app-config.ts";
+import { defaultEnvironments } from "../config/session-environment.ts";
 import type { EnvVar } from "../config/env-var.ts";
 import type { Workspace } from "../model/workspace.ts";
 import type { VMProviderID } from "../providers/types.ts";
@@ -60,6 +61,8 @@ type Row =
   | { kind: "startCommand" }
   /** A block that takes the rest of the page, not a line. */
   | { kind: "textArea"; field: AreaField }
+  | { kind: "deleteEnvironment" }
+  | { kind: "resetEnvironments" }
   | { kind: "envVar"; index: number }
   | { kind: "addEnvVar" };
 
@@ -270,6 +273,8 @@ export class SettingsModal {
         return [
           { kind: "environment" },
           { kind: "startCommand" },
+          { kind: "deleteEnvironment" },
+          { kind: "resetEnvironments" },
           { kind: "textArea", field: "setupScript" },
         ];
       case "pi":
@@ -352,6 +357,17 @@ export class SettingsModal {
             fg: variable.value ? Color.fg : Color.dimmer,
           });
       }
+      case "deleteEnvironment": {
+        // Refused rather than hidden when it is the last one: a config with no
+        // environments has nothing to start a session with.
+        const last = this.config.data.environments.length <= 1;
+        return styled(
+          last ? " ✕ Delete environment (the only one)" : " ✕ Delete this environment",
+          { fg: last ? Color.dimmer : Color.orange },
+        );
+      }
+      case "resetEnvironments":
+        return styled(" ↺ Reset environments to defaults", { fg: Color.accent });
       case "addEnvVar":
         if (editing) return label("New variable") + this.editing!.render(field, true);
         return styled(" + Add variable", { fg: Color.accent });
@@ -528,6 +544,12 @@ export class SettingsModal {
       case "addEnvVar":
         this.editing = new TextInput("KEY=value");
         return;
+      case "deleteEnvironment":
+        this.deleteEnvironment();
+        return;
+      case "resetEnvironments":
+        this.resetEnvironments();
+        return;
       case "cliLogin":
         // Nothing to edit here — but asking the CLI again is exactly what you
         // want right after logging in in the window next door.
@@ -580,6 +602,29 @@ export class SettingsModal {
       default:
         return;
     }
+    this.config.save();
+  }
+
+  /**
+   * Drop the environment currently selected, and fall in behind whichever one
+   * takes its place. Never the last one: `selectedEnvironment` would fall back
+   * to a blank, and a session started on that runs nothing.
+   */
+  private deleteEnvironment(): void {
+    const environments = this.config.data.environments;
+    if (environments.length <= 1) return;
+    const index = environments.findIndex((one) => one.id === this.config.selectedEnvironment.id);
+    if (index === -1) return;
+    environments.splice(index, 1);
+    const next = environments[Math.min(index, environments.length - 1)];
+    this.config.data.selectedEnvironmentID = next?.id ?? null;
+    this.config.save();
+  }
+
+  /** Back to what a fresh install starts with, edits and additions included. */
+  private resetEnvironments(): void {
+    this.config.data.environments = defaultEnvironments();
+    this.config.data.selectedEnvironmentID = this.config.data.environments[0]?.id ?? null;
     this.config.save();
   }
 
