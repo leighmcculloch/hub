@@ -75,7 +75,7 @@ export interface AppConfigData {
 export function defaultConfigData(): AppConfigData {
   return {
     exeToken: "",
-    provider: "exe",
+    provider: "docker",
     spritesToken: "",
     renameToken: "",
     renameTokenMinted: null,

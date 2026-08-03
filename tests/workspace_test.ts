@@ -138,7 +138,9 @@ Deno.test("a provider that fails keeps the VMs it listed last time", async () =>
   await space.loadAvailableVMs();
 
   assertEquals(space.availableVMs.map((one) => one.name), ["box", "sprite-one"]);
-  assertEquals(space.vmListErrors[0].provider, "sprites");
+  // The stub fails every provider but exe.dev, so sprites.dev is reported among
+  // them rather than necessarily first.
+  assert(space.vmListErrors.some((one) => one.provider === "sprites"));
 });
 
 Deno.test("a VM is only hidden by a session on its own provider", async () => {

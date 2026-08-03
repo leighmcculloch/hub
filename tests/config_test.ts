@@ -23,8 +23,8 @@ Deno.test("decodeConfig treats an empty environment list as absent", () => {
   assertEquals(decodeConfig({ environments: [] }).environments.length, 1);
 });
 
-Deno.test("decodeConfig defaults an unknown provider to exe.dev", () => {
-  assertEquals(decodeConfig({ provider: "nope" }).provider, "exe");
+Deno.test("decodeConfig defaults an unknown provider to docker", () => {
+  assertEquals(decodeConfig({ provider: "nope" }).provider, "docker");
   assertEquals(decodeConfig(null).claudeSettings, DEFAULT_CLAUDE_SETTINGS);
 });
 

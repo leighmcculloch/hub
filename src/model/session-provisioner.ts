@@ -197,6 +197,10 @@ export class SessionProvisioner {
         autoNameToken ? [{ key: TOKEN_VARIABLE, value: autoNameToken }] : [],
       ]);
 
+      // Whatever the provider needs in place first — Docker's image build,
+      // which is the one step here long enough to look like a hang.
+      await this.provider.prepare?.((line) => this.log(line));
+
       let creating = `Creating VM ${vmName} (tags: ${tags.join(", ")}`;
       creating += `; environment: ${environment.name}`;
       if (gateway) creating += `; model: ${gateway.model.provider}/${gateway.model.model}`;

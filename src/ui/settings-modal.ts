@@ -164,10 +164,10 @@ export class SettingsModal {
     const rows: Row[] = [
       { kind: "heading", text: "Provider" },
       { kind: "provider" },
+      { kind: "cliLogin", provider: "docker" },
       { kind: "token", provider: "exe" },
       { kind: "token", provider: "sprites" },
       { kind: "cliLogin", provider: "namespace" },
-      { kind: "cliLogin", provider: "docker" },
       { kind: "heading", text: "Environment" },
       { kind: "environment" },
       { kind: "startCommand" },

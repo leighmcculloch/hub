@@ -108,6 +108,15 @@ export class DockerProvider implements VMProvider {
 
   // MARK: - VM lifecycle
 
+  /**
+   * Build the session image, if this machine doesn't already have it. Called
+   * before the container is created, so the wait happens somewhere the UI can
+   * explain rather than inside `docker run`.
+   */
+  async prepare(log: (line: string) => void): Promise<void> {
+    await this.ensureImage(log);
+  }
+
   async listVMs(): Promise<RemoteVMRecord[]> {
     const output = await this.expect([
       "ps",
@@ -190,14 +199,16 @@ export class DockerProvider implements VMProvider {
    *
    * The build is what makes the *first* session on a given setup slow and every
    * one after it immediate: `docker image inspect` is the whole of the cache
-   * check, because the tag already encodes what the image contains.
+   * check, because the tag already encodes what the image contains. `log` is
+   * only called when there is actually a build to wait for.
    */
-  private async ensureImage(): Promise<string> {
+  private async ensureImage(log?: (line: string) => void): Promise<string> {
     const file = dockerfile();
     const setup = imageSetupScript();
     const tag = await imageTag(file, setup);
     if (await this.hasImage(tag)) return tag;
 
+    log?.(`Building the session image ${tag} — first run on this setup, a few minutes…`);
     const context = await Deno.makeTempDir({ prefix: "hub-image-" });
     try {
       await Deno.writeTextFile(join(context, "Dockerfile"), file);

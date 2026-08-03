@@ -192,6 +192,13 @@ export interface VMProvider {
   harnessWiring(model: GatewayModel): HarnessWiring | null;
 
   // VM lifecycle
+  /**
+   * Anything that has to happen on this machine before a VM can be created,
+   * for the provider that has any. Docker builds its session image here, which
+   * takes minutes the first time and nothing every time after — and the
+   * provisioner is blocked throughout, so it is handed a `log` to say so with.
+   */
+  prepare?(log: (line: string) => void): Promise<void>;
   listVMs(): Promise<RemoteVMRecord[]>;
   createVM(name: string, tags: string[], environment: EnvVar[]): Promise<RemoteVMRecord>;
   deleteVM(name: string): Promise<void>;
