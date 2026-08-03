@@ -359,3 +359,19 @@ Deno.test("a paste arriving whole is unaffected", () => {
   if (events[0].type !== "paste") throw new Error("expected a paste");
   assertEquals(events[0].text, "text");
 });
+
+Deno.test("a colour left open by a pane never paints the row's padding", () => {
+  // `capture-pane` hands back lines that end mid-colour: a program that painted
+  // a background across its line leaves it open. The padding after it belongs
+  // to no one, and must not inherit that background.
+  const blueBackground = "\x1b[44m";
+  const row = fit(`${blueBackground}hi`, 8);
+  const padding = row.slice(row.indexOf("hi") + 2);
+  assertEquals(displayWidth(row), 8);
+  assert(
+    padding.startsWith(RESET),
+    `the padding has to start reset, got ${JSON.stringify(padding)}`,
+  );
+  // And nothing re-opens a colour after that reset.
+  assert(!padding.slice(RESET.length).includes("\x1b[4"), "no colour may follow the reset");
+});

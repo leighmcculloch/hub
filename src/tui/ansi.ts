@@ -279,9 +279,18 @@ export function fit(text: string, width: number, style?: Style): string {
   const clipped = truncate(text, width);
   const padding = width - displayWidth(clipped);
   if (!style) {
-    // The reset goes last so a sequence left open inside `text` — capture-pane
-    // output routinely ends mid-colour — can't bleed into the next segment.
-    return `${padding > 0 ? clipped + " ".repeat(padding) : clipped}${resetStyle}`;
+    // The reset goes before the padding, not after it. `capture-pane` output
+    // routinely ends mid-colour — a program that painted a background to the
+    // end of its line leaves that background open — and padding emitted while
+    // it is still open paints the rest of the row in it. That is a block of
+    // colour the program never drew, appearing and vanishing as the lines
+    // under it change. Resetting first makes the padding what it should be:
+    // nothing, in the terminal's own colours.
+    // Still reset at the end too: every segment ending reset is what the rest
+    // of the renderer composes against.
+    return padding > 0
+      ? `${clipped}${resetStyle}${" ".repeat(padding)}${resetStyle}`
+      : `${clipped}${resetStyle}`;
   }
   const prefix = sgr(style);
   // `text` is composed of `styled()` runs, and every one of them ends with a
