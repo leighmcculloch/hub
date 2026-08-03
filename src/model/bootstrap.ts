@@ -439,6 +439,13 @@ fi
   // reach here from the picker but also from the free-text field.
   if (options.repos.length > 0) {
     script += "(\n";
+    // Nothing in here may ask the person at the terminal a question. A clone
+    // without a usable credential otherwise prompts for a GitHub username —
+    // and this subshell is in the background sharing the pane's tty, with no
+    // job control to stop it reading, so it silently swallows every keystroke
+    // meant for the agent. Failing the clone is the honest outcome; the failure
+    // is collected and reported below.
+    script += "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= SSH_ASKPASS=\n";
     script += "exe_failed_clones=''\n";
     for (const repo of options.repos) {
       const url = shellQuote(`${clone.urlPrefix}/${repo}.git`);
@@ -459,7 +466,7 @@ fi
     // Re-run inside the subshell after the clones so the freshly cloned repos
     // are marked trusted too; it's idempotent.
     script += TRUST_HOME_DIRECTORIES;
-    script += ") &\n";
+    script += ") </dev/null &\n";
   }
   return script;
 }

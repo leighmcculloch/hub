@@ -7,6 +7,7 @@
 import { AppConfig } from "../config/app-config.ts";
 import { bootstrapCommand, uniqueVMName } from "./bootstrap.ts";
 import { mergeEnv } from "../config/env-var.ts";
+import { TOKEN_VARIABLE as GITHUB_TOKEN_VARIABLE } from "../providers/github-setup.ts";
 import { describe, type GatewayModel } from "./llm-gateway.ts";
 import { normalizeRepo } from "../github/repo-reference.ts";
 import { cachedRepos, type GitHubRepo, listGitHubRepos } from "../github/repos.ts";
@@ -156,6 +157,19 @@ export class SessionProvisioner {
       );
       const setup = await this.provider.prepareGitHub(chosen);
       const tags = setup.tags;
+
+      // A clone with no credential reaches a private repo and stops on a
+      // username prompt, which is a misconfiguration worth saying out loud
+      // rather than one to discover from a failed clone later.
+      if (
+        chosen.length > 0 &&
+        !setup.cloneEnvironment.some((variable) => variable.key === GITHUB_TOKEN_VARIABLE)
+      ) {
+        this.log(
+          "No GitHub token found — set GITHUB_TOKEN or run `gh auth login`. " +
+            "Public repos will still clone; private ones won't.",
+        );
+      }
 
       // Read the VM list fresh: the names to avoid are this provider's, and
       // the workspace's combined list spans both. A failed lookup just means

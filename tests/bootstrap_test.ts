@@ -110,7 +110,7 @@ Deno.test("bootstrapScript clones each repo through the configured prefix", () =
   );
   // Failures are collected and reported rather than aborting the bootstrap.
   assertStringIncludes(script, "exe_failed_clones");
-  assertStringIncludes(script, ") &");
+  assertStringIncludes(script, ") </dev/null &");
 });
 
 Deno.test("bootstrapScript seeds the git identity only when one is known", () => {
@@ -193,4 +193,14 @@ Deno.test("pi's settings are seeded, but never over one already on the machine",
 Deno.test("no pi settings means nothing is written", () => {
   const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
   assert(!script.includes(".pi/agent/settings.json"));
+});
+
+Deno.test("a clone can neither prompt nor read the pane it shares", () => {
+  const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: ["owner/one"] });
+  // Without a usable credential git asks for a GitHub username on the terminal.
+  // The clones run in a background subshell on the agent's own tty, with no job
+  // control to stop them reading, so the prompt eats every keystroke typed at
+  // the agent.
+  assertStringIncludes(script, "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= SSH_ASKPASS=");
+  assertStringIncludes(script, ") </dev/null &");
 });
