@@ -5,6 +5,7 @@ import {
   bootstrapScript,
   controlModeCommand,
   MAX_VM_NAME_LENGTH,
+  PI_PACKAGE,
   shellQuote,
   uniqueVMName,
   vmNameFrom,
@@ -153,19 +154,43 @@ Deno.test("bootstrapScript arms auto-naming only when asked", () => {
   assert(!plain.includes(`: > "$HOME/.exe-autoname-armed"`));
 });
 
-Deno.test("Node is installed before the pi installer is ever run", () => {
+Deno.test("Node is installed before the npm install that needs it", () => {
   const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
   const node = script.indexOf("deb.nodesource.com");
-  const pi = script.indexOf("pi.dev/install.sh");
+  const pi = script.indexOf(PI_PACKAGE);
   assert(node >= 0, "the bootstrap should install Node");
   assert(pi >= 0, "the bootstrap should install pi");
-  assert(node < pi, "Node has to be there before the pi installer asks for it");
+  assert(node < pi, "npm has to exist before it is asked to install anything");
   // `$_hub_sudo -E bash -` runs `-E` as the command once there is no sudo,
   // which is a container running as root: the common case for Docker.
   assert(!script.includes("$_hub_sudo -E"), "the pipe must survive an empty sudo");
 });
 
-Deno.test("the pi installer is run without a terminal to prompt on", () => {
+Deno.test("pi is installed as an npm package, not through its terminal installer", () => {
   const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
-  assertStringIncludes(script, "setsid -w sh -c 'curl -fsSL https://pi.dev/install.sh | sh'");
+  assertStringIncludes(script, `npm install -g --ignore-scripts ${PI_PACKAGE}`);
+  // The install script reads /dev/tty, which a tmux pane has: it would prompt.
+  assert(!script.includes("pi.dev/install.sh"), "the tty installer must not be used");
+});
+
+Deno.test("pi's settings are seeded, but never over one already on the machine", () => {
+  const script = bootstrapScript({
+    setupScript: "",
+    claudeSettings: "",
+    piSettings: `{"hideThinkingBlock": true}`,
+    repos: [],
+  });
+  assertStringIncludes(script, `mkdir -p "$HOME/.pi/agent"`);
+  assertStringIncludes(script, `if [ ! -f "$HOME/.pi/agent/settings.json" ]; then`);
+  const encoded = /printf %s '([^']+)' \| base64 -d > "\$HOME\/\.pi\/agent\/settings\.json"/
+    .exec(script)?.[1] ?? "";
+  assertEquals(
+    new TextDecoder().decode(decodeBase64(encoded)),
+    `{"hideThinkingBlock": true}`,
+  );
+});
+
+Deno.test("no pi settings means nothing is written", () => {
+  const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
+  assert(!script.includes(".pi/agent/settings.json"));
 });

@@ -48,6 +48,7 @@ type Row =
   | { kind: "environment" }
   | { kind: "startCommand" }
   | { kind: "setupScript" }
+  | { kind: "piSettings" }
   | { kind: "envVar"; index: number }
   | { kind: "addEnvVar" };
 
@@ -171,6 +172,7 @@ export class SettingsModal {
       { kind: "environment" },
       { kind: "startCommand" },
       { kind: "setupScript" },
+      { kind: "piSettings" },
       { kind: "heading", text: "Global environment variables" },
     ];
     for (let index = 0; index < this.config.data.globalEnvironment.length; index += 1) {
@@ -249,6 +251,12 @@ export class SettingsModal {
             ),
             { fg: Color.fg },
           );
+      case "piSettings":
+        if (editing) return label("pi settings") + this.editing!.render(field, true);
+        return label("pi settings") + " " +
+          styled(elideHead(oneLine(this.config.data.piSettings) || "(none)", field - 1), {
+            fg: Color.fg,
+          });
       case "envVar": {
         const variable = this.config.data.globalEnvironment[entry.index];
         if (editing) return label(variable.key || "(new)") + this.editing!.render(field, true);
@@ -391,6 +399,11 @@ export class SettingsModal {
         // a setup script needs here, and `; ` chains fine in a shell.
         this.editing = new TextInput(oneLine(this.config.selectedEnvironment.setupScript));
         return;
+      case "piSettings":
+        // One line, like the setup script: it is a small JSON object, and a
+        // full editor is more machinery than one key needs.
+        this.editing = new TextInput(oneLine(this.config.data.piSettings));
+        return;
       case "envVar": {
         const variable = this.config.data.globalEnvironment[entry.index];
         this.editing = new TextInput(`${variable.key}=${variable.value}`);
@@ -429,6 +442,9 @@ export class SettingsModal {
         this.updateEnvironment((environment) => {
           environment.setupScript = value;
         });
+        break;
+      case "piSettings":
+        this.config.data.piSettings = value;
         break;
       case "envVar":
         this.config.data.globalEnvironment[entry.index] = parseEnvVar(value);

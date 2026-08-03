@@ -307,3 +307,15 @@ Deno.test("the selected environment resolves whatever case its id was written in
   const config = Object.assign(Object.create(AppConfig.prototype), { data }) as AppConfig;
   assertEquals(config.selectedEnvironment.name, "Codex");
 });
+
+Deno.test("pi is preconfigured to keep thinking blocks out of the pane", () => {
+  const settings = JSON.parse(defaultConfigData().piSettings);
+  assertEquals(settings.hideThinkingBlock, true);
+});
+
+Deno.test("a stored pi settings string is kept as the user wrote it", () => {
+  assertEquals(
+    decodeConfig({ piSettings: `{"hideThinkingBlock": false}` }).piSettings,
+    `{"hideThinkingBlock": false}`,
+  );
+});

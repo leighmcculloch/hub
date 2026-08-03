@@ -310,6 +310,7 @@ export class Workspace {
     return bootstrapCommand({
       setupScript: environment.setupScript,
       claudeSettings: this.config.data.claudeSettings,
+      piSettings: this.config.data.piSettings,
       repos: [],
       startCommand: environment.startCommand,
       gitIdentity: this.gitIdentity,

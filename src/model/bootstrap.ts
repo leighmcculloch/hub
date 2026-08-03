@@ -129,6 +129,20 @@ fi
 
 `;
 
+/** Where pi keeps its settings, relative to `$HOME`. */
+export const PI_SETTINGS_DIR = ".pi/agent";
+export const PI_SETTINGS_PATH = `${PI_SETTINGS_DIR}/settings.json`;
+
+/** The pi CLI, on npm. */
+export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
+
+/**
+ * `--ignore-scripts` because nothing pi ships needs to run as part of being
+ * unpacked, and a lifecycle script is code executing on a machine an agent is
+ * about to be let loose on.
+ */
+const PI_INSTALL_ARGS = `--ignore-scripts ${PI_PACKAGE}`;
+
 /**
  * Install pi, for every session on every provider, unless the image already
  * has it.
@@ -139,29 +153,19 @@ fi
  * reach it. Making a working harness the app's job is also the only way a
  * provider that starts from a bare image can work at all.
  *
- * The installer asks for confirmation whenever it can open \`/dev/tty\`, and
- * this runs in a tmux pane, which has one — so it would sit on a keypress
- * nobody sends. \`setsid\` takes the controlling terminal away, which is the
- * installer's own signal to proceed unattended. Node is settled before this
- * runs (see \`ENSURE_NODE\`), because a missing Node is the one thing it will
- * not proceed past without being asked.
+ * Installed as what it is — an npm package — rather than through pi.dev's
+ * install script. That script is a terminal program: it animates a logo, offers
+ * a menu, and reads \`/dev/tty\` directly, which a tmux pane has, so it stops
+ * and waits for a keypress nobody is there to send. \`npm install\` has no
+ * opinion about terminals. Node is settled first, by \`ENSURE_NODE\`.
+ *
+ * Retried under \`sudo\` because npm's global prefix belongs to root on some
+ * images and to the user on others, and only one of those needs it.
  */
 export const ENSURE_PI = `
-if ! command -v pi >/dev/null 2>&1 && [ -x "$HOME/.local/bin/pi" ]; then
-  PATH="$HOME/.local/bin:$PATH"
-fi
+${SUDO}
 if ! command -v pi >/dev/null 2>&1; then
-  if command -v setsid >/dev/null 2>&1; then
-    setsid -w sh -c 'curl -fsSL https://pi.dev/install.sh | sh' </dev/null
-  else
-    curl -fsSL https://pi.dev/install.sh | sh
-  fi
-fi
-# The installer falls back to ~/.local when npm's global prefix isn't writable,
-# and without a terminal it has no way to offer a PATH fix. The first window
-# sources this file before it runs the start command.
-if [ -x "$HOME/.local/bin/pi" ] && ! grep -qs '.local/bin' "$HOME/${HOST_ENV_FILE}"; then
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/${HOST_ENV_FILE}"
+  npm install -g ${PI_INSTALL_ARGS} >/dev/null 2>&1 || $_hub_sudo npm install -g ${PI_INSTALL_ARGS}
 fi
 
 `;
@@ -246,6 +250,8 @@ function randomSuffix(): string {
 export interface BootstrapOptions {
   setupScript: string;
   claudeSettings: string;
+  /** `~/.pi/agent/settings.json`, seeded on a machine that has none. */
+  piSettings?: string;
   repos: string[];
   clone?: CloneConfig;
   startCommand?: string;
@@ -371,6 +377,19 @@ if [ ! -f "$HOME/.claude/settings.json" ]; then
 fi
 if [ ! -f "$HOME/.claude.json" ]; then
   printf %s '${encodedState}' | base64 -d > "$HOME/.claude.json"
+fi
+
+`;
+  }
+
+  // Seed pi's settings, but never over one the user has already changed on the
+  // machine. The gateway's own pi keys are merged into this file afterwards,
+  // key by key, so seeding first costs them nothing.
+  if (options.piSettings?.trim()) {
+    const encodedPi = encodeBase64(new TextEncoder().encode(options.piSettings));
+    script += `mkdir -p "$HOME/${PI_SETTINGS_DIR}"
+if [ ! -f "$HOME/${PI_SETTINGS_PATH}" ]; then
+  printf %s '${encodedPi}' | base64 -d > "$HOME/${PI_SETTINGS_PATH}"
 fi
 
 `;

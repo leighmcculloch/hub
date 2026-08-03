@@ -211,6 +211,7 @@ export class SessionProvisioner {
       const bootstrap = bootstrapCommand({
         setupScript: environment.setupScript,
         claudeSettings: this.config.data.claudeSettings,
+        piSettings: this.config.data.piSettings,
         repos: chosen,
         clone: setup.clone,
         startCommand: environment.startCommand,

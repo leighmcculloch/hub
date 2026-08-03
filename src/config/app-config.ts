@@ -37,6 +37,18 @@ export const DEFAULT_CLAUDE_SETTINGS = `{
   "skipDangerousModePermissionPrompt": true
 }`;
 
+/**
+ * Seeded to `~/.pi/agent/settings.json` on a new machine, and editable in
+ * Settings.
+ *
+ * Thinking blocks are hidden by default: a session here is watched through a
+ * terminal pane in a sidebar, where the reasoning costs more room than it
+ * repays. It is one key, so turning it back on is one edit.
+ */
+export const DEFAULT_PI_SETTINGS = `{
+  "hideThinkingBlock": true
+}`;
+
 export interface AppConfigData {
   /** exe.dev HTTPS API bearer token. */
   exeToken: string;
@@ -56,6 +68,8 @@ export interface AppConfigData {
   globalEnvironment: EnvVar[];
   /** Written to `~/.claude/settings.json` on each new VM during bootstrap. */
   claudeSettings: string;
+  /** Written to `~/.pi/agent/settings.json` on each new VM during bootstrap. */
+  piSettings: string;
 }
 
 export function defaultConfigData(): AppConfigData {
@@ -70,6 +84,7 @@ export function defaultConfigData(): AppConfigData {
     model: null,
     globalEnvironment: [],
     claudeSettings: DEFAULT_CLAUDE_SETTINGS,
+    piSettings: DEFAULT_PI_SETTINGS,
   };
 }
 
@@ -116,6 +131,7 @@ export function decodeConfig(raw: unknown): AppConfigData {
     model: decodeModel(entry.model),
     globalEnvironment: envVarsFrom(entry.globalEnvironment),
     claudeSettings: text("claudeSettings", defaults.claudeSettings),
+    piSettings: text("piSettings", defaults.piSettings),
   };
 }
 
