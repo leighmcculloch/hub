@@ -22,6 +22,14 @@ export const BASE_IMAGE = "ubuntu:24.04";
 export const IMAGE_REPOSITORY = "hub-session";
 
 /**
+ * Where a container starts. `ubuntu` sets no `WORKDIR`, so every `docker exec`
+ * — including the one that starts the tmux server, and so every pane that
+ * server opens afterwards — begins at `/`. The image runs as root, so root's
+ * home is the answer.
+ */
+export const HOME_DIRECTORY = "/root";
+
+/**
  * The setup, as one script for the build to run.
  *
  * No `set -e`: the fragments handle their own failures, and several are
@@ -47,6 +55,7 @@ export function dockerfile(): string {
 ENV DEBIAN_FRONTEND=noninteractive
 COPY setup.sh /tmp/hub-setup.sh
 RUN sh /tmp/hub-setup.sh && rm -f /tmp/hub-setup.sh
+WORKDIR ${HOME_DIRECTORY}
 CMD ["sleep", "infinity"]
 `;
 }

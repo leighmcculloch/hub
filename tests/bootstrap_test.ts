@@ -227,3 +227,10 @@ Deno.test("no token on the machine leaves git as it was", () => {
   assertStringIncludes(script, 'if [ -n "${GITHUB_TOKEN:-}" ]; then');
   assertStringIncludes(script, "credential.helper store");
 });
+
+Deno.test("a remote session starts at home, a local one where you were", () => {
+  const remote = controlModeCommand("pi");
+  assertStringIncludes(remote, 'cd "$HOME"; /tmp/exe-bootstrap.sh;');
+  // A local shell belongs in the directory the user is already working in.
+  assert(!controlModeCommand("pi", null).includes("cd "));
+});

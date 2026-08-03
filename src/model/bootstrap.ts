@@ -353,7 +353,12 @@ export function controlModeCommand(
   const trimmed = startCommand.trim();
   // A local shell has no bootstrap script; running one that was never written
   // would print "no such file" as the pane's first line.
-  let window = scriptPath === null ? "" : `${scriptPath};`;
+  //
+  // A remote session starts at home. Nothing guarantees where a machine drops
+  // you — a container inherits its image's `WORKDIR`, which for a plain
+  // `ubuntu` is `/` — and the bootstrap runs from here, so the repos it clones
+  // land wherever that was. A local shell is left where the user already is.
+  let window = scriptPath === null ? "" : `cd "$HOME"; ${scriptPath};`;
   // Re-source the host env profile the bootstrap just wrote, so the start
   // command (and the shell that outlives it) inherit the provider's host
   // environment. Guarded so it's a no-op when the file doesn't exist.
