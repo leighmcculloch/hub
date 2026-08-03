@@ -192,6 +192,24 @@ export class InputDecoder {
       return 3;
     }
 
+    // ESC ESC [ … : a terminal with "Alt sends Escape" turns Alt+Arrow into an
+    // escape *prefixing another escape sequence*, rather than into a modified
+    // CSI. Without this the inner ESC decodes as a control character — Ctrl+`{`
+    // — and the arrow that follows is left to arrive as stray text.
+    if (text[1] === "\x1b" && (text[2] === "[" || text[2] === "O")) {
+      const inner: InputEvent[] = [];
+      const consumed = this.escapeSequence(text.slice(1), bytes.slice(1), inner);
+      if (consumed === 0) return 0;
+      for (const event of inner) {
+        events.push(
+          event.type === "key"
+            ? { ...event, alt: true, bytes: bytes.slice(0, consumed + 1) }
+            : event,
+        );
+      }
+      return consumed + 1;
+    }
+
     // ESC followed by anything else is Alt+that. Decoded as its own key so the
     // app's shortcuts (all Alt-based) can claim it before the pane does.
     const rest = this.plainKeyAt(text.slice(1), bytes.slice(1));

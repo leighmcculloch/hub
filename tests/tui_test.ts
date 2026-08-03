@@ -296,3 +296,34 @@ function backgroundsIn(text: string): string[] {
   }
   return [...seen];
 }
+
+Deno.test("Alt+Arrow arrives whole when the terminal sends ESC before the CSI", () => {
+  // "Alt sends Escape" terminals spell Alt+Right as ESC then a plain CSI,
+  // rather than as CSI with a modifier parameter.
+  const decoder = new InputDecoder();
+  const events = decoder.feed(new TextEncoder().encode("\x1b\x1b[C"));
+  assertEquals(events.length, 1);
+  const event = events[0];
+  assertEquals(event.type, "key");
+  if (event.type !== "key") return;
+  assertEquals(event.name, "right");
+  assertEquals(event.alt, true);
+});
+
+Deno.test("the same holds for the SS3 spelling of an arrow", () => {
+  const events = new InputDecoder().feed(new TextEncoder().encode("\x1b\x1bOD"));
+  assertEquals(events.length, 1);
+  const event = events[0];
+  if (event.type !== "key") throw new Error("expected a key");
+  assertEquals(event.name, "left");
+  assertEquals(event.alt, true);
+});
+
+Deno.test("a modified CSI arrow still decodes as Alt on terminals that send one", () => {
+  const events = new InputDecoder().feed(new TextEncoder().encode("\x1b[1;3C"));
+  assertEquals(events.length, 1);
+  const event = events[0];
+  if (event.type !== "key") throw new Error("expected a key");
+  assertEquals(event.name, "right");
+  assertEquals(event.alt, true);
+});
