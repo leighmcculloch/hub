@@ -105,19 +105,29 @@ export const INSTALL_PREREQUISITES = `${SUDO}` +
   ` ca-certificates $_hub_need >/dev/null 2>&1; } || true;`;
 
 /**
- * Node, which pi is an npm package of. Only when what's there is too old for
- * it: pi wants 22.19, and the `nodejs` an image was built with is usually
- * older than that or missing entirely.
+ * Node, which pi is an npm package of. Part of the standard setup rather than
+ * something the pi installer is left to sort out: asking to install Node is one
+ * of the two things that installer stops and prompts for, and the prompt is
+ * unanswerable from a bootstrap nobody is watching.
+ *
+ * Only when what's there is too old — pi wants 22.19, and the `nodejs` an image
+ * was built with is usually older than that or missing entirely.
  *
  * NodeSource because it is the non-interactive way onto a Debian-family image,
  * which every provider here runs — and the plain `ubuntu` the Docker provider
- * starts from is nothing but that.
+ * starts from is nothing but that. Piped to a plain `bash` when there is no
+ * `sudo`: `$_hub_sudo -E bash -` reads as the command `-E` once the variable is
+ * empty, which is how a container running as root ended up with no Node at all.
  */
-const ENSURE_NODE = `  if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);` +
+export const ENSURE_NODE = `
+${SUDO}
+if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);` +
   ` process.exit(a>22||(a===22&&b>=19)?0:1)' >/dev/null 2>&1; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | $_hub_sudo -E bash - >/dev/null 2>&1
-    $_hub_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs >/dev/null 2>&1
-  fi`;
+  curl -fsSL https://deb.nodesource.com/setup_22.x | $_hub_sudo bash - >/dev/null 2>&1
+  $_hub_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs >/dev/null 2>&1
+fi
+
+`;
 
 /**
  * Install pi, for every session on every provider, unless the image already
@@ -132,16 +142,15 @@ const ENSURE_NODE = `  if ! node -e 'const [a,b]=process.versions.node.split("."
  * The installer asks for confirmation whenever it can open \`/dev/tty\`, and
  * this runs in a tmux pane, which has one — so it would sit on a keypress
  * nobody sends. \`setsid\` takes the controlling terminal away, which is the
- * installer's own signal to proceed unattended. It won't install Node without a
- * terminal either, so Node is settled first.
+ * installer's own signal to proceed unattended. Node is settled before this
+ * runs (see \`ENSURE_NODE\`), because a missing Node is the one thing it will
+ * not proceed past without being asked.
  */
 export const ENSURE_PI = `
-${SUDO}
 if ! command -v pi >/dev/null 2>&1 && [ -x "$HOME/.local/bin/pi" ]; then
   PATH="$HOME/.local/bin:$PATH"
 fi
 if ! command -v pi >/dev/null 2>&1; then
-${ENSURE_NODE}
   if command -v setsid >/dev/null 2>&1; then
     setsid -w sh -c 'curl -fsSL https://pi.dev/install.sh | sh' </dev/null
   else
@@ -385,6 +394,7 @@ fi
   script += AutoName.installFragment();
 
   // Before the setup script, so a setup script written against pi finds it.
+  script += ENSURE_NODE;
   script += ENSURE_PI;
 
   script += options.setupScript;

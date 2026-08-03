@@ -152,3 +152,20 @@ Deno.test("bootstrapScript arms auto-naming only when asked", () => {
   assertStringIncludes(plain, `if [ -e "$HOME/.exe-autoname-armed" ]`);
   assert(!plain.includes(`: > "$HOME/.exe-autoname-armed"`));
 });
+
+Deno.test("Node is installed before the pi installer is ever run", () => {
+  const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
+  const node = script.indexOf("deb.nodesource.com");
+  const pi = script.indexOf("pi.dev/install.sh");
+  assert(node >= 0, "the bootstrap should install Node");
+  assert(pi >= 0, "the bootstrap should install pi");
+  assert(node < pi, "Node has to be there before the pi installer asks for it");
+  // `$_hub_sudo -E bash -` runs `-E` as the command once there is no sudo,
+  // which is a container running as root: the common case for Docker.
+  assert(!script.includes("$_hub_sudo -E"), "the pipe must survive an empty sudo");
+});
+
+Deno.test("the pi installer is run without a terminal to prompt on", () => {
+  const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
+  assertStringIncludes(script, "setsid -w sh -c 'curl -fsSL https://pi.dev/install.sh | sh'");
+});
