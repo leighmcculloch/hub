@@ -113,10 +113,11 @@ Deno.test("recordFromSprite keeps the URL the API gave, since the name lacks it"
   );
 });
 
-Deno.test("the clone config carries the token out of the URL", () => {
-  assertEquals(tokenCloneConfig(null, "hint").extraConfig, "");
-  assertStringIncludes(tokenCloneConfig("t", "hint").extraConfig, "$GITHUB_TOKEN");
+Deno.test("the clone config names github.com and carries no credential", () => {
+  // The credential is installed on the machine instead, so `git fetch` and
+  // `git push` in the cloned repo authenticate too.
   assertEquals(tokenCloneConfig("t", "hint").urlPrefix, "https://github.com");
+  assertEquals(tokenCloneConfig("t", "hint").failureHint, "hint");
 });
 
 Deno.test("summarizeSSH picks the informative line out of ssh's chatter", () => {

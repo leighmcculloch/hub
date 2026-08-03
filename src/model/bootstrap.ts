@@ -15,25 +15,42 @@ export { shellQuote };
 /** How `git clone` is run on a new VM: from github.com, with a token. */
 export interface CloneConfig {
   urlPrefix: string;
-  /** Extra `git clone` arguments; empty when there is no token. */
-  extraConfig: string;
   failureHint: string;
 }
 
 /**
- * Cloning from github.com with the token the VM carries in `$GITHUB_TOKEN`,
- * passed as a header rather than in the URL so it stays out of the remote's
- * config and out of process listings. No token means public repos only.
+ * Cloning from github.com. The credential is not passed here: it is installed
+ * once on the machine by `GIT_CREDENTIALS`, so `git fetch` and `git push` in
+ * the cloned repo work too — an agent that can clone but not push is half a
+ * session. No token means public repos only.
  *
  * Every provider clones this way.
  */
-export function tokenCloneConfig(token: string | null, failureHint: string): CloneConfig {
-  return {
-    urlPrefix: "https://github.com",
-    extraConfig: token === null ? "" : `-c "http.extraheader=Authorization: Bearer $GITHUB_TOKEN"`,
-    failureHint,
-  };
+export function tokenCloneConfig(_token: string | null, failureHint: string): CloneConfig {
+  return { urlPrefix: "https://github.com", failureHint };
 }
+
+/**
+ * Teach git the token the VM carries in `$GITHUB_TOKEN`, for every git
+ * operation rather than only the first clone.
+ *
+ * A credentials file rather than a header on the clone command: the header only
+ * applies to the command it is passed to, so the agent inherited a repo it
+ * could read once and never update. The file is out of the repo's own config
+ * and out of process listings, and is written 0600.
+ *
+ * Silent when there is no token, which is a machine that can still clone public
+ * repos.
+ */
+export const GIT_CREDENTIALS = `
+if [ -n "\${GITHUB_TOKEN:-}" ]; then
+  git config --global credential.helper store
+  umask 077
+  printf 'https://x-access-token:%s@github.com\\n' "$GITHUB_TOKEN" > "$HOME/.git-credentials"
+  umask 022
+fi
+
+`;
 
 /** The hint on a failed clone: the same credential on every provider now. */
 export const CLONE_FAILURE_HINT =
@@ -359,6 +376,17 @@ export function bootstrapScript(options: BootstrapOptions): string {
   const clone = options.clone ?? tokenCloneConfig(null, CLONE_FAILURE_HINT);
   let script = "#!/usr/bin/env bash\n";
 
+  // First, before anything else in this script: the host environment, which is
+  // where `$GITHUB_TOKEN` arrives on the providers that can't set it at create
+  // time — and then git's credential, built from it.
+  //
+  // Everything below may touch GitHub. The clones certainly do, a setup script
+  // might, and the agent that starts the moment this script returns certainly
+  // will. Any of them reaching an unauthenticated git is the failure this
+  // ordering exists to prevent.
+  script += options.hostEnvironmentSetup ?? "";
+  script += GIT_CREDENTIALS;
+
   // Seed the commit identity from the GitHub account, so commits made on the VM
   // are attributed without any manual setup. Only when unset, so a deliberate
   // change on the VM survives reconnects.
@@ -400,10 +428,6 @@ fi
 
 `;
   }
-
-  // Inject host environment for providers that can't set it at create time
-  // (sprites.dev writes a profile here and sources it).
-  script += options.hostEnvironmentSetup ?? "";
 
   // Point the harnesses that read a config file at the chosen gateway model.
   // Claude Code needs nothing here: it reads the ANTHROPIC_* variables set on
@@ -449,8 +473,7 @@ fi
     script += "exe_failed_clones=''\n";
     for (const repo of options.repos) {
       const url = shellQuote(`${clone.urlPrefix}/${repo}.git`);
-      const extra = clone.extraConfig ? ` ${clone.extraConfig}` : "";
-      script += `if ! git clone${extra} --depth 1 --quiet ${url}; then
+      script += `if ! git clone --depth 1 --quiet ${url}; then
   exe_failed_clones="$exe_failed_clones "${shellQuote(repo)}
 fi
 

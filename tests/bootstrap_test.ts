@@ -204,3 +204,26 @@ Deno.test("a clone can neither prompt nor read the pane it shares", () => {
   assertStringIncludes(script, "export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= SSH_ASKPASS=");
   assertStringIncludes(script, ") </dev/null &");
 });
+
+Deno.test("git is authenticated before anything that could use it", () => {
+  const script = bootstrapScript({
+    setupScript: "make setup",
+    claudeSettings: "{}",
+    repos: ["owner/one"],
+    gitIdentity: { name: "A", email: "a@example.com" },
+    hostEnvironmentSetup: 'export GITHUB_TOKEN="t"\n',
+  });
+  const host = script.indexOf("GITHUB_TOKEN=");
+  const credentials = script.indexOf(".git-credentials");
+  assert(host >= 0 && credentials > host, "the token has to be in the environment first");
+  for (const later of ["git config --global user.name", "make setup", "git clone"]) {
+    assert(script.indexOf(later) > credentials, `${later} must come after the credential`);
+  }
+});
+
+Deno.test("no token on the machine leaves git as it was", () => {
+  const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
+  // The fragment is always emitted; it is the shell test inside it that decides.
+  assertStringIncludes(script, 'if [ -n "${GITHUB_TOKEN:-}" ]; then');
+  assertStringIncludes(script, "credential.helper store");
+});
