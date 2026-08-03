@@ -1,4 +1,30 @@
 import { EnvVar, envVarsFrom } from "./env-var.ts";
+import { PI_PACKAGE } from "../model/bootstrap.ts";
+
+/**
+ * The pi installer this app used to write into the pi environment's setup
+ * script, and what it becomes.
+ *
+ * pi.dev's install script is a terminal program — it prompts, and a bootstrap
+ * has no one to answer — so the app stopped using it. But a setup script is
+ * configuration the user owns: the old line is stored in every install that
+ * ever ran that version, where changing a default would never reach it. So it
+ * is rewritten on the way in, and only when it is still exactly what the app
+ * put there.
+ *
+ * Installing pi is the bootstrap's job now, which makes this line redundant
+ * rather than wrong: it finds pi already installed and does nothing.
+ */
+const LEGACY_PI_SETUP =
+  "command -v pi >/dev/null 2>&1 || curl -fsSL https://pi.dev/install.sh | sh";
+
+export const PI_SETUP_SCRIPT =
+  `command -v pi >/dev/null 2>&1 || npm install -g --ignore-scripts ${PI_PACKAGE}`;
+
+/** Rewrite a stored setup script the app has since changed its mind about. */
+export function migrateSetupScript(script: string): string {
+  return script.trim() === LEGACY_PI_SETUP ? PI_SETUP_SCRIPT : script;
+}
 
 /**
  * One named way to run a session: the setup script, the command started inside
@@ -85,7 +111,9 @@ export function sessionEnvironmentFrom(value: unknown): SessionEnvironment | nul
   return {
     id: typeof entry.id === "string" ? entry.id : crypto.randomUUID(),
     name: typeof entry.name === "string" ? entry.name : "",
-    setupScript: typeof entry.setupScript === "string" ? entry.setupScript : "",
+    setupScript: migrateSetupScript(
+      typeof entry.setupScript === "string" ? entry.setupScript : "",
+    ),
     startCommand: typeof entry.startCommand === "string" ? entry.startCommand : "",
     environment: envVarsFrom(entry.environment),
   };

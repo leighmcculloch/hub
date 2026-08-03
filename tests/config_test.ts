@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   AppConfig,
   decodeConfig,
@@ -318,4 +318,25 @@ Deno.test("a stored pi settings string is kept as the user wrote it", () => {
     decodeConfig({ piSettings: `{"hideThinkingBlock": false}` }).piSettings,
     `{"hideThinkingBlock": false}`,
   );
+});
+
+Deno.test("the old curl-into-a-shell pi installer becomes the npm install", () => {
+  const stored = decodeConfig({
+    environments: [{
+      id: "8f1d4f4e-1d2b-4c1b-9e3a-000000000003",
+      name: "pi",
+      startCommand: "pi",
+      setupScript: "command -v pi >/dev/null 2>&1 || curl -fsSL https://pi.dev/install.sh | sh",
+    }],
+  }).environments;
+  assertStringIncludes(stored[0].setupScript, "npm install -g --ignore-scripts");
+  assert(!stored[0].setupScript.includes("pi.dev/install.sh"));
+});
+
+Deno.test("a setup script someone wrote themselves is left alone", () => {
+  const mine = "echo mine; curl -fsSL https://pi.dev/install.sh | sh";
+  const stored = decodeConfig({
+    environments: [{ id: "x", name: "pi", setupScript: mine }],
+  }).environments;
+  assertEquals(stored[0].setupScript, mine);
 });
