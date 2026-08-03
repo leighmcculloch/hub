@@ -113,6 +113,10 @@ export const INSTALL_PREREQUISITES = `${SUDO}` +
  * Only when what's there is too old — pi wants 22.19, and the `nodejs` an image
  * was built with is usually older than that or missing entirely.
  *
+ * It says so before it starts. The install itself is quiet, and minutes of an
+ * unexplained empty pane that swallows every keystroke reads as a hung session
+ * rather than a busy one.
+ *
  * NodeSource because it is the non-interactive way onto a Debian-family image,
  * which every provider here runs — and the plain `ubuntu` the Docker provider
  * starts from is nothing but that. Piped to a plain `bash` when there is no
@@ -123,6 +127,7 @@ export const ENSURE_NODE = `
 ${SUDO}
 if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);` +
   ` process.exit(a>22||(a===22&&b>=19)?0:1)' >/dev/null 2>&1; then
+  echo "hub: installing Node (a minute or two, once per machine)…"
   curl -fsSL https://deb.nodesource.com/setup_22.x | $_hub_sudo bash - >/dev/null 2>&1
   $_hub_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs >/dev/null 2>&1
 fi
@@ -165,6 +170,7 @@ const PI_INSTALL_ARGS = `--ignore-scripts ${PI_PACKAGE}`;
 export const ENSURE_PI = `
 ${SUDO}
 if ! command -v pi >/dev/null 2>&1; then
+  echo "hub: installing pi…"
   npm install -g ${PI_INSTALL_ARGS} >/dev/null 2>&1 || $_hub_sudo npm install -g ${PI_INSTALL_ARGS}
 fi
 

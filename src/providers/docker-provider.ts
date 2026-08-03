@@ -13,8 +13,10 @@
  * is the question.
  */
 
+import { join } from "@std/path";
 import { runCommand } from "./process.ts";
 import { DockerTransport } from "./docker-transport.ts";
+import { dockerfile, imageSetupScript, imageTag } from "./docker-image.ts";
 import { tokenGitHubSetup } from "./github-setup.ts";
 import { condense } from "../model/message-text.ts";
 import type { GatewayModel } from "../model/llm-gateway.ts";
@@ -31,12 +33,6 @@ import type {
 import type { EnvVar } from "../config/env-var.ts";
 
 export const DOCKER_BINARY = "docker";
-
-/**
- * Deliberately plain. Anything a session needs, the bootstrap installs; an
- * image that came with more would only hide whether that still works.
- */
-export const DEFAULT_IMAGE = "ubuntu:24.04";
 
 /**
  * Stamped on every container this app starts, so listing finds its own and
@@ -135,12 +131,13 @@ export class DockerProvider implements VMProvider {
     _tags: string[],
     environment: EnvVar[],
   ): Promise<RemoteVMRecord> {
+    const image = await this.ensureImage();
     const args = ["run", "--detach", "--name", name, "--label", CONTAINER_LABEL];
     for (const variable of environment) {
       if (!variable.key) continue;
       args.push("--env", `${variable.key}=${variable.value}`);
     }
-    args.push(DEFAULT_IMAGE, ...IDLE_COMMAND);
+    args.push(image, ...IDLE_COMMAND);
     await this.expect(args, `create container ${name}`);
     return {
       name,
@@ -184,6 +181,40 @@ export class DockerProvider implements VMProvider {
 
   transportFor(destination: string): RemoteTransport {
     return new DockerTransport(destination);
+  }
+
+  // MARK: - The session image
+
+  /**
+   * The tag to run, building it first if this machine doesn't have it.
+   *
+   * The build is what makes the *first* session on a given setup slow and every
+   * one after it immediate: `docker image inspect` is the whole of the cache
+   * check, because the tag already encodes what the image contains.
+   */
+  private async ensureImage(): Promise<string> {
+    const file = dockerfile();
+    const setup = imageSetupScript();
+    const tag = await imageTag(file, setup);
+    if (await this.hasImage(tag)) return tag;
+
+    const context = await Deno.makeTempDir({ prefix: "hub-image-" });
+    try {
+      await Deno.writeTextFile(join(context, "Dockerfile"), file);
+      await Deno.writeTextFile(join(context, "setup.sh"), setup);
+      await this.expect(["build", "--tag", tag, context], `build the session image ${tag}`);
+    } finally {
+      await Deno.remove(context, { recursive: true }).catch(() => {});
+    }
+    return tag;
+  }
+
+  private async hasImage(tag: string): Promise<boolean> {
+    try {
+      return (await this.run(["image", "inspect", tag])).code === 0;
+    } catch {
+      return false;
+    }
   }
 
   // MARK: - Running the CLI
