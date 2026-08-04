@@ -140,8 +140,15 @@ Deno.test("the terminal body is a dead end for Tab, so the shell keeps it", () =
   assertEquals(pane.advance(-1), false);
 });
 
-Deno.test("the terminal pane walks its tab strip then its + button", () => {
+/** A pane that has rendered a session, so its tab strip exists to be walked. */
+function paneWithTabs(): TerminalPane {
   const pane = new TerminalPane();
+  pane.render(stubSession(), { x: 0, y: 0, width: 40, height: 10 }, new HitMap(), true);
+  return pane;
+}
+
+Deno.test("the terminal pane walks its tab strip then its + button", () => {
+  const pane = paneWithTabs();
   pane.focusFirst();
   assert(!pane.inBody);
   assertEquals(pane.advance(1), true); // tabs -> new
@@ -152,7 +159,7 @@ Deno.test("the terminal pane walks its tab strip then its + button", () => {
 });
 
 Deno.test("the tab strip's keys switch tabs and step into the body", () => {
-  const pane = new TerminalPane();
+  const pane = paneWithTabs();
   const session = stubSession();
   pane.focusFirst();
   assertEquals(pane.key(session, "right"), "handled");
@@ -166,7 +173,7 @@ Deno.test("the tab strip's keys switch tabs and step into the body", () => {
 });
 
 Deno.test("entering the body puts every key back in the program's hands", () => {
-  const pane = new TerminalPane();
+  const pane = paneWithTabs();
   pane.focusFirst();
   pane.enterBody();
   assert(pane.inBody);
@@ -174,6 +181,8 @@ Deno.test("entering the body puts every key back in the program's hands", () => 
 
 Deno.test("the diff sidebar walks repo, scope, files and diff", async () => {
   const sidebar = new DiffSidebar(() => {});
+  // Bound to a session: with none there is nothing drawn and nothing to walk.
+  sidebar.bind(stubSession());
   sidebar.focusFirst();
   assertEquals(sidebar.part, "repo");
   // The repo row is a dropdown: Enter asks the app to open its list.
@@ -292,4 +301,20 @@ Deno.test("the diff sidebar marks which of its stacked sections has the keyboard
     !lines(false)[0].includes(PANE_FOCUS_BG),
     "the unfocused sidebar shows the focus tint",
   );
+});
+
+Deno.test("a pane with nothing drawn on it is not a stop on the focus ring", () => {
+  // The terminal with no session: the tab strip and its `+` aren't drawn, so
+  // Tab must not stop on them — the keyboard would vanish for two presses.
+  const pane = new TerminalPane();
+  assertEquals(pane.hasControls, false);
+  pane.focusFirst();
+  assert(pane.inBody, "with no tabs there is only the body");
+  assertEquals(pane.advance(1), false);
+  assertEquals(pane.advance(-1), false);
+
+  // And the diff sidebar with no session bound draws none of its four parts.
+  const diff = new DiffSidebar(() => {});
+  assertEquals(diff.hasControls, false);
+  assertEquals(diff.advance(1), false);
 });

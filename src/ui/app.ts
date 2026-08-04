@@ -656,12 +656,20 @@ export class App {
     return this.terminal;
   }
 
+  /**
+   * The panes Tab and Alt+←/→ walk: on screen, and with something on them to
+   * land on. A visible pane with no controls — the diff sidebar before any
+   * session is open — is a stop where the keyboard appears to go nowhere.
+   *
+   * The terminal is always in the ring: its body is where keys go, and that is
+   * true even of the empty state.
+   */
   private focusablePanes(): Focus[] {
     const order: Focus[] = ["sessions", "terminal", "diff"];
     return order.filter((one) =>
       one === "terminal" ||
       (one === "sessions" && this.workspace.showSessionSidebar) ||
-      (one === "diff" && this.workspace.diffSidebarVisible)
+      (one === "diff" && this.workspace.diffSidebarVisible && this.diff.hasControls)
     );
   }
 

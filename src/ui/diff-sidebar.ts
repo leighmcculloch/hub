@@ -947,6 +947,15 @@ export class DiffSidebar {
     }
   }
 
+  /**
+   * True when the sidebar has anything to put the keyboard on. With no session
+   * bound it draws no repo filter, no scope list and no diff — four stops on
+   * the focus ring, all of them invisible.
+   */
+  get hasControls(): boolean {
+    return this.session !== null;
+  }
+
   focusFirst(): void {
     this.part = PARTS[0];
   }
@@ -965,6 +974,7 @@ export class DiffSidebar {
   }
 
   advance(step: number): boolean {
+    if (!this.hasControls) return false;
     const next = PARTS.indexOf(this.part) + step;
     if (next < 0 || next >= PARTS.length) return false;
     this.part = PARTS[next];

@@ -44,13 +44,24 @@ type Part = typeof PARTS[number] | "body";
 export class TerminalPane {
   part: Part = "body";
   private hovered: string | null = null;
+  /**
+   * Whether the tab strip is on screen. With no session there is no strip and
+   * no `+` button, and a focus ring that stops on them is stopping on nothing:
+   * the keyboard vanishes for two presses of Tab.
+   */
+  private hasTabs = false;
+
+  /** True when this pane has a control Tab could land on. */
+  get hasControls(): boolean {
+    return this.hasTabs;
+  }
 
   focusFirst(): void {
-    this.part = "tabs";
+    this.part = this.hasTabs ? "tabs" : "body";
   }
 
   focusLast(): void {
-    this.part = "new";
+    this.part = this.hasTabs ? "new" : "body";
   }
 
   /** Put the keyboard in the pane itself, where keys go to the program. */
@@ -69,7 +80,7 @@ export class TerminalPane {
 
   advance(step: number): boolean {
     // The body is a dead end for Tab; leaving it is Alt+F's job.
-    if (this.part === "body") return false;
+    if (this.part === "body" || !this.hasTabs) return false;
     const next = PARTS.indexOf(this.part) + step;
     if (next < 0 || next >= PARTS.length) return false;
     this.part = PARTS[next];
@@ -88,6 +99,10 @@ export class TerminalPane {
     configured = true,
   ): { lines: string[]; content: Rect } {
     const width = rect.width;
+    // Recorded here rather than asked for separately: the renderer is what
+    // decides whether the strip exists, so the focus ring follows it.
+    this.hasTabs = session !== null;
+    if (this.part !== "body" && !this.hasTabs) this.part = "body";
 
     if (session === null) {
       // The pane keeps its title bar with nothing open, so the keyboard being
