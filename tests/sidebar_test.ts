@@ -298,9 +298,9 @@ Deno.test("the grouping toggle is a stop on the focus ring, above the list", () 
   sidebar.focusFirst();
   assert(sidebar.onGroupToggle, "the chip in the title bar is the first stop");
   sidebar.advance(1);
-  assert(!sidebar.onGroupToggle && !sidebar.onNewButton, "one step lands on the list");
-  sidebar.advance(1);
-  assert(sidebar.onNewButton, "a second step lands on the new-session button");
+  assert(!sidebar.onGroupToggle, "one step lands on the list");
+  // And the list is the last stop: starting a session is a status-bar key now.
+  assert(!sidebar.advance(1), "there is nothing below the list");
 });
 
 Deno.test("the grouping chip rides in the title bar, not in a row of its own", () => {

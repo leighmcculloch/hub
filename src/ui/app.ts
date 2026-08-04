@@ -306,6 +306,18 @@ export class App {
     return styled(active ? "┃" : "│", { fg });
   }
 
+  /**
+   * The bar's left-hand end: starting a session, in the same shape as the keys
+   * on the right — a name and the key that does it.
+   *
+   * It used to be a button in the sessions sidebar's footer, which is the one
+   * place it could not be relied on: that pane hides. This strip never does.
+   */
+  private newSessionHint(): string {
+    return " " + styled("Alt+N", { fg: Color.accent, bold: true }) +
+      styled(" new session", { fg: Color.dimmer });
+  }
+
   private statusBar(cols: number): string {
     const session = this.workspace.selectedSession;
     const name = session ? session.displayName : "no session";
@@ -316,7 +328,13 @@ export class App {
     // them individually, but the sidebar may well be hidden, and this is the
     // one strip that never is.
     const busy = this.workspace.sessions.filter((one) => one.hasUnseenOutput).length;
-    const left = ` ${styled(name, { fg: Color.fg, bold: true })} ` +
+    const start = this.newSessionHint();
+    this.hits.add(
+      { x: 0, y: this.screen.rows - 1, width: displayWidth(start), height: 1 },
+      "status.new",
+    );
+    const left = start + styled(" · ", { fg: Color.border }) +
+      `${styled(name, { fg: Color.fg, bold: true })} ` +
       styled(where, { fg: Color.dimmer }) +
       (busy > 0 ? ` ${styled(`● ${busy} active`, { fg: Color.orange })}` : "");
     // With no message to show, the slot carries where the pane's shell actually
@@ -1089,8 +1107,7 @@ export class App {
   private sessionSidebarKey(event: KeyEvent): void {
     switch (this.sessions.key(event.name)) {
       case "activate":
-        if (this.sessions.onNewButton) this.openNewSession();
-        else this.activateSidebarRow(this.sessions.current);
+        this.activateSidebarRow(this.sessions.current);
         return;
       case "delete":
         this.confirmDeleteRow(this.sessions.current);
@@ -1215,15 +1232,14 @@ export class App {
       return;
     }
 
+    if (id === "status.new") {
+      this.openNewSession();
+      return;
+    }
     if (id.startsWith("sidebar.")) {
       // Clicking moves the keyboard there too, so the two never disagree about
       // what Enter would press.
       this.focus = "sessions";
-      if (id === "sidebar.new") {
-        this.sessions.focusLast();
-        this.openNewSession();
-        return;
-      }
       if (id === "sidebar.group") {
         this.sessions.part = "group";
         this.sessions.cycleGrouping();

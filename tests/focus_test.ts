@@ -59,29 +59,25 @@ function stubSession(): TerminalSession {
 }
 
 Deno.test("the sessions sidebar walks its controls in the order they are drawn", () => {
-  // Top to bottom: the grouping chip in the title bar, the list, the button.
+  // Top to bottom: the grouping chip in the title bar, then the list. Starting
+  // a session is a key on the status bar now, not a control in this pane.
   const sidebar = new SessionSidebar(stubWorkspace());
   sidebar.focusFirst();
   assertEquals(sidebar.onGroupToggle, true);
   assertEquals(sidebar.advance(1), true);
   assertEquals(sidebar.onGroupToggle, false);
-  assertEquals(sidebar.onNewButton, false);
-  assertEquals(sidebar.advance(1), true);
-  assertEquals(sidebar.onNewButton, true);
   // Past the last control, so the app knows to move to the next pane.
   assertEquals(sidebar.advance(1), false);
-  assertEquals(sidebar.advance(-1), true);
-  assertEquals(sidebar.onNewButton, false);
   assertEquals(sidebar.advance(-1), true);
   assertEquals(sidebar.onGroupToggle, true);
   // Past the first, the other way.
   assertEquals(sidebar.advance(-1), false);
 });
 
-Deno.test("focusLast lands on the button, for Shift+Tab arriving from the right", () => {
+Deno.test("focusLast lands on the list, for Shift+Tab arriving from the right", () => {
   const sidebar = new SessionSidebar(stubWorkspace());
   sidebar.focusLast();
-  assertEquals(sidebar.onNewButton, true);
+  assertEquals(sidebar.part, "list");
 });
 
 Deno.test("Alt+←/→ enters each pane at the thing that pane is for", () => {
@@ -90,7 +86,7 @@ Deno.test("Alt+←/→ enters each pane at the thing that pane is for", () => {
   const sidebar = new SessionSidebar(stubWorkspace());
   sidebar.focusLast();
   sidebar.focusMain();
-  assertEquals(sidebar.onNewButton, false);
+  assertEquals(sidebar.part, "list");
   assertEquals(sidebar.onGroupToggle, false);
 
   const diff = new DiffSidebar(() => {});
@@ -124,11 +120,6 @@ Deno.test("the sidebar's keys navigate the list and report activation", () => {
   assertEquals(sidebar.key("g"), "group");
   sidebar.focusLast();
   assertEquals(sidebar.key("enter"), "activate");
-  // Arrow keys mean nothing on a button, except the one that walks back into
-  // the list it sits under.
-  assertEquals(sidebar.key("down"), "ignored");
-  assertEquals(sidebar.key("up"), "handled");
-  assertEquals(sidebar.onNewButton, false);
 });
 
 Deno.test("the controls above and below the list hand the arrows back to it", () => {

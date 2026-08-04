@@ -21,7 +21,6 @@ import {
   placeholder,
   type Rect,
   row as listRow,
-  rule,
   scrollbar,
   scrollToShow,
   sectionHeader,
@@ -41,7 +40,7 @@ type SidebarRow =
   | { kind: "notice"; text: string };
 
 /** The stops Tab visits inside this pane, top to bottom on screen. */
-const PARTS = ["group", "list", "new"] as const;
+const PARTS = ["group", "list"] as const;
 type Part = typeof PARTS[number];
 
 /** The label shown for each grouping mode, and the order `g` cycles through. */
@@ -160,7 +159,7 @@ export class SessionSidebar {
     const width = rect.width;
     this.rows = this.buildRows();
 
-    // The title bar, the list, then the rule and the new-session button.
+    // The title bar, then the list.
     const lines: string[] = [this.renderHeader(rect, hits, focused)];
     const listHeight = rect.height - 3;
 
@@ -221,21 +220,9 @@ export class SessionSidebar {
       }
     }
 
-    lines.push(rule(width));
-    hits.add({ x: rect.x, y: rect.y + rect.height - 1, width, height: 1 }, "sidebar.new");
-    // A button, drawn like one: the label lights up, the row it sits on doesn't.
-    // Painting the whole row made the footer read as a pane of its own rather
-    // than as one control inside this one.
-    const newFocused = focused && this.part === "new";
-    const button = styled(" + New Session ", {
-      fg: newFocused ? Color.black : Color.accent,
-      bg: newFocused ? Color.accent : this.hovered === "sidebar.new" ? Color.hover : undefined,
-      bold: true,
-    });
-    // The shortcut only when it fits whole: half of one reads as a broken word.
-    const hint = width - displayWidth(button) >= 7 ? styled("Alt+N", { fg: Color.dimmer }) : "";
-    const gap = Math.max(1, width - displayWidth(button) - displayWidth(hint) - 1);
-    lines.push(fit(`${button}${" ".repeat(gap)}${hint}`, width));
+    // No New Session button here any more: it lives in the status bar, beside
+    // the other things you press a key for, on the one strip that is never
+    // hidden — this pane can be.
     return lines.slice(0, rect.height);
   }
 
@@ -518,14 +505,6 @@ export class SessionSidebar {
   key(name: string): "activate" | "delete" | "group" | "handled" | "ignored" {
     // The controls above and below the list hand the arrows back to it, so a
     // pane entered anywhere still walks its rows without a Tab first.
-    if (this.part === "new") {
-      if (name === "enter" || name === "space") return "activate";
-      if (name === "up") {
-        this.part = "list";
-        return "handled";
-      }
-      return "ignored";
-    }
     if (this.part === "group") {
       // Enter or `g` cycles the grouping from the chip; anything else is
       // ignored so the focus ring's Tab still leaves the pane.
@@ -565,11 +544,6 @@ export class SessionSidebar {
       default:
         return "ignored";
     }
-  }
-
-  /** True when the New Session button is what Enter would press. */
-  get onNewButton(): boolean {
-    return this.part === "new";
   }
 
   /** True when the grouping toggle is what Enter would press. */
