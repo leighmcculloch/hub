@@ -134,3 +134,7 @@ deno task test    # tests
 deno task lint
 deno task fmt
 ```
+
+## License
+
+Apache 2.0. Copyright 2026 Stellar Development Foundation. See [LICENSE](LICENSE).
