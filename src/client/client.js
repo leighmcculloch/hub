@@ -24,11 +24,68 @@ const diffRepo = new Map();
 
 // MARK: - Terminal
 
+/**
+ * Ghostty's default palette, which is Tomorrow Night.
+ *
+ * All sixteen, not just a background and a foreground: xterm falls back to its
+ * own defaults for any entry left unset, and those are a different, harsher
+ * scheme — which is why a prompt or a diff came out looking nothing like the
+ * same command in a real terminal.
+ */
+const GHOSTTY = {
+  // Ghostty's own canvas is #282c34; GitHub's is used instead so the terminal
+  // belongs to the window. The sixteen below are Ghostty's, unchanged.
+  background: "#0d1117",
+  foreground: "#e6edf3",
+  cursor: "#2f81f7",
+  cursorAccent: "#0d1117",
+  selectionBackground: "#264f78",
+  black: "#1d1f21",
+  red: "#cc6666",
+  green: "#b5bd68",
+  yellow: "#f0c674",
+  blue: "#81a2be",
+  magenta: "#b294bb",
+  cyan: "#8abeb7",
+  white: "#c5c8c6",
+  brightBlack: "#666666",
+  brightRed: "#d54e53",
+  brightGreen: "#b9ca4a",
+  brightYellow: "#e7c547",
+  brightBlue: "#7aa6da",
+  brightMagenta: "#c397d8",
+  brightCyan: "#70c0b1",
+  brightWhite: "#eaeaea",
+};
+
+/**
+ * Nerd Fonts first, because a prompt built for one draws boxes without it, and
+ * the glyphs it wants live in a private-use area no fallback font carries.
+ * `Symbols Nerd Font Mono` is the patch-nothing option: installed alongside any
+ * monospace font, it supplies the glyphs and nothing else.
+ */
+const FONT_STACK = [
+  '"JetBrainsMono Nerd Font"',
+  '"FiraCode Nerd Font"',
+  '"Hack Nerd Font"',
+  '"MesloLGS NF"',
+  '"CaskaydiaCove Nerd Font"',
+  '"Symbols Nerd Font Mono"',
+  "ui-monospace",
+  "SFMono-Regular",
+  "Menlo",
+  "monospace",
+].join(", ");
+
 const terminal = new Terminal({
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  fontFamily: FONT_STACK,
   fontSize: 13,
   cursorBlink: true,
-  theme: { background: "#101014", foreground: "#d8d8e0", cursor: "#7aa2f7" },
+  theme: GHOSTTY,
+  // The DOM renderer is the one that honours the font's own shaping, which is
+  // what makes `!=` and `=>` come out as ligatures rather than two glyphs.
+  rendererType: "dom",
+  allowProposedApi: true,
 });
 terminal.open(el("terminal"));
 terminal.onData((data) => sendBytes(encoder.encode(data)));
