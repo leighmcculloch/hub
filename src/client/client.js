@@ -463,6 +463,53 @@ function toggleDiff() {
 
 el("diff-close").onclick = toggleDiff;
 
+// MARK: - Resizing
+
+/**
+ * Drag a panel's edge to size it, and remember the size.
+ *
+ * The width lives in a CSS variable rather than an inline style so the grid and
+ * the panel read the same number, and in `localStorage` so a window opened
+ * tomorrow is the shape you left it. `min`/`max` keep a panel from being
+ * dragged to nothing — a zero-width sidebar is indistinguishable from a broken
+ * one, and there is no edge left to drag it back by.
+ */
+function resizable(grip, variable, { min, max, fromRight }) {
+  const stored = localStorage.getItem(variable);
+  if (stored) document.documentElement.style.setProperty(variable, stored);
+
+  grip.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    grip.setPointerCapture(event.pointerId);
+    grip.classList.add("dragging");
+    document.body.classList.add("resizing");
+
+    const move = (moved) => {
+      const width = fromRight ? globalThis.innerWidth - moved.clientX : moved.clientX;
+      const clamped = Math.max(min, Math.min(max, width));
+      document.documentElement.style.setProperty(variable, `${clamped}px`);
+      fitTerminal();
+    };
+    const done = () => {
+      grip.releasePointerCapture(event.pointerId);
+      grip.classList.remove("dragging");
+      document.body.classList.remove("resizing");
+      grip.removeEventListener("pointermove", move);
+      localStorage.setItem(
+        variable,
+        getComputedStyle(document.documentElement).getPropertyValue(variable).trim(),
+      );
+      fitTerminal();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", done, { once: true });
+    grip.addEventListener("pointercancel", done, { once: true });
+  });
+}
+
+resizable(el("sidebar-grip"), "--sidebar-w", { min: 140, max: 640, fromRight: false });
+resizable(el("diff-grip"), "--diff-w", { min: 220, max: 1100, fromRight: true });
+
 // MARK: - Running
 
 // The server never sends state, only word that it moved: one description of the

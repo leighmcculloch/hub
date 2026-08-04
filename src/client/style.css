@@ -16,6 +16,10 @@
   --accent: #2f81f7;
   --orange: #d29922;
   --danger: #f85149;
+
+  /* Panel widths, written by dragging their grips and remembered per browser. */
+  --sidebar-w: 16rem;
+  --diff-w: 34rem;
 }
 
 * {
@@ -26,7 +30,7 @@ body {
   margin: 0;
   height: 100vh;
   display: grid;
-  grid-template-columns: 16rem 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
   grid-template-rows: 1fr auto;
   grid-template-areas: "sidebar main" "status status";
   background: var(--bg);
@@ -38,6 +42,7 @@ body {
 /* MARK: - Sidebar */
 
 #sidebar {
+  position: relative;
   grid-area: sidebar;
   border-right: 1px solid var(--border);
   background: var(--panel);
@@ -153,8 +158,9 @@ main {
 }
 
 #diff {
-  width: 40%;
-  min-width: 20rem;
+  position: relative;
+  width: var(--diff-w);
+  min-width: 14rem;
   border-left: 1px solid var(--border);
   background: var(--panel);
   display: flex;
@@ -337,4 +343,40 @@ menu button.primary {
 .xterm .xterm-rows {
   font-variant-ligatures: contextual common-ligatures;
   font-feature-settings: "calt" 1, "liga" 1, "dlig" 0;
+}
+
+/* The grips.
+
+   Four pixels of hit area sitting on the panel's inner edge, invisible until
+   you are on them. A divider drawn as a line would be one more thing competing
+   for attention in a window that is mostly terminal; a divider you can find
+   with the pointer is all this needs to be. */
+.grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+#sidebar-grip {
+  right: -2px;
+}
+#diff-grip {
+  left: -2px;
+}
+.grip:hover,
+.grip.dragging {
+  background: var(--accent);
+}
+
+/* While a drag is in flight the pointer owns the window: without this, moving
+   over the terminal selects its text instead of moving the divider. */
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.resizing #terminal {
+  pointer-events: none;
 }
