@@ -7,6 +7,7 @@
 import { AppConfig } from "../config/app-config.ts";
 import { bootstrapCommand, uniqueVMName } from "./bootstrap.ts";
 import { mergeEnv } from "../config/env-var.ts";
+import { localCopilotAuth } from "./pi-auth.ts";
 import { TOKEN_VARIABLE as GITHUB_TOKEN_VARIABLE } from "../providers/github-setup.ts";
 import { describe, type GatewayModel } from "./llm-gateway.ts";
 import { normalizeRepo } from "../github/repo-reference.ts";
@@ -230,6 +231,7 @@ export class SessionProvisioner {
         setupScript: environment.setupScript,
         claudeSettings: this.config.data.claudeSettings,
         piSettings: this.config.data.piSettings,
+        piAuth: await localCopilotAuth() ?? undefined,
         repos: chosen,
         clone: setup.clone,
         startCommand: environment.startCommand,

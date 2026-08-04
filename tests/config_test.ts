@@ -7,6 +7,7 @@ import {
 } from "../src/config/app-config.ts";
 import { PI_SETUP_SCRIPT } from "../src/config/session-environment.ts";
 import { mergeEnv } from "../src/config/env-var.ts";
+import { copilotEntry } from "../src/model/pi-auth.ts";
 import { restorable, restorableSelection, SessionStore } from "../src/config/session-store.ts";
 import { decodeLayout, defaultLayout, LayoutStore } from "../src/config/layout-store.ts";
 import { normalizeRepo } from "../src/github/repo-reference.ts";
@@ -342,4 +343,23 @@ Deno.test("a setup script someone wrote themselves is left alone", () => {
     environments: [{ id: "x", name: "pi", setupScript: mine }],
   }).environments;
   assertEquals(stored[0].setupScript, mine);
+});
+
+Deno.test("only the Copilot entry is taken out of pi's credential store", () => {
+  const stored = JSON.stringify({
+    "github-copilot": { type: "oauth", refresh: "r" },
+    anthropic: { type: "api", apiKey: "sk-should-not-travel" },
+  });
+  const carried = copilotEntry(stored);
+  assert(carried !== null);
+  assertStringIncludes(carried, "github-copilot");
+  assert(!carried.includes("sk-should-not-travel"), "other providers stay home");
+  assertEquals(Object.keys(JSON.parse(carried)), ["github-copilot"]);
+});
+
+Deno.test("a store without Copilot, or no store at all, carries nothing", () => {
+  assertEquals(copilotEntry(`{"anthropic":{"apiKey":"x"}}`), null);
+  assertEquals(copilotEntry("not json"), null);
+  assertEquals(copilotEntry("[]"), null);
+  assertEquals(copilotEntry(`{"github-copilot":null}`), null);
 });

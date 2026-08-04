@@ -234,3 +234,24 @@ Deno.test("a remote session starts at home, a local one where you were", () => {
   // A local shell belongs in the directory the user is already working in.
   assert(!controlModeCommand("pi", null).includes("cd "));
 });
+
+Deno.test("a Copilot login is carried over, but never over one already there", () => {
+  const auth = `{"github-copilot": {"type": "oauth"}}`;
+  const script = bootstrapScript({
+    setupScript: "",
+    claudeSettings: "",
+    piAuth: auth,
+    repos: [],
+  });
+  assertStringIncludes(script, `if [ ! -f "$HOME/.pi/agent/auth.json" ]; then`);
+  // 0600: it is a credential, and the agent's own shell can read the directory.
+  assertStringIncludes(script, "umask 077");
+  const encoded = /printf %s '([^']+)' \| base64 -d > "\$HOME\/\.pi\/agent\/auth\.json"/
+    .exec(script)?.[1] ?? "";
+  assertEquals(new TextDecoder().decode(decodeBase64(encoded)), auth);
+});
+
+Deno.test("no Copilot login on this machine writes no credential", () => {
+  const script = bootstrapScript({ setupScript: "", claudeSettings: "", repos: [] });
+  assert(!script.includes("auth.json"));
+});

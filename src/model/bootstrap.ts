@@ -8,6 +8,7 @@
 import { encodeBase64 } from "@std/encoding/base64";
 import { shellQuote } from "./shell.ts";
 import * as AutoName from "./auto-name.ts";
+import { PI_AUTH_PATH } from "./pi-auth.ts";
 import type { GatewaySelection } from "../providers/types.ts";
 
 export { shellQuote };
@@ -275,6 +276,8 @@ export interface BootstrapOptions {
   claudeSettings: string;
   /** `~/.pi/agent/settings.json`, seeded on a machine that has none. */
   piSettings?: string;
+  /** `~/.pi/agent/auth.json`, when this machine has a Copilot login to lend. */
+  piAuth?: string;
   repos: string[];
   clone?: CloneConfig;
   startCommand?: string;
@@ -429,6 +432,21 @@ fi
     script += `mkdir -p "$HOME/${PI_SETTINGS_DIR}"
 if [ ! -f "$HOME/${PI_SETTINGS_PATH}" ]; then
   printf %s '${encodedPi}' | base64 -d > "$HOME/${PI_SETTINGS_PATH}"
+fi
+
+`;
+  }
+
+  // pi's Copilot credential, carried from this machine. Written 0600, and only
+  // when the machine has none: a session someone has logged in on themselves
+  // keeps that login.
+  if (options.piAuth?.trim()) {
+    const encodedAuth = encodeBase64(new TextEncoder().encode(options.piAuth));
+    script += `mkdir -p "$HOME/${PI_SETTINGS_DIR}"
+if [ ! -f "$HOME/${PI_AUTH_PATH}" ]; then
+  umask 077
+  printf %s '${encodedAuth}' | base64 -d > "$HOME/${PI_AUTH_PATH}"
+  umask 022
 fi
 
 `;
