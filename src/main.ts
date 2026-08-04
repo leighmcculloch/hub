@@ -11,10 +11,10 @@
  * `desktop.ts`, which is what `deno task desktop` builds.
  */
 
-import { HubServer } from "./server/api.ts";
+import { HubServer, serve } from "./server/api.ts";
 
 if (import.meta.main) {
   const server = new HubServer(new URL("./client/", import.meta.url));
   await server.start();
-  Deno.serve(server.handler);
+  serve(server.handler);
 }

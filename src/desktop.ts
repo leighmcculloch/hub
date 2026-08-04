@@ -6,25 +6,25 @@
  * the desktop layer: start the server, open a window, point it at the port.
  *
  * The server is the app. Nothing about it knows it is being rendered in a
- * window rather than a browser tab, which is what keeps `deno task serve`
+ * window rather than a browser tab, which is what keeps `deno task start`
  * honest as a way to run hub headless.
  */
 
-import { HubServer } from "./server/api.ts";
+import { HubServer, serve } from "./server/api.ts";
 
 const CLIENT_ROOT = new URL("./client/", import.meta.url);
 
 const server = new HubServer(CLIENT_ROOT);
 await server.start();
 
-Deno.serve(server.handler);
+// A window navigates to whatever port was bound, so a taken one costs
+// nothing here — but failing to start over it would cost the whole app.
+const listening = serve(server.handler);
 
-// `deno desktop` sets this to the address it bound `Deno.serve` to; running
-// under a plain `deno run` there is no window to open, which is the headless
-// case rather than a failure.
-const address = Deno.env.get("DENO_SERVE_ADDRESS");
-if (address && "BrowserWindow" in Deno) {
-  const port = address.split(":").pop();
+// A window only exists under `deno desktop`; a plain `deno run` of this file is
+// the headless case rather than a failure.
+if ("BrowserWindow" in Deno) {
+  const port = listening.addr.transport === "tcp" ? listening.addr.port : 0;
   const window = new (Deno as unknown as {
     BrowserWindow: new (options: Record<string, unknown>) => { navigate(url: string): void };
   }).BrowserWindow({

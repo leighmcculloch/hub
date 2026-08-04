@@ -329,3 +329,29 @@ export function contentType(name: string): string {
   if (name.endsWith(".json")) return "application/json";
   return "application/octet-stream";
 }
+
+/**
+ * Start listening, on a port that is actually free.
+ *
+ * The default is fixed so the address is memorable and a bookmark keeps
+ * working, but a port already in use is not a reason to refuse to start — a
+ * second copy of hub, or anything else that got to 8000 first, would otherwise
+ * end the process with a stack trace. `PORT` overrides; a taken port falls back
+ * to whichever one the system hands out, and either way the URL is printed
+ * because it is the one thing the user needs next.
+ */
+export function serve(handler: Deno.ServeHandler, preferred = DEFAULT_PORT): Deno.HttpServer {
+  const announce = ({ port }: { port: number }) => {
+    console.log(`hub is at http://localhost:${port}`);
+  };
+  try {
+    return Deno.serve({ port: preferred, onListen: announce }, handler);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.AddrInUse)) throw error;
+    console.log(`port ${preferred} is taken; using another`);
+    return Deno.serve({ port: 0, onListen: announce }, handler);
+  }
+}
+
+/** Where hub listens unless `PORT` says otherwise. */
+export const DEFAULT_PORT = Number(Deno.env.get("PORT") ?? "8000") || 8000;
