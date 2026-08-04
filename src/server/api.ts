@@ -20,6 +20,15 @@ import { AppConfig } from "../config/app-config.ts";
 import { Workspace } from "../model/workspace.ts";
 import { ALL_PROVIDERS, providerLabel } from "../model/provider-label.ts";
 import type { TerminalSession } from "../model/terminal-session.ts";
+import {
+  applyConfig,
+  configView,
+  diffView,
+  Provisioning,
+  type ProvisionView,
+  repoOptions,
+} from "./routes.ts";
+import { providerIDFrom } from "../model/provider-label.ts";
 
 /** What the client is told about a session. */
 export interface SessionView {
@@ -47,6 +56,7 @@ export interface StateView {
   vms: VMView[];
   providers: Array<{ id: string; label: string; configured: boolean }>;
   errors: Array<{ provider: string; reason: string }>;
+  provisioning: ProvisionView;
 }
 
 export function sessionView(session: TerminalSession): SessionView {
@@ -61,7 +71,7 @@ export function sessionView(session: TerminalSession): SessionView {
   };
 }
 
-export function stateView(workspace: Workspace): StateView {
+export function stateView(workspace: Workspace, provisioning: ProvisionView): StateView {
   return {
     sessions: workspace.sessions.map(sessionView),
     selectedSessionID: workspace.selectedSession?.id ?? null,
@@ -80,6 +90,7 @@ export function stateView(workspace: Workspace): StateView {
       provider: one.provider,
       reason: one.reason,
     })),
+    provisioning,
   };
 }
 
@@ -94,10 +105,12 @@ export function stateView(workspace: Workspace): StateView {
 export class HubServer {
   readonly config = AppConfig.load();
   readonly workspace: Workspace;
+  readonly provisioning: Provisioning;
   private watchers = new Set<WebSocket>();
 
   constructor(private clientRoot: URL) {
     this.workspace = new Workspace(this.config, () => this.broadcast());
+    this.provisioning = new Provisioning(this.workspace, () => this.broadcast());
   }
 
   /** Load what the app needs before a client asks: VMs, the GitHub identity. */
@@ -112,16 +125,95 @@ export class HubServer {
 
   handler = (request: Request): Response | Promise<Response> => {
     const url = new URL(request.url);
-    if (url.pathname === "/api/state") return json(stateView(this.workspace));
+    if (url.pathname === "/api/state") {
+      return json(stateView(this.workspace, this.provisioning.view));
+    }
     if (url.pathname === "/api/watch") return this.watch(request);
+    // Before the catch-all below: this one is a socket upgrade, and answering
+    // it with a JSON 404 leaves a client whose terminal never receives a byte.
     if (url.pathname.startsWith("/api/session/")) {
       return this.sessionSocket(request, url.pathname.slice("/api/session/".length));
     }
+    if (url.pathname.startsWith("/api/")) return this.api(request, url);
     if (url.pathname === "/xterm.js" || url.pathname === "/xterm.css") {
       return this.vendored(url.pathname);
     }
     return this.file(url.pathname);
   };
+
+  /** Everything the client asks hub to do, and the two lists it reads. */
+  private async api(request: Request, url: URL): Promise<Response> {
+    const path = url.pathname;
+    const body = request.method === "POST" || request.method === "PUT"
+      ? await request.json().catch(() => ({}))
+      : {};
+
+    if (path === "/api/repos") return json(await repoOptions());
+    if (path === "/api/config") {
+      if (request.method === "PUT") {
+        applyConfig(this.config, body);
+        this.broadcast();
+        return json(configView(this.config));
+      }
+      return json(configView(this.config));
+    }
+    if (path === "/api/sessions" && request.method === "POST") {
+      const provider = providerIDFrom(body.provider) ?? this.config.data.provider;
+      const started = this.provisioning.start({
+        provider,
+        name: String(body.name ?? ""),
+        repos: Array.isArray(body.repos) ? body.repos.map(String) : [],
+      });
+      return json({ started });
+    }
+    if (path === "/api/sessions/local" && request.method === "POST") {
+      this.workspace.newLocalSession();
+      return json({ ok: true });
+    }
+    if (path === "/api/sessions/open" && request.method === "POST") {
+      const vm = this.workspace.unopenedVMs.find((one) =>
+        one.name === body.name && one.provider === body.provider
+      );
+      if (!vm) return new Response("no such machine", { status: 404 });
+      this.workspace.reopen(vm);
+      return json({ ok: true });
+    }
+    if (path === "/api/provisioning/dismiss" && request.method === "POST") {
+      this.provisioning.dismiss();
+      return json({ ok: true });
+    }
+
+    const session = this.sessionFrom(path);
+    if (session) {
+      if (path.endsWith("/select")) {
+        this.workspace.selectSession(session.id);
+        return json({ ok: true });
+      }
+      if (path.endsWith("/rename")) {
+        this.workspace.renameSession(session, String(body.title ?? ""));
+        return json({ ok: true });
+      }
+      if (path.endsWith("/close")) {
+        this.workspace.closeSession(session);
+        return json({ ok: true });
+      }
+      if (path.endsWith("/delete")) {
+        await this.workspace.deleteSession(session);
+        return json({ ok: true });
+      }
+      if (path.endsWith("/diff")) {
+        return json(await diffView(session, url.searchParams.get("repo")));
+      }
+    }
+    return new Response("not found", { status: 404 });
+  }
+
+  /** The session an `/api/sessions/<id>/…` path names. */
+  private sessionFrom(path: string): TerminalSession | null {
+    const match = /^\/api\/sessions\/([^/]+)\//.exec(path);
+    if (!match) return null;
+    return this.workspace.sessions.find((one) => one.id === match[1]) ?? null;
+  }
 
   /**
    * A socket that says only "something changed". The client answers by asking

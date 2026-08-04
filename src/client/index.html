@@ -8,22 +8,71 @@
   </head>
   <body>
     <aside id="sidebar">
-      <header>
-        <span class="title">SESSIONS</span>
-      </header>
+      <h2>Sessions</h2>
       <ul id="sessions"></ul>
-      <h2>MACHINES</h2>
+      <h2>Machines</h2>
       <ul id="vms"></ul>
-      <ul id="errors"></ul>
     </aside>
+
     <main>
       <nav id="tabs"></nav>
-      <div id="terminal"></div>
+      <div id="panes">
+        <div id="terminal"></div>
+        <section id="diff" hidden>
+          <header>
+            <select id="diff-repos"></select>
+            <button id="diff-close" title="Close (Alt+D)">✕</button>
+          </header>
+          <pre id="diff-status"></pre>
+          <pre id="diff-body"></pre>
+        </section>
+      </div>
+      <section id="provisioning" hidden>
+        <h3>Creating a machine</h3>
+        <pre id="provisioning-lines"></pre>
+        <p id="provisioning-error" hidden></p>
+        <button id="provisioning-dismiss" hidden>Dismiss</button>
+      </section>
     </main>
+
     <footer id="status">
-      <button id="new-session">New session</button>
+      <button id="new-session" title="Alt+N">New session</button>
+      <button id="new-local" title="A shell on this machine">Local shell</button>
+      <button id="close-session" title="Alt+W">Close</button>
+      <button id="settings" title="Alt+,">Settings</button>
       <span id="where"></span>
+      <span class="keys">Alt+N new · Alt+D diff · Alt+B sidebar · Alt+J/K session</span>
     </footer>
+
+    <dialog id="new-session-modal">
+      <h3>New session</h3>
+      <label>Name <input id="new-name" placeholder="what you're working on" /></label>
+      <label>Provider <select id="new-provider"></select></label>
+      <label>Repositories <input id="new-search" placeholder="filter…" /></label>
+      <div id="new-repos" class="checklist"></div>
+      <p id="new-repos-error" class="error" hidden></p>
+      <menu>
+        <button id="new-cancel">Cancel</button>
+        <button id="new-create" class="primary">Create</button>
+      </menu>
+    </dialog>
+
+    <dialog id="settings-modal">
+      <h3>Settings</h3>
+      <label>Default provider <select id="set-provider"></select></label>
+      <label>exe.dev token <input id="set-exe" type="password" /></label>
+      <label>sprites.dev token <input id="set-sprites" type="password" /></label>
+      <label>Environment <select id="set-environment"></select></label>
+      <label>Start command <input id="set-start" /></label>
+      <label>Setup script <textarea id="set-setup" rows="6"></textarea></label>
+      <label>pi settings <textarea id="set-pi" rows="6"></textarea></label>
+      <label>Variables (KEY=value) <textarea id="set-env" rows="4"></textarea></label>
+      <menu>
+        <button id="set-cancel">Cancel</button>
+        <button id="set-save" class="primary">Save</button>
+      </menu>
+    </dialog>
+
     <script src="/xterm.js"></script>
     <script type="module" src="/client.js"></script>
   </body>

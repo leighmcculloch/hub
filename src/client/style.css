@@ -1,10 +1,11 @@
-/* hub, in a window. The terminal keeps the middle; everything else gets out of
-   its way. Colours follow the terminal app's palette so the two read as one
-   product while both exist. */
+/* hub, in a window.
+   The terminal keeps the middle and everything else gets out of its way. The
+   palette follows the terminal app's, so the two read as one product. */
 :root {
   color-scheme: dark;
   --bg: #101014;
   --panel: #16161c;
+  --panel-alt: #1d1d25;
   --border: #2a2a33;
   --fg: #d8d8e0;
   --dim: #7a7a8a;
@@ -20,13 +21,16 @@ body {
   margin: 0;
   height: 100vh;
   display: grid;
-  grid-template-columns: 15rem 1fr;
+  grid-template-columns: 16rem 1fr;
   grid-template-rows: 1fr auto;
   grid-template-areas: "sidebar main" "status status";
   background: var(--bg);
   color: var(--fg);
   font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
 }
+
+/* MARK: - Sidebar */
 
 #sidebar {
   grid-area: sidebar;
@@ -36,14 +40,21 @@ body {
   padding-bottom: 1rem;
 }
 
-#sidebar header,
-#sidebar h2 {
+#sidebar.hidden {
+  display: none;
+}
+body:has(#sidebar.hidden) {
+  grid-template-columns: 0 1fr;
+}
+
+h2 {
   margin: 0;
-  padding: 0.5rem 0.75rem 0.25rem;
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  padding: 0.6rem 0.75rem 0.3rem;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--dim);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 #sidebar ul {
@@ -53,34 +64,51 @@ body {
 }
 
 #sidebar li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
   padding: 0.3rem 0.75rem;
   cursor: default;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  border-left: 2px solid transparent;
 }
 
 #sidebar li:hover {
-  background: #1d1d25;
+  background: var(--panel-alt);
 }
 #sidebar li.selected {
   background: #26263a;
-  color: #fff;
+  border-left-color: var(--accent);
 }
-#sidebar li.busy::after {
+#sidebar li.busy .name::after {
   content: " ●";
   color: var(--orange);
 }
 #sidebar li.error {
   color: var(--orange);
+  display: block;
   white-space: normal;
 }
+
+.name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+/* MARK: - Main */
 
 main {
   grid-area: main;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 #tabs {
@@ -88,6 +116,7 @@ main {
   gap: 1px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  min-height: 1.9rem;
 }
 
 #tabs button {
@@ -95,20 +124,83 @@ main {
   border: none;
   color: var(--dim);
   font: inherit;
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem 0.8rem;
   cursor: pointer;
 }
 
+#tabs button:hover {
+  background: var(--panel-alt);
+}
 #tabs button.selected {
   color: var(--fg);
   background: #26263a;
 }
 
+#panes {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
 #terminal {
   flex: 1;
-  min-height: 0;
-  padding: 0.25rem;
+  min-width: 0;
+  padding: 0.25rem 0 0 0.25rem;
 }
+
+#diff {
+  width: 40%;
+  min-width: 20rem;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#diff header {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+#diff select {
+  flex: 1;
+}
+#diff pre {
+  margin: 0;
+  padding: 0.5rem;
+  overflow: auto;
+  white-space: pre;
+}
+#diff-status {
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  max-height: 8rem;
+}
+#diff-body {
+  flex: 1;
+}
+
+#provisioning {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0.5rem 0.75rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+#provisioning h3 {
+  margin: 0 0 0.25rem;
+  font-size: 11px;
+  color: var(--dim);
+}
+#provisioning pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* MARK: - Status bar */
 
 #status {
   grid-area: status;
@@ -117,7 +209,7 @@ main {
   gap: 0.75rem;
   border-top: 1px solid var(--border);
   background: var(--panel);
-  padding: 0.25rem 0.75rem;
+  padding: 0.3rem 0.75rem;
   color: var(--dim);
 }
 
@@ -129,4 +221,103 @@ main {
   font-weight: 600;
   cursor: pointer;
   padding: 0;
+}
+
+#status button:disabled {
+  color: var(--border);
+  cursor: default;
+}
+#status .keys {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+/* MARK: - Dialogs */
+
+dialog {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  min-width: 30rem;
+  font: inherit;
+}
+
+dialog::backdrop {
+  background: #000a;
+}
+dialog h3 {
+  margin: 0 0 0.75rem;
+}
+
+dialog label {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  color: var(--dim);
+}
+
+dialog input,
+dialog select,
+dialog textarea {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.3rem 0.4rem;
+  font: inherit;
+  width: 100%;
+}
+
+dialog textarea {
+  resize: vertical;
+}
+
+.checklist {
+  max-height: 12rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.checklist label {
+  display: block;
+  grid-template-columns: none;
+  color: var(--fg);
+  margin: 0;
+  padding: 0.1rem 0.2rem;
+}
+
+.error {
+  color: var(--orange);
+}
+
+menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+menu button {
+  background: var(--panel-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+menu button.primary {
+  background: var(--accent);
+  color: #101014;
+  border-color: var(--accent);
+  font-weight: 600;
 }
