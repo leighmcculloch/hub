@@ -163,6 +163,7 @@ export class TerminalSession {
   private captureTimer: ReturnType<typeof setTimeout> | null = null;
   /** The size last reported to tmux; an unchanged layout must not resend it. */
   private reportedSize: { cols: number; rows: number } | null = null;
+  private outputListeners = new Set<(bytes: Uint8Array) => void>();
   /** The pane tmux last reported as active, so a real focus change is followed. */
   private lastActivePaneID: string | null = null;
   /** Widening gap between automatic reconnection attempts. */
@@ -446,9 +447,24 @@ export class TerminalSession {
     this.client.send(command);
   }
 
+  /**
+   * Listen to a pane's bytes as tmux produces them.
+   *
+   * The terminal grid is the client's to keep — a real emulator over there
+   * rather than a snapshot shipped from here — so this hands over the stream
+   * unchanged. Returns the way to stop listening.
+   */
+  onPaneOutput(listener: (bytes: Uint8Array) => void): () => void {
+    this.outputListeners.add(listener);
+    return () => {
+      this.outputListeners.delete(listener);
+    };
+  }
+
   private handle(event: TmuxEvent): void {
     switch (event.type) {
       case "output":
+        for (const listener of this.outputListeners) listener(event.bytes);
         // The bytes themselves aren't rendered — tmux's own screen is, via
         // capture-pane — so output is only a signal that the pane changed.
         if (event.pane === this.selectedTabID) this.scheduleCapture();

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>hub</title>
+    <link rel="stylesheet" href="/xterm.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <aside id="sidebar">
+      <header>
+        <span class="title">SESSIONS</span>
+      </header>
+      <ul id="sessions"></ul>
+      <h2>MACHINES</h2>
+      <ul id="vms"></ul>
+      <ul id="errors"></ul>
+    </aside>
+    <main>
+      <nav id="tabs"></nav>
+      <div id="terminal"></div>
+    </main>
+    <footer id="status">
+      <button id="new-session">New session</button>
+      <span id="where"></span>
+    </footer>
+    <script src="/xterm.js"></script>
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>

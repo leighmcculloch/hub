@@ -1,0 +1,132 @@
+/* hub, in a window. The terminal keeps the middle; everything else gets out of
+   its way. Colours follow the terminal app's palette so the two read as one
+   product while both exist. */
+:root {
+  color-scheme: dark;
+  --bg: #101014;
+  --panel: #16161c;
+  --border: #2a2a33;
+  --fg: #d8d8e0;
+  --dim: #7a7a8a;
+  --accent: #7aa2f7;
+  --orange: #e0af68;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 15rem 1fr;
+  grid-template-rows: 1fr auto;
+  grid-template-areas: "sidebar main" "status status";
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#sidebar {
+  grid-area: sidebar;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  overflow-y: auto;
+  padding-bottom: 1rem;
+}
+
+#sidebar header,
+#sidebar h2 {
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.25rem;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+#sidebar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#sidebar li {
+  padding: 0.3rem 0.75rem;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#sidebar li:hover {
+  background: #1d1d25;
+}
+#sidebar li.selected {
+  background: #26263a;
+  color: #fff;
+}
+#sidebar li.busy::after {
+  content: " ●";
+  color: var(--orange);
+}
+#sidebar li.error {
+  color: var(--orange);
+  white-space: normal;
+}
+
+main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#tabs {
+  display: flex;
+  gap: 1px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+#tabs button {
+  background: none;
+  border: none;
+  color: var(--dim);
+  font: inherit;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+#tabs button.selected {
+  color: var(--fg);
+  background: #26263a;
+}
+
+#terminal {
+  flex: 1;
+  min-height: 0;
+  padding: 0.25rem;
+}
+
+#status {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0.25rem 0.75rem;
+  color: var(--dim);
+}
+
+#status button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}

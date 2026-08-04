@@ -7,28 +7,47 @@
     "check": "deno check src/main.ts tests/*.ts",
     "test": "deno test --allow-read --allow-write --allow-env",
     "fmt": "deno fmt",
-    "lint": "deno lint"
+    "lint": "deno lint",
+    "desktop": "deno desktop src/desktop.ts",
+    "serve": "deno run --allow-read --allow-write --allow-env --allow-net --allow-run --allow-sys src/desktop.ts"
   },
   "fmt": {
-    "include": ["src/", "tests/", "deno.json"],
+    "include": [
+      "src/",
+      "tests/",
+      "deno.json"
+    ],
     "lineWidth": 100,
     "indentWidth": 2,
     "semiColons": true,
     "singleQuote": false
   },
   "lint": {
-    "include": ["src/", "tests/"],
+    "include": [
+      "src/",
+      "tests/"
+    ],
     "rules": {
-      "tags": ["recommended"]
+      "tags": [
+        "recommended"
+      ]
     }
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.9",
     "@std/encoding": "jsr:@std/encoding@^1.0.6",
-    "@std/path": "jsr:@std/path@^1.0.8"
+    "@std/path": "jsr:@std/path@^1.0.8",
+    "@xterm/xterm": "npm:@xterm/xterm@^5.5.0"
   },
   "compilerOptions": {
     "strict": true,
     "noUncheckedIndexedAccess": false
+  },
+  "desktop": {
+    "app": {
+      "name": "hub",
+      "identifier": "dev.hub.app"
+    },
+    "backend": "webview"
   }
 }
